@@ -34,7 +34,7 @@ function render(state) {
   selector.value = state.session_id || '';
   selector.disabled = state.busy;
   $('new-session').disabled = state.busy || !state.session_id;
-  $('model').value = state.model || '';
+  if (document.activeElement !== $('model')) $('model').value = state.model || '';
   $('model').disabled = state.busy;
   $('run-state').textContent = state.pending ? '等待批准' : state.busy ? 'Agent 正在处理' : '待命';
   $('send').disabled = state.busy;
