@@ -1,27 +1,25 @@
-# Codex-cpp
+# Codex.cpp
 
-> A single-file C++17 Codex-style coding agent runtime.  
-> 单文件 C++17 Codex 风格编程 Agent Runtime。
+> A compact C++17 Codex-style coding agent runtime.
+> 精简的 C++17 Codex 风格终端编程 Agent。
 
 `codex-cpp` 是一个独立的、clean-room 实现的 Codex 风格终端编程 Agent。
 
-它不是 OpenAI Codex CLI 的逐行移植，也不依赖官方 Codex CLI Runtime。核心 Agent loop、工具调用、会话存储、TUI、权限控制和 Provider 接入均直接实现在一个 C++ 源文件中。
+它不是 OpenAI Codex CLI 的逐行移植，也不依赖官方 Codex CLI Runtime。核心 Agent loop、工具调用、会话存储、TUI、权限控制和 Provider 接入由少量 C++ 源文件实现；它们仍通过 `codex.cpp` 一次编译。
 
 ```text
-codex.cpp
-    ↓
-clang++ / g++
-    ↓
+codex.cpp + codex_api.inc + codex_tui.inc
+    ↓ clang++ / g++ codex.cpp
 codex-cpp
 ```
 
-运行时唯一必需的外部程序是系统 `curl`。
+API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 
 ---
 
 ## Features / 功能
 
-- 单文件 C++17 实现
+- C++17 实现，单条编译命令
 - OpenAI Responses API function calling loop
 - Chat Completions tool calling
 - ChatGPT / Codex 订阅设备登录
@@ -49,6 +47,18 @@ codex-cpp
 
 # 中文
 
+## 源码结构
+
+- `codex.cpp`：入口、工具、会话与 Agent loop；编译此文件即可生成程序。
+- `codex_api.inc`：API 客户端与流式响应。
+- `codex_tui.inc`：终端界面与 Markdown 渲染。
+- `codex_self_test.cpp`：独立的解析、工具、会话与权限检查。
+- `sandbox_probe.py`：使用临时工作区验证 Shell 沙箱边界。
+
+构建时需要把 `codex.cpp` 和两个 `.inc` 文件放在同一目录。运行程序无需这些源码文件；API 请求需要系统 `curl`。
+
+---
+
 ## 编译
 
 macOS / Linux：
@@ -69,10 +79,12 @@ g++ -std=c++17 -O2 -Wall -Wextra -pedantic codex.cpp -o codex-cpp
 ./codex-cpp --help
 ```
 
-可以先运行内置测试：
+测试已从运行程序移到独立源码：
 
 ```bash
-./codex-cpp --self-test --root .
+clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex_self_test.cpp -o codex-self-test
+./codex-self-test
+python3 sandbox_probe.py
 ```
 
 ---
@@ -481,12 +493,6 @@ TUI 下 `/resume` 可以直接选择已有 Session。
 /fork
 ```
 
-创建临时侧会话：
-
-```text
-/side
-```
-
 归档：
 
 ```text
@@ -653,7 +659,6 @@ GIF
 | `/resume` | 恢复 Session |
 | `/new` | 新建会话 |
 | `/fork` | Fork 当前会话 |
-| `/side` | 创建侧会话 |
 | `/rename` | 重命名 Session |
 | `/archive` | 归档 Session |
 | `/delete` | 删除 Session |
@@ -672,9 +677,8 @@ GIF
 | `/statusline` | 配置 TUI Status Line |
 | `/title` | 修改终端标题 |
 | `/logout` | 删除/清除当前认证 |
-| `/clear` | 清屏并开始新会话 |
 | `/help` | 命令帮助 |
-| `/exit` | 退出 |
+| `/quit` | 退出 |
 
 ---
 
@@ -783,7 +787,7 @@ codex-cpp -i [options]
 --provider codex|openai|deepseek|custom
 
 --login
---device-auth
+--device-auth  # alias for --login
 
 --api responses|chat
 --base-url URL
@@ -815,7 +819,6 @@ codex-cpp -i [options]
 --mcp-config PATH
 --image PATH
 
---self-test
 --help
 ```
 
@@ -878,7 +881,7 @@ Model
 
 ## What is codex-cpp?
 
-`codex-cpp` is a clean-room, single-file C++17 implementation of a Codex-style terminal coding agent.
+`codex-cpp` is a clean-room C++17 implementation of a Codex-style terminal coding agent. Its API client and TUI live in adjacent `.inc` files, while `codex.cpp` remains the build entry point.
 
 It is not a line-by-line port of the official OpenAI Codex CLI.
 
@@ -900,7 +903,7 @@ Tool Result
 Model
 ```
 
-The only required runtime executable is system `curl`.
+API requests use system `curl`; `apply_patch` and `/diff` also require `git`.
 
 ---
 
@@ -912,10 +915,12 @@ macOS / Linux:
 clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex.cpp -o codex-cpp
 ```
 
-Run the built-in smoke tests:
+Build and run the standalone checks:
 
 ```bash
-./codex-cpp --self-test --root .
+clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex_self_test.cpp -o codex-self-test
+./codex-self-test
+python3 sandbox_probe.py
 ```
 
 ---
@@ -1185,6 +1190,6 @@ A complete modern coding-agent runtime normally includes a large application sta
 
 `codex-cpp` asks a different question:
 
-> How much of a useful Codex-style coding agent can fit into one C++ source file?
+> How small can a useful C++ coding-agent runtime stay while keeping its major components easy to inspect?
 
 The result is intended to be easy to inspect, modify, compile and experiment with.
