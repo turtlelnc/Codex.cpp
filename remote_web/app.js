@@ -34,6 +34,8 @@ function render(state) {
   selector.value = state.session_id || '';
   selector.disabled = state.busy;
   $('new-session').disabled = state.busy || !state.session_id;
+  $('model').value = state.model || '';
+  $('model').disabled = state.busy;
   $('run-state').textContent = state.pending ? '等待批准' : state.busy ? 'Agent 正在处理' : '待命';
   $('send').disabled = state.busy;
   $('error').textContent = state.error || '';
@@ -122,6 +124,11 @@ $('session-select').addEventListener('change', async (event) => {
 });
 $('new-session').addEventListener('click', async () => {
   try { await api('/api/session', { session_id: null }); await refresh(); }
+  catch (error) { $('error').textContent = String(error); }
+});
+$('model-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try { await api('/api/model', { model: $('model').value.trim() }); await refresh(); }
   catch (error) { $('error').textContent = String(error); }
 });
 for (const [id, allow] of [['allow', true], ['deny', false]]) {

@@ -17,7 +17,7 @@
       <p id="login-error" class="error"></p>
     </section>
     <section id="workspace" hidden>
-      <div class="panel meta"><label class="session-picker">会话<select id="session-select" aria-label="切换会话"></select></label><button id="new-session" class="secondary">新会话</button><span id="run-state">待命</span></div>
+      <div class="panel meta"><label class="session-picker">会话<select id="session-select" aria-label="切换会话"></select></label><button id="new-session" class="secondary">新会话</button><form id="model-form" class="model-picker"><label for="model">模型</label><input id="model" list="model-options" placeholder="默认模型" autocomplete="off"><datalist id="model-options"><option value="gpt-5.6-sol"><option value="gpt-5.6-luna"><option value="gpt-5.5"></datalist><button class="secondary">应用</button></form><span id="run-state">待命</span></div>
       <div id="messages" aria-live="polite"></div>
       <section id="approval" class="panel approval" hidden><h2>等待批准</h2><p id="approval-tool"></p><pre id="approval-args"></pre><div class="actions"><button id="deny" class="secondary">拒绝</button><button id="allow">批准这次操作</button></div></section>
       <p id="error" class="error"></p>

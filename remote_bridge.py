@@ -59,6 +59,7 @@ class Bridge:
         self.title_cache = {}
         self.session_id, self.error, self.pending = None, None, None
         self.process, self.busy = None, False
+        self.model = self._option_value("--model") or ""
         if self.state_path.exists():
             saved = json.loads(self.state_path.read_text(encoding="utf-8"))
             if isinstance(saved, dict) and SESSION_ID.fullmatch(str(saved.get("session_id", ""))):
@@ -172,8 +173,26 @@ class Bridge:
         with self.lock:
             return {"session_id": self.session_id, "busy": self.busy,
                     "messages": self.messages[-200:], "events": self.events[-100:],
-                    "pending": self.pending, "error": self.error,
+                    "pending": self.pending, "error": self.error, "model": self.model,
                     "sessions": self.available_sessions()}
+
+    def _option_value(self, name):
+        try:
+            return self.options[self.options.index(name) + 1]
+        except (ValueError, IndexError):
+            return None
+
+    def set_model(self, model):
+        if not isinstance(model, str) or len(model) > 200 or (model and not re.fullmatch(r"[A-Za-z0-9._:/-]+", model)):
+            raise ValueError("model must contain only letters, numbers, '.', '_', ':', '/', or '-'")
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("cannot change model while a turn is running")
+            self.options = [value for index, value in enumerate(self.options)
+                            if value != "--model" and (index == 0 or self.options[index - 1] != "--model")]
+            if model:
+                self.options += ["--model", model]
+            self.model = model
 
     def select_session(self, session_id):
         with self.lock:
@@ -361,6 +380,8 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if path == "/api/prompt":
                 self.bridge.submit(body.get("prompt"))
+            elif path == "/api/model":
+                self.bridge.set_model(body.get("model", ""))
             elif path == "/api/session":
                 self.bridge.select_session(body.get("session_id"))
             elif path == "/api/approval":
