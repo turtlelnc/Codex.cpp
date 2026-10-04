@@ -19,7 +19,21 @@ function render(state) {
   $('login').hidden = true;
   $('workspace').hidden = false;
   $('status').textContent = state.busy ? '运行中' : '已连接';
-  $('session').textContent = state.session_id || '新会话';
+  const selector = $('session-select');
+  selector.replaceChildren();
+  const fresh = document.createElement('option');
+  fresh.value = '';
+  fresh.textContent = '新会话';
+  selector.append(fresh);
+  for (const session of state.sessions || []) {
+    const option = document.createElement('option');
+    option.value = session.id;
+    option.textContent = `${session.title} · ${session.id.slice(-8)}`;
+    selector.append(option);
+  }
+  selector.value = state.session_id || '';
+  selector.disabled = state.busy;
+  $('new-session').disabled = state.busy || !state.session_id;
   $('run-state').textContent = state.pending ? '等待批准' : state.busy ? 'Agent 正在处理' : '待命';
   $('send').disabled = state.busy;
   $('error').textContent = state.error || '';
@@ -89,6 +103,14 @@ $('prompt-form').addEventListener('submit', async (event) => {
     $('prompt').value = '';
     await refresh();
   } catch (error) { $('error').textContent = String(error); }
+});
+$('session-select').addEventListener('change', async (event) => {
+  try { await api('/api/session', { session_id: event.target.value || null }); await refresh(); }
+  catch (error) { $('error').textContent = String(error); await refresh(); }
+});
+$('new-session').addEventListener('click', async () => {
+  try { await api('/api/session', { session_id: null }); await refresh(); }
+  catch (error) { $('error').textContent = String(error); }
 });
 for (const [id, allow] of [['allow', true], ['deny', false]]) {
   $(id).addEventListener('click', async () => {

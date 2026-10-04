@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -55,6 +56,7 @@ class Bridge:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.messages, self.events = [], []
+        self.title_cache = {}
         self.session_id, self.error, self.pending = None, None, None
         self.process, self.busy = None, False
         if self.state_path.exists():
@@ -66,11 +68,129 @@ class Bridge:
     def save(self):
         atomic_json(self.state_path, {"session_id": self.session_id, "messages": self.messages[-500:]})
 
+    def session_files(self, session_id):
+        directory = self.root / ".codex_cpp" / "sessions"
+        event_file = directory / (session_id + ".jsonl")
+        item_file = directory / (session_id + ".items.jsonl")
+        return event_file, item_file
+
+    def session_messages(self, session_id):
+        _, item_file = self.session_files(session_id)
+        if item_file.is_symlink() or not item_file.is_file():
+            transcript = self.root / ".codex_cpp" / "sessions" / (session_id + ".transcript")
+            if transcript.is_symlink() or not transcript.is_file():
+                return []
+            try:
+                return [{"role": "history", "content": transcript.read_text(encoding="utf-8")[-12000:]}]
+            except (OSError, UnicodeError):
+                return []
+        messages = []
+        try:
+            with item_file.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        item = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    role = item.get("role")
+                    content = item.get("content")
+                    if role not in ("user", "assistant"):
+                        continue
+                    if isinstance(content, list):
+                        content = "\n".join(part.get("text", "") for part in content
+                                            if isinstance(part, dict) and isinstance(part.get("text"), str))
+                    if isinstance(content, str) and content:
+                        if role == "user" and "\n\nUser task:\n" in content:
+                            content = content.rsplit("\n\nUser task:\n", 1)[1]
+                        messages.append({"role": role, "content": content})
+        except (OSError, UnicodeError):
+            return []
+        return messages[-200:]
+
+    def available_sessions(self):
+        directory = self.root / ".codex_cpp" / "sessions"
+        sessions = []
+        try:
+            for event_file in directory.glob("*.jsonl"):
+                session_id = event_file.stem
+                if not SESSION_ID.fullmatch(session_id) or event_file.is_symlink():
+                    continue
+                try:
+                    event_stat = event_file.stat()
+                    if not stat.S_ISREG(event_stat.st_mode):
+                        continue
+                    meta_file = directory / (session_id + ".meta.json")
+                    title = ""
+                    if not meta_file.is_symlink() and meta_file.is_file():
+                        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                        title = meta.get("name", "") if isinstance(meta, dict) else ""
+                    if not title:
+                        item_file = directory / (session_id + ".items.jsonl")
+                        item_mtime = item_file.stat().st_mtime if not item_file.is_symlink() and item_file.is_file() else 0
+                        cached = self.title_cache.get(session_id)
+                        if cached and cached[0] == item_mtime:
+                            title = cached[1]
+                        else:
+                            title = self.session_title(item_file)
+                            self.title_cache[session_id] = (item_mtime, title)
+                    sessions.append({"id": session_id, "title": title,
+                                     "updated": event_stat.st_mtime,
+                                     "selected": session_id == self.session_id})
+                except (OSError, ValueError, UnicodeError):
+                    continue
+        except OSError:
+            pass
+        sessions.sort(key=lambda item: item["updated"], reverse=True)
+        return sessions[:100]
+
+    @staticmethod
+    def session_title(item_file):
+        try:
+            with item_file.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        item = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(item, dict) or item.get("role") != "user":
+                        continue
+                    content = item.get("content", "")
+                    if isinstance(content, list):
+                        content = "\n".join(part.get("text", "") for part in content
+                                            if isinstance(part, dict) and isinstance(part.get("text"), str))
+                    if isinstance(content, str) and content.strip():
+                        if "\n\nUser task:\n" in content:
+                            content = content.rsplit("\n\nUser task:\n", 1)[1]
+                        return content.strip().splitlines()[0][:72]
+        except (OSError, UnicodeError):
+            pass
+        return "空会话"
+
     def snapshot(self):
         with self.lock:
             return {"session_id": self.session_id, "busy": self.busy,
                     "messages": self.messages[-200:], "events": self.events[-100:],
-                    "pending": self.pending, "error": self.error}
+                    "pending": self.pending, "error": self.error,
+                    "sessions": self.available_sessions()}
+
+    def select_session(self, session_id):
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("cannot switch sessions while a turn is running")
+            if session_id is None:
+                self.session_id, self.messages = None, []
+            else:
+                if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
+                    raise ValueError("invalid session ID")
+                event_file, _ = self.session_files(session_id)
+                if event_file.is_symlink() or not event_file.is_file():
+                    raise ValueError("session does not exist")
+                self.session_id = session_id
+                self.messages = self.session_messages(session_id)
+            self.events, self.error, self.pending = [], None, None
+            self.save()
 
     def latest_call(self, call_id):
         if not self.session_id:
@@ -241,6 +361,8 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if path == "/api/prompt":
                 self.bridge.submit(body.get("prompt"))
+            elif path == "/api/session":
+                self.bridge.select_session(body.get("session_id"))
             elif path == "/api/approval":
                 if type(body.get("allow")) is not bool:
                     raise ValueError("allow must be boolean")
