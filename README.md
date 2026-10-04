@@ -102,7 +102,7 @@ python3 remote_bridge.py --root /path/to/your/project
 
 默认只监听 `127.0.0.1:8765`。首次启动会生成仅本机账户可读的 `~/.codex-cpp/remote-token`；打开 `http://127.0.0.1:8765` 并输入该令牌。网页令牌只保存在当前标签页。可用 `--provider`、`--model`、`--base-url` 等参数指定 Provider；`--root` 是 Agent 可以操作的项目目录。浏览器关闭后，服务进程和当前 Agent 回合继续运行。
 
-通过 Cloudflare Tunnel 访问时，**先**为目标域名设置 Cloudflare Access 自托管应用，Allow 策略只包含自己的邮箱；确认未登录时被 Access 拦截后，再把 Tunnel 的 HTTP 服务指向 `http://127.0.0.1:8765`。网页令牌仍需输入。具体命令和检查见 [远程部署说明](REMOTE.md)。不要将服务监听地址改为 `0.0.0.0`，也不要把令牌提交到 Git。
+通过 Cloudflare Tunnel 访问时，推荐再用 Cloudflare Access 限定登录邮箱；若未启用 Access，公网登录页可见，只有持有随机令牌的人才能读取会话或操作 Agent。具体命令和检查见 [远程部署说明](REMOTE.md)。不要将服务监听地址改为 `0.0.0.0`，也不要把令牌提交到 Git。
 
 ---
 

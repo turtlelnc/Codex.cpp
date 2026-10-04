@@ -18,13 +18,12 @@ python3 remote_bridge.py --root /path/to/your/project
 
 ## Cloudflare Access 与 Tunnel
 
-先在 Cloudflare Zero Trust 创建 **Self-hosted / Public hostname** Access 应用，域名填写将用于远程访问的完整域名。为应用创建 **Allow** 策略，只允许自己的邮箱。保存后在无登录状态的浏览器访问域名，确认 Cloudflare Access 登录页或拒绝响应出现。若域名已有站点或 DNS 记录，先核对并处理冲突，避免覆盖现有服务。
+推荐先在 Cloudflare Zero Trust 创建 **Self-hosted / Public hostname** Access 应用，域名填写将用于远程访问的完整域名。为应用创建 **Allow** 策略，只允许自己的邮箱。保存后在无登录状态的浏览器访问域名，确认 Cloudflare Access 登录页或拒绝响应出现。若无法启用 Access，也可只使用高强度随机令牌保护 API；这时公网登录页可见，持有令牌者可以读取聊天、提交提示词并批准工具。若域名已有站点或 DNS 记录，先核对并处理冲突，避免覆盖现有服务。
 
 随后创建**独立**的本地管理 Tunnel（不要复用其他服务的 Tunnel）。下面把 `<tunnel-name>`、`<tunnel-uuid>`、`<hostname>` 替换为自己的值：
 
 ```bash
 cloudflared tunnel create <tunnel-name>
-cloudflared tunnel route dns <tunnel-name> <hostname>
 ```
 
 在 `~/.cloudflared/codex-remote.yml` 写入：
@@ -38,6 +37,13 @@ ingress:
   - service: http_status:404
 ```
 
-启动 `cloudflared tunnel --config ~/.cloudflared/codex-remote.yml run`。确认 Access 拦截有效后，再在浏览器登录 Access、输入网页令牌，测试发送提示词、查看进度和处理一次批准。`cloudflared` 和 `remote_bridge.py` 都必须在电脑上持续运行；电脑睡眠或断网时远程入口无法使用。要开机自启，可按 Cloudflare 官方服务安装说明配置 `cloudflared`，并用系统服务管理器运行 bridge。
+然后创建 DNS 路由并启动 Tunnel：
 
-Access 是第一层身份验证，本机随机令牌是第二层。即使 Tunnel 路由误设成公开，缺少令牌也不能调用提交提示词或批准接口；但静态登录页可被访问。因此应先启用 Access，再创建路由，并定期检查 Access 策略。
+```bash
+cloudflared tunnel --config ~/.cloudflared/codex-remote.yml route dns <tunnel-uuid> <hostname>
+cloudflared tunnel --config ~/.cloudflared/codex-remote.yml run
+```
+
+明确指定配置文件和 Tunnel UUID 可避免意外使用现有的默认 Tunnel。在浏览器输入网页令牌，测试发送提示词、查看进度和处理一次批准。`cloudflared` 和 `remote_bridge.py` 都必须在电脑上持续运行；电脑睡眠或断网时远程入口无法使用。要开机自启，可按 Cloudflare 官方服务安装说明配置 `cloudflared`，并用系统服务管理器运行 bridge。
+
+启用 Access 时，它是第一层身份验证，本机随机令牌是第二层。仅用令牌时，静态登录页公开，API 仍要求令牌；令牌一旦泄露，应停止 Tunnel，删除 `~/.codex-cpp/remote-token`，重启 bridge 生成新令牌，再恢复 Tunnel。
