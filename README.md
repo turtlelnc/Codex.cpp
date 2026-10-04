@@ -41,7 +41,7 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - MCP stdio tools
 - 图片输入
 - JSONL Agent event 输出
-- 可选的远程网页入口：提交下一轮提示词、查看会话与进度、处理工具批准
+- 可选的远程网页入口：提交下一轮提示词、实时查看模型输出与进度、处理工具批准
 - Plan / Goal / Review 等 Agent 辅助模式
 
 ---

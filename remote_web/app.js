@@ -49,6 +49,18 @@ function render(state) {
     block.append(label, body);
     messages.append(block);
   }
+  const draft = state.events.filter((item) => item.type === 'model.delta')
+    .map((item) => item.payload?.delta || '').join('');
+  if (draft) {
+    const block = document.createElement('article');
+    block.className = 'message assistant streaming';
+    const label = document.createElement('strong');
+    label.textContent = 'Codex · 正在输出';
+    const body = document.createElement('pre');
+    body.textContent = draft;
+    block.append(label, body);
+    messages.append(block);
+  }
   const pending = state.pending;
   $('approval').hidden = !pending;
   if (pending) {

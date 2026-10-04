@@ -341,9 +341,9 @@ bool needs_write_approval()const{return approval == ApprovalPolicy::OnRequest &&
 std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N] ")<< std::flush;std::string s;std::getline(std::cin,s);s = trim(s);
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ModelDelta,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelOutput: return "model.output";case EventKind::ModelDelta: return "model.delta";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -913,7 +913,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false)->int{
 #endif
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
-  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(opt.json)return;
+  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(opt.json){session.emit(EventKind::ModelDelta,"{\"delta\":\"" + json_escape(delta) + "\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
   auto update_elapsed=[&](){if(tui)tui->render("working...");};if(api.style == ApiStyle::Responses){
