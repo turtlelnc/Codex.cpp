@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex.cpp Remote</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><div><h1>Codex.cpp</h1><p>远程会话</p></div><span id="status">未连接</span></header>
+    <section id="login" class="panel">
+      <h2>连接本机 Agent</h2>
+      <p>输入本机 <code>remote-token</code> 文件中的访问令牌。令牌只保存在当前浏览器标签页。</p>
+      <form id="login-form"><input id="token" type="password" autocomplete="off" required placeholder="访问令牌"><button>连接</button></form>
+      <p id="login-error" class="error"></p>
+    </section>
+    <section id="workspace" hidden>
+      <div class="panel meta"><span>会话 <code id="session">新会话</code></span><span id="run-state">待命</span></div>
+      <div id="messages" aria-live="polite"></div>
+      <section id="approval" class="panel approval" hidden><h2>等待批准</h2><p id="approval-tool"></p><pre id="approval-args"></pre><div class="actions"><button id="deny" class="secondary">拒绝</button><button id="allow">批准这次操作</button></div></section>
+      <p id="error" class="error"></p>
+      <form id="prompt-form" class="panel composer"><label for="prompt">下一步提示词</label><textarea id="prompt" rows="4" maxlength="60000" placeholder="告诉 Agent 下一步做什么…" required></textarea><button id="send">发送</button></form>
+      <details class="panel"><summary>运行进度</summary><ol id="events"></ol></details>
+    </section>
+  </main>
+</body>
+</html>

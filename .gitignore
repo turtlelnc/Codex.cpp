@@ -6,3 +6,4 @@
 /.codex-cpp/
 .DS_Store
 *.o
+__pycache__/

@@ -41,6 +41,7 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - MCP stdio tools
 - 图片输入
 - JSONL Agent event 输出
+- 可选的远程网页入口：提交下一轮提示词、查看会话与进度、处理工具批准
 - Plan / Goal / Review 等 Agent 辅助模式
 
 ---
@@ -54,6 +55,7 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - `codex_tui.inc`：终端界面与 Markdown 渲染。
 - `codex_self_test.cpp`：独立的解析、工具、会话与权限检查。
 - `sandbox_probe.py`：使用临时工作区验证 Shell 沙箱边界。
+- `remote_bridge.py`、`remote_web/`：仅监听本机的远程网页入口；通过 Cloudflare Tunnel 发布时仍需 Cloudflare Access。
 
 构建时需要把 `codex.cpp` 和两个 `.inc` 文件放在同一目录。运行程序无需这些源码文件；API 请求需要系统 `curl`。
 
@@ -85,7 +87,22 @@ g++ -std=c++17 -O2 -Wall -Wextra -pedantic codex.cpp -o codex-cpp
 clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex_self_test.cpp -o codex-self-test
 ./codex-self-test
 python3 sandbox_probe.py
+python3 -m unittest tests.test_remote_bridge
 ```
+
+---
+
+## 远程访问
+
+远程网页会启动并恢复本项目的 `codex-cpp` 会话，可发送下一轮提示词、查看聊天和 JSONL 进度，并批准或拒绝需要授权的工具调用。先构建并完成 Provider 登录，然后在运行 Agent 的电脑上启动：
+
+```bash
+python3 remote_bridge.py --root /path/to/your/project
+```
+
+默认只监听 `127.0.0.1:8765`。首次启动会生成仅本机账户可读的 `~/.codex-cpp/remote-token`；打开 `http://127.0.0.1:8765` 并输入该令牌。网页令牌只保存在当前标签页。可用 `--provider`、`--model`、`--base-url` 等参数指定 Provider；`--root` 是 Agent 可以操作的项目目录。浏览器关闭后，服务进程和当前 Agent 回合继续运行。
+
+通过 Cloudflare Tunnel 访问时，**先**为目标域名设置 Cloudflare Access 自托管应用，Allow 策略只包含自己的邮箱；确认未登录时被 Access 拦截后，再把 Tunnel 的 HTTP 服务指向 `http://127.0.0.1:8765`。网页令牌仍需输入。具体命令和检查见 [远程部署说明](REMOTE.md)。不要将服务监听地址改为 `0.0.0.0`，也不要把令牌提交到 Git。
 
 ---
 
