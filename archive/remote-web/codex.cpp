@@ -341,9 +341,9 @@ bool needs_write_approval()const{return approval == ApprovalPolicy::OnRequest &&
 std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N] ")<< std::flush;std::string s;std::getline(std::cin,s);s = trim(s);
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ModelDelta,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelOutput: return "model.output";case EventKind::ModelDelta: return "model.delta";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -367,7 +367,7 @@ bool replace_items(const std::vector<std::string>& compacted){const fs::path sta
 }
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
   << "\",\"session_id\":\"" << json_escape(id)<< "\",\"type\":\"" << event_name(kind)<< "\",\"payload\":" << payload << "}";
-  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n';
+  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n' << std::flush;
 }
 void append_transcript(const std::string& text){transcript += text;std::ofstream f(transcript_path,std::ios::binary | std::ios::trunc); if(f)f << transcript;
 }
@@ -539,7 +539,7 @@ ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePol
   // Its mutating() marker is conservative for approval, not a reason to
   // suppress all shell commands before the OS policy sees them.
   if(tool->mutates()&& !tool->is_shell()&& !policy.can_write())return{126,"DENIED: mutation disabled by read-only policy"};
-  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\"}");
+  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id) + "\"}");
   const std::string approval_text = call.name + ": " + call.arguments; const bool ok = approval_ui ? approval_ui(approval_text).value_or(false): approve(approval_text,false);
   session.emit(EventKind::ApprovalDecision,std::string("{\"approved\":")+(ok ? "true}" : "false}"));if(!ok)return{126,"DENIED by user"}; }
   session.emit(EventKind::ToolStarted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\"}");
@@ -913,7 +913,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false)->int{
 #endif
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
-  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(opt.json)return;
+  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(opt.json){session.emit(EventKind::ModelDelta,"{\"delta\":\"" + json_escape(delta) + "\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
   auto update_elapsed=[&](){if(tui)tui->render("working...");};if(api.style == ApiStyle::Responses){

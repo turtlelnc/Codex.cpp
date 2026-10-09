@@ -1,0 +1,9 @@
+# Local build products and workspace state
+/codex
+/codex-cpp
+/codex-self-test
+/.codex_cpp/
+/.codex-cpp/
+.DS_Store
+*.o
+__pycache__/
