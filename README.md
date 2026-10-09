@@ -33,6 +33,8 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - Markdown Table 渲染
 - 多轮会话
 - 本地会话恢复
+- 项目 Memory.md（显式记录、跨会话读取）
+- 临时请求错误有限重试与未完成回合续跑
 - 自动上下文压缩
 - 文件读写
 - Shell 命令
@@ -88,6 +90,31 @@ clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex_self_test.cpp -o codex-self
 ./codex-self-test
 python3 sandbox_probe.py
 ```
+
+---
+
+## 项目记忆与失败续跑
+
+项目根目录的 `Memory.md` 会在每轮请求时作为参考上下文读取，最多 16 KiB。它适合保存构建方式、已确认的偏好和项目事实；项目规则仍放在 `AGENTS.md`。旧笔记可能过时，模型应先核对；只有用户明确要求时才更新记忆，不会自动总结每轮对话。
+
+交互模式下查看或追加笔记：
+
+```text
+/memory
+/memory 使用 clang++ 编译，保留 C++17 兼容性
+```
+
+只读模式禁止追加；可直接编辑 `Memory.md` 删除过时内容。
+
+临时限流、部分服务错误和网络故障最多重试两次。Codex 流一旦收到 SSE 内容，不会自动重新请求，以免重复显示已输出的内容。持续限流仍会停止并保留会话；不会自动重新执行工具。
+
+恢复未完成的任务：
+
+```bash
+./codex-cpp --root /path/to/project --resume SESSION_ID --continue
+```
+
+也可以先用 `--resume SESSION_ID` 打开会话，再输入 `/continue`。续跑复用已有用户消息与工具结果；原回合的只读限制会保留。若工具调用已记录但结果缺失，会标记为执行结果未知，要求模型先检查工作区再决定是否重做；这类调用的实际效果需要核对。
 
 ---
 

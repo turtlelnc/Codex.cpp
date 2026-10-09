@@ -45,6 +45,7 @@ return 32; } struct SlashCommandDef{const char* name;const char* description;boo
   {"/hooks","view and manage lifecycle hooks",false},{"/review","review my current changes and find issues",true},
   {"/rename","rename the current thread",true},{"/new","start a new chat during a conversation",true},{"/archive","archive this session and exit",true},
   {"/delete","permanently delete this session and exit",true},{"/resume","resume a saved chat",true},{"/fork","fork the current chat",true},
+  {"/continue","continue the unfinished turn",true},{"/memory","view project memory or append a note",true},
   {"/app","continue this session in the Desktop app",false},{"/init","create an AGENTS.md file with instructions for Codex",true},
   {"/compact","summarize conversation to prevent hitting the context limit",true},{"/plan","switch to Plan mode",true},
   {"/goal","set or view the goal for a long-running task",true},{"/agent","switch the active agent thread",false},

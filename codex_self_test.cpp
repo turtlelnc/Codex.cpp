@@ -63,7 +63,19 @@ check(prompt_bundle.developer_instructions.find("Sandbox and approvals")!= std::
 check(prompt_bundle.contextual_user_prefix.find("Project rule: run focused tests.")!= std::string::npos && prompt_bundle.contextual_user_prefix.find("<environment_context>")!= std::string::npos &&
   prompt_bundle.contextual_user_prefix.find(troot.string())!= std::string::npos,"prompt AGENTS and environment context");
 RuntimePolicy ro = p;ro.sandbox = SandboxMode::ReadOnly;ro.approval = ApprovalPolicy::OnRequest;PromptBuilder ro_builder{troot,ro,prompt_api,false,"",""};
-check(ro_builder.build().developer_instructions.find("workspace is read-only")!= std::string::npos,"prompt read-only permissions"); std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed == 0; }
+check(ro_builder.build().developer_instructions.find("workspace is read-only")!= std::string::npos,"prompt read-only permissions");
+write_all(troot/"Memory.md","# Project memory\n- Build with clang++\n",err);
+check(ro_builder.build().contextual_user_prefix.find("Build with clang++")!=std::string::npos,"project memory crosses sessions");
+Session recovery;check(init_session(recovery,troot,false,std::nullopt,err),"recovery session creation");
+recovery.append_transcript("unfinished task\n");
+recovery.emit(EventKind::TurnStarted,"{\"task\":\"finish task\",\"sandbox\":\"read-only\"}");
+recovery.record_item(R"({"type":"function_call","call_id":"unknown","name":"shell","arguments":"{}"})");
+Session reopened;check(init_session(reopened,troot,false,recovery.id,err) && reopened.pending_turn()==std::make_pair(std::string("finish task"),std::string("read-only")),"unfinished turn survives restart with sandbox");
+check(reopened.close_unconfirmed_calls() && reopened.items.back().find("UNKNOWN")!=std::string::npos,"unconfirmed tool result does not replay execution");
+const auto count=reopened.items.size();check(reopened.close_unconfirmed_calls() && reopened.items.size()==count,"recovery is idempotent");
+reopened.emit(EventKind::TurnCompleted,"{\"status\":\"interrupted\"}");check(!reopened.pending_turn().first.empty(),"interrupted turn remains available to continue");
+reopened.emit(EventKind::TurnCompleted,"{\"status\":\"completed\"}");check(reopened.pending_turn().first.empty(),"completed turn is not resumed");
+std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed == 0; }
 
 int main(int argc,char** argv){
   const fs::path root=argc>1?fs::path(argv[1]):fs::temp_directory_path()/"codex-cpp-selftest";

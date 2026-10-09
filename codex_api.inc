@@ -65,7 +65,18 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
 #endif
   }
   std::error_code ec;fs::remove(req,ec);fs::remove(hdr,ec);fs::remove(stderr_path,ec);return result; };
-  auto r=request();if(r.error=="Interrupted by Esc"){err=r.error;return{};}if(r.status==401 && refresh_auth(*a,err))r=request();
+  auto r=request();for(int retry=0;retry<2 && r.body.find("data:")==std::string::npos &&
+    (r.status==429 || r.status==502 || r.status==503 || r.status==504 ||
+     (r.status==0 && r.error.rfind("curl failed:",0)==0));++retry){
+    std::cerr << "[retry] HTTP " << r.status << "; retrying in " << (retry+1)*2 << " seconds\n";
+    for(int tick=0;tick<(retry+1)*20;++tick){
+#if !defined(_WIN32)
+      if(tui_interrupt_requested){err="Interrupted by Ctrl+C";return{};}
+#endif
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));if(on_tick)on_tick();
+    }r=request();
+  }
+  if(r.error=="Interrupted by Esc"){err=r.error;return{};}if(r.status==401 && refresh_auth(*a,err))r=request();
   if(!r.error.empty()|| r.status!=200){err="Codex backend request failed (HTTP "+std::to_string(r.status)+"): "+r.error;
   // Avoid placing backend error bodies in logs: they may contain tokens.
   return{}; } return r.body;
@@ -89,7 +100,7 @@ std::optional<std::string> post(const std::string& path,const std::string& body,
   if(chatgpt_auth){err = "internal routing error: ChatGPT login request reached API Key transport";return std::nullopt; }
   const fs::path req = temp_path("codex-cpp-request");const fs::path out = temp_path("codex-cpp-response"); const fs::path header = temp_path("codex-cpp-header");
   {std::ofstream f(req,std::ios::binary);if(!f){err = "cannot create request temp file";return std::nullopt;}f << body;}
-  std::string cmd = "curl -sS --fail-with-body --connect-timeout 20 --max-time 300 -o " + shell_quote(out.string());if(!no_api_key){
+  std::string cmd = "curl -sS --fail-with-body --retry 2 --retry-connrefused --retry-max-time 20 --connect-timeout 20 --max-time 300 -o " + shell_quote(out.string());if(!no_api_key){
   if(api_key.empty()){std::error_code ec;fs::remove(req,ec);err = "API key is not set";return std::nullopt;} {std::ofstream f(header,std::ios::binary);f << "Authorization: Bearer " << api_key << "\n";}
 #if !defined(_WIN32)
   fs::permissions(header,fs::perms::owner_read | fs::perms::owner_write,fs::perm_options::replace);

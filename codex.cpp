@@ -371,6 +371,23 @@ void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstr
 }
 void append_transcript(const std::string& text){transcript += text;std::ofstream f(transcript_path,std::ios::binary | std::ios::trunc); if(f)f << transcript;
 }
+std::pair<std::string,std::string> pending_turn()const{
+  std::pair<std::string,std::string> pending;std::ifstream f(events_path);std::string line;
+  while(std::getline(f,line)){auto e=parse_json(line);if(!e)continue;auto type=e->get("type"),payload=e->get("payload");
+    if(type && type->str()=="turn.started" && payload){auto task=payload->get("task"),sandbox=payload->get("sandbox");
+      pending={task?task->str():"",sandbox?sandbox->str():""};
+    }else if(type && type->str()=="turn.completed" && payload){auto status=payload->get("status");if(status && status->str()=="completed")pending={};}
+  }return pending;
+}
+bool close_unconfirmed_calls(){
+  std::set<std::string> pending;for(const auto& raw:items){auto item=parse_json(raw);if(!item)continue;
+    auto type=item->get("type"),id=item->get("call_id");if(!type || !id)continue;
+    if(type->str()=="function_call")pending.insert(id->str());else if(type->str()=="function_call_output")pending.erase(id->str());
+  }
+  for(const auto& id:pending)if(!record_item("{\"type\":\"function_call_output\",\"call_id\":\""+json_escape(id)+
+    "\",\"output\":\"Interrupted before the result was saved. Execution and side effects are UNKNOWN. Inspect workspace state before deciding whether any operation should be repeated; do not blindly replay it.\"}"))return false;
+  return true;
+}
 };
 static bool init_session(Session& s,const fs::path& root,bool echo_json,const std::optional<std::string>& resume,std::string& err){
 s.items.clear();s.transcript.clear();s.root = root;s.dir = root / ".codex_cpp" / "sessions";std::error_code ec;fs::create_directories(s.dir,ec);
@@ -704,6 +721,8 @@ std::string goal;PromptBundle build()const{PromptBundle bundle;std::ostringstrea
   developer << "\n\n# Plan mode\nAnalyze the task and produce an implementation plan. Do not make mutating tool calls."; } if(!personality.empty()){developer << "\n\n# Communication style\n" << personality; }
   bundle.developer_instructions = developer.str();std::ostringstream contextual;if(auto agents = load_project_instructions(root)){
   contextual << "# AGENTS.md instructions for " << root.string()<< "\n\n<INSTRUCTIONS>\n" << *agents << "\n</INSTRUCTIONS>\n\n"; }
+  const fs::path memory=root/"Memory.md";std::error_code ec;
+  if(within_root(root,memory) && fs::is_regular_file(memory,ec))contextual << "# Project memory\nPrior notes may be outdated; verify them against the current project. Update Memory.md only when the user explicitly asks to remember something.\n\n" << slurp(memory,16384) << "\n\n";
   if(auto skills=skills_manifest(root);!skills.empty())contextual << "# Available skills\n" << skills << "Use read_skill with the exact name when a skill applies.\n\n";
   contextual << render_environment_context(root,policy);if(!goal.empty())contextual << "\n\n<current_goal>" << xml_escape(goal)<< "</current_goal>"; bundle.contextual_user_prefix = contextual.str();return bundle;
 }
@@ -715,7 +734,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;bool no_api_key = false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
-std::string api_key_env;bool login = false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+std::string api_key_env;bool login = false,continue_turn = false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
@@ -741,6 +760,7 @@ UI:
 Agent options:
   --root DIR                    workspace (default: current directory)
   --resume SESSION_ID           resume a saved structured session
+  --continue                    continue its unfinished turn (requires --resume)
   --list-sessions               print known local session IDs
   --json                        echo rollout events as JSONL
   --auto                        never request approval
@@ -760,7 +780,7 @@ Provider presets:
   custom    values supplied by --api/--base-url/--model/--api-key-env
 
 Interactive commands:
-  /help  /status  /sessions  /new  /quit
+  /help  /status  /sessions  /new  /memory  /continue  /quit
 
 Security note:
   Restricted shell commands require macOS sandbox-exec or a working Linux bwrap.
@@ -777,6 +797,7 @@ static std::optional<Options> parse_options(int argc,char** argv,std::string& er
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume" && i + 1 < argc){o.resume = argv[++i];continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a == "--json"){o.json = true;continue;}
+  if(a == "--continue"){o.continue_turn=true;continue;}
   if(a == "-i" || a == "--interactive"){o.interactive = true;continue;}if(a == "--ui" && i + 1 < argc){std::string v = argv[++i];
   if(v == "auto")o.ui_mode = UiMode::Auto;else if(v == "tui")o.ui_mode = UiMode::Tui;else if(v == "plain")o.ui_mode = UiMode::Plain; else{err = "invalid --ui: " + v;return std::nullopt;}continue; }
   if(a == "--no-api-key"){o.no_api_key = true;continue;}if(a == "--login" || a == "--device-auth"){o.login = true;continue;}
@@ -841,6 +862,7 @@ int main(int argc,char** argv){
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
 #endif
 std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;
+if(opt.continue_turn && (!opt.resume || !opt.prompt.empty() || !opt.images.empty())){std::cerr << "--continue requires --resume, without a new prompt or image\n";return 2;}
 // Provider presets are deliberately small. Any OpenAI-compatible endpoint can
 // be configured explicitly with --provider custom.
 if(opt.provider == "codex"){if(opt.model.empty())opt.model = "gpt-5.6-sol";opt.api_style = ApiStyle::Responses; }else if(opt.provider == "openai"){
@@ -868,7 +890,7 @@ std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_
 const std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
 ApiClient api;api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
 api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";
-while(!api.base_url.empty()&& api.base_url.back()== '/')api.base_url.pop_back();const bool interactive = opt.interactive || opt.prompt.empty();
+while(!api.base_url.empty()&& api.base_url.back()== '/')api.base_url.pop_back();const bool interactive = opt.interactive || (opt.prompt.empty() && !opt.continue_turn);
 bool use_tui = false;if(interactive && !opt.json){const bool vt = enable_and_detect_vt();if(opt.ui_mode == UiMode::Tui && !vt){
   std::cerr << "[ui] TUI requested but this terminal has no usable VT support; falling back to plain mode.\n"; } use_tui =(opt.ui_mode == UiMode::Tui && vt)||(opt.ui_mode == UiMode::Auto && vt);
 }
@@ -889,7 +911,8 @@ bool plan_mode = false;std::string goal;std::string personality;std::string last
 if(opt.images.size()>4){std::cerr<<"Maximum four images per turn.\n";return 2;}for(const auto& image:opt.images){ const fs::path file=image.is_absolute()?image:opt.root/image;auto url=image_data_url(file,err);
   if(!url){std::cerr<<"image "<<file<<": "<<err<<'\n';return 2;}pending_images.emplace_back(file.string(),std::move(*url));
 }
-auto run_turn =[&](const std::string& raw_prompt,bool review_only = false)->int{std::string user_prompt = trim(raw_prompt);if(user_prompt.empty())return 0;
+auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool continuing = false)->int{std::string user_prompt = trim(raw_prompt);if(user_prompt.empty())return 0;
+  const auto pending=session.pending_turn();if(!session.close_unconfirmed_calls()){std::cerr << "cannot save interrupted tool results\n";return 3;}
   if(!pending_mentions.empty()){user_prompt += "\n\nMentioned file context:";for(const auto&[path,content]: pending_mentions) user_prompt += "\n\n--- " + path + " ---\n" + content;
   pending_mentions.clear(); } if(session.context_bytes()>350000){if(tui)tui->render("compacting context...");if(!compact_session(session,api,err)){
     if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;
@@ -897,16 +920,17 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false)->int{
   }
   if(tui){tui->add_user(trim(raw_prompt));tui->render("working...");}std::ostringstream start;start << "Workspace root: " << opt.root.string()<< "\n"
   << "Sandbox policy: " << sandbox_name(opt.policy.sandbox)<< "\n" << "User task:\n" << user_prompt << "\n";
-  if(session.transcript.empty())session.append_transcript(start.str());else session.append_transcript("\n[resumed user turn]\n" + user_prompt + "\n");
-  session.emit(EventKind::TurnStarted,"{\"task\":\"" + json_escape(user_prompt)+ "\",\"sandbox\":\"" + sandbox_name(opt.policy.sandbox)+ "\"}");
+  if(!continuing){if(session.transcript.empty())session.append_transcript(start.str());else session.append_transcript("\n[resumed user turn]\n" + user_prompt + "\n");}
   RuntimePolicy turn_policy=opt.policy;if(plan_mode || review_only)turn_policy.sandbox=SandboxMode::ReadOnly;
+  if(continuing && pending.second=="read-only")turn_policy.sandbox=SandboxMode::ReadOnly;
   PromptBuilder prompt_builder{opt.root,turn_policy,api,plan_mode,personality,goal};PromptBundle prompt_bundle = prompt_builder.build(); std::string turn_instructions = prompt_bundle.developer_instructions;
   if(review_only)turn_instructions+="\n\n# Review\nInspect changes and report actionable issues with file locations. Do not edit files.";
   const std::string text_content=prompt_bundle.contextual_user_prefix+"\n\n"+user_prompt;std::string user_item;
   if(pending_images.empty())user_item="{\"role\":\"user\",\"content\":\""+json_escape(text_content)+"\"}";else{
   user_item="{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\""+ json_escape(text_content)+"\"}";
   for(const auto&[path,url]:pending_images){(void)path;user_item+=",{\"type\":\"input_image\",\"image_url\":\""+json_escape(url)+"\"}"; } user_item+="]}"; }
-  if(!session.record_item(user_item)){err="could not save user message";if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n'; return 3; }
+  if(!continuing && !session.record_item(user_item)){err="could not save user message";if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n'; return 3; }
+  session.emit(EventKind::TurnStarted,"{\"task\":\"" + json_escape(user_prompt)+ "\",\"sandbox\":\"" + sandbox_name(turn_policy.sandbox)+ "\"}");
   pending_images.clear();for(int step = 1;step <= opt.max_steps;++step){
 #if !defined(_WIN32)
   if(tui_interrupt_requested)return 130;
@@ -971,6 +995,9 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false)->int{
   session.emit(EventKind::TurnCompleted,"{\"status\":\"max_steps\"}");if(tui){tui->add_error("stopped after maximum agent steps");tui->render(); }else{ std::cerr << "[error] stopped after maximum agent steps\n"; }
   return 4;
 };
+if(opt.continue_turn){const auto pending=session.pending_turn();if(pending.first.empty()){std::cerr << "No unfinished turn.\n";return 2;}
+  int rc=run_turn(pending.first,false,true);if(!interactive || rc!=0)return rc;
+}else if(opt.resume && !session.pending_turn().first.empty())std::cerr << "[session] unfinished turn available; use /continue or --resume " << session.id << " --continue\n";
 if(!first_prompt.empty()){int rc = run_turn(first_prompt);
 #if !defined(_WIN32)
   if(tui_interrupt_requested)return 130;
@@ -993,6 +1020,20 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   }
   say(h.str());continue; } if(token == "/history"){std::ostringstream h;for(size_t i=0;i<input_history.size();++i)h <<(i+1)<< ": " << input_history[i]<< "\n"; say(h.str().empty()?"No input history.":h.str());continue; }
   if(token == "/sessions"){auto ids=session_ids(opt.root);std::ostringstream out;for(const auto& id:ids)out <<(id==session.id?"› ":"  ")<< id << '\n'; say(out.str().empty()?"No saved sessions.":out.str());continue; }
+  if(token == "/continue"){const auto pending=session.pending_turn();if(pending.first.empty())say("No unfinished turn.");
+    else run_turn(pending.first,false,true);continue;
+  }
+  if(token == "/memory"){const fs::path file=opt.root/"Memory.md";std::error_code ec;
+    if(!within_root(opt.root,file)){say("Memory.md escapes the workspace",true);continue;}
+    if(fs::exists(file,ec) && (!fs::is_regular_file(file,ec) || fs::file_size(file,ec)>16384)){say("Memory.md must be a text file of at most 16 KiB",true);continue;}
+    const std::string prior=fs::exists(file,ec)?slurp(file,16384):"";
+    if(args.empty()){say(prior.empty()?"No project memory. Use /memory TEXT to append a note.":prior);continue;}
+    if(!opt.policy.can_write()){say("Memory is read-only under the current policy",true);continue;}
+    const std::string content=(prior.empty()?"# Project memory\n":prior)+(prior.empty() || prior.back()=='\n'?"":"\n")+"- "+args+"\n";
+    if(content.size()>16384){say("Memory.md is limited to 16 KiB; edit it to remove stale notes",true);continue;}
+    WriteFileTool writer;const auto result=writer.run("{\"path\":\"Memory.md\",\"content\":\""+json_escape(content)+"\"}",opt.root);
+    say(result.output,result.exit_code!=0);continue;
+  }
   if(token == "/status"){std::ostringstream st;st << "session: " << session.id << "\n" << "workspace: " << opt.root.string()<< "\n"
   << "provider: " << opt.provider << " (" << api_style_name(api.style)<< ")\n" << "model: " << api.model;
   if(!api.reasoning_effort.empty())st << " " << api.reasoning_effort;st << "\nsandbox: " << sandbox_name(opt.policy.sandbox)
