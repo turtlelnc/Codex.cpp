@@ -715,14 +715,15 @@ if(!api.reasoning_effort.empty())out << "Configured reasoning effort: " << api.r
   out << "Tool calls use the Responses function_call protocol. Keep tool arguments valid JSON.";
 }
 return out.str(); } struct PromptBundle{std::string developer_instructions;std::string contextual_user_prefix; };
+static std::string load_project_memory(const fs::path& root){const fs::path file=root/"Memory.md";std::error_code ec;
+return within_root(root,file) && fs::is_regular_file(file,ec)?slurp(file,16384):""; }
 struct PromptBuilder{const fs::path& root;const RuntimePolicy& policy;const ApiClient& api;bool plan_mode = false;std::string personality;
-std::string goal;PromptBundle build()const{PromptBundle bundle;std::ostringstream developer;developer << kBaseInstructions << "\n\n";
+std::string goal;std::string memory = {};PromptBundle build()const{PromptBundle bundle;std::ostringstream developer;developer << kBaseInstructions << "\n\n";
   developer << render_model_instructions(api)<< "\n\n";developer << render_permissions_instructions(policy);if(plan_mode){
   developer << "\n\n# Plan mode\nAnalyze the task and produce an implementation plan. Do not make mutating tool calls."; } if(!personality.empty()){developer << "\n\n# Communication style\n" << personality; }
+  if(!memory.empty())developer << "\n\n# Project memory\nPrior notes may be outdated; verify them against the current project. Update Memory.md only when the user explicitly asks to remember something.\n\n" << memory;
   bundle.developer_instructions = developer.str();std::ostringstream contextual;if(auto agents = load_project_instructions(root)){
   contextual << "# AGENTS.md instructions for " << root.string()<< "\n\n<INSTRUCTIONS>\n" << *agents << "\n</INSTRUCTIONS>\n\n"; }
-  const fs::path memory=root/"Memory.md";std::error_code ec;
-  if(within_root(root,memory) && fs::is_regular_file(memory,ec))contextual << "# Project memory\nPrior notes may be outdated; verify them against the current project. Update Memory.md only when the user explicitly asks to remember something.\n\n" << slurp(memory,16384) << "\n\n";
   if(auto skills=skills_manifest(root);!skills.empty())contextual << "# Available skills\n" << skills << "Use read_skill with the exact name when a skill applies.\n\n";
   contextual << render_environment_context(root,policy);if(!goal.empty())contextual << "\n\n<current_goal>" << xml_escape(goal)<< "</current_goal>"; bundle.contextual_user_prefix = contextual.str();return bundle;
 }
@@ -884,7 +885,7 @@ std::error_code ec;opt.root = fs::absolute(opt.root,ec); if(ec || !fs::exists(op
 if(opt.list_sessions){list_sessions(opt.root);return 0;}if(opt.login){ if(opt.provider != "codex"){std::cerr << "--login requires --provider codex\n";return 2;}
   return own_device_login(err)?(std::cout<<"Signed in.\n",0):(std::cerr<<err<<'\n',3);
 }
-Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std::cerr << err << '\n';return 2;}ToolRouter router;
+Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std::cerr << err << '\n';return 2;}std::string project_memory=load_project_memory(opt.root);ToolRouter router;
 router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 const std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
@@ -923,7 +924,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   if(!continuing){if(session.transcript.empty())session.append_transcript(start.str());else session.append_transcript("\n[resumed user turn]\n" + user_prompt + "\n");}
   RuntimePolicy turn_policy=opt.policy;if(plan_mode || review_only)turn_policy.sandbox=SandboxMode::ReadOnly;
   if(continuing && pending.second=="read-only")turn_policy.sandbox=SandboxMode::ReadOnly;
-  PromptBuilder prompt_builder{opt.root,turn_policy,api,plan_mode,personality,goal};PromptBundle prompt_bundle = prompt_builder.build(); std::string turn_instructions = prompt_bundle.developer_instructions;
+  PromptBuilder prompt_builder{opt.root,turn_policy,api,plan_mode,personality,goal,project_memory};PromptBundle prompt_bundle = prompt_builder.build(); std::string turn_instructions = prompt_bundle.developer_instructions;
   if(review_only)turn_instructions+="\n\n# Review\nInspect changes and report actionable issues with file locations. Do not edit files.";
   const std::string text_content=prompt_bundle.contextual_user_prefix+"\n\n"+user_prompt;std::string user_item;
   if(pending_images.empty())user_item="{\"role\":\"user\",\"content\":\""+json_escape(text_content)+"\"}";else{
@@ -1013,7 +1014,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   const std::string token = slash_command_token(line);const std::string args = command_arguments(line);
   auto say =[&](const std::string& text,bool is_error=false){if(tui){if(is_error)tui->add_error(text);else tui->add_system(text);tui->render();}
   else{std::cout << text;if(text.empty()|| text.back()!='\n')std::cout << '\n';} }; auto fresh_session =[&]()->bool{Session next;std::string local_err;
-  if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);last_assistant.clear();pending_mentions.clear();pending_images.clear();
+  if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
   if(tui){tui->set_thread_name("");tui->reset_transcript();}return true; }; if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const auto& command : slash_commands()){
     const std::string name = command.name;if(name == "/sessions" || name == "/history" || name == "/quit")continue;
     h << name << "  " << command.description;if(!command.implemented)h << "  [requires unsupported Codex capability]";h << '\n';
@@ -1027,12 +1028,12 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     if(!within_root(opt.root,file)){say("Memory.md escapes the workspace",true);continue;}
     if(fs::exists(file,ec) && (!fs::is_regular_file(file,ec) || fs::file_size(file,ec)>16384)){say("Memory.md must be a text file of at most 16 KiB",true);continue;}
     const std::string prior=fs::exists(file,ec)?slurp(file,16384):"";
-    if(args.empty()){say(prior.empty()?"No project memory. Use /memory TEXT to append a note.":prior);continue;}
+    if(args.empty()){project_memory=prior;say(prior.empty()?"No project memory. Use /memory TEXT to append a note.":prior);continue;}
     if(!opt.policy.can_write()){say("Memory is read-only under the current policy",true);continue;}
     const std::string content=(prior.empty()?"# Project memory\n":prior)+(prior.empty() || prior.back()=='\n'?"":"\n")+"- "+args+"\n";
     if(content.size()>16384){say("Memory.md is limited to 16 KiB; edit it to remove stale notes",true);continue;}
     WriteFileTool writer;const auto result=writer.run("{\"path\":\"Memory.md\",\"content\":\""+json_escape(content)+"\"}",opt.root);
-    say(result.output,result.exit_code!=0);continue;
+    if(result.exit_code==0)project_memory=content;say(result.output,result.exit_code!=0);continue;
   }
   if(token == "/status"){std::ostringstream st;st << "session: " << session.id << "\n" << "workspace: " << opt.root.string()<< "\n"
   << "provider: " << opt.provider << " (" << api_style_name(api.style)<< ")\n" << "model: " << api.model;
@@ -1075,12 +1076,12 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   if(token == "/resume"){std::string id=args;
   if(id.empty()&& tui){auto ids=session_ids(opt.root);if(ids.empty()){say("No saved sessions.");continue;}int c=tui->choose("Resume a saved chat",ids,0);if(c<0)continue;id=ids[static_cast<size_t>(c)];}
   if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err)){say(local_err,true);continue;}
-  session=std::move(resumed);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
+  session=std::move(resumed);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
   if(token == "/fork"){const std::string old=session.id;const std::string prior=session.transcript;const auto prior_items=session.items;
   Session forked;std::string local_err;if(!init_session(forked,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);continue;}
   if(!forked.replace_items(prior_items)){say("Could not fork session items.",true);continue;}
-  forked.append_transcript(prior +"\n[forked session]\n");session=std::move(forked);
+  forked.append_transcript(prior +"\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
   if(tui){tui->set_thread_name("fork");tui->reset_transcript();} say("Forked " + old + " → " + session.id);continue; }
   if(token == "/archive"){std::string local_err;if(!archive_session_files(session,local_err)){say(local_err,true);continue;} say("Archived session " + session.id);break; }
   if(token == "/delete"){bool ok=false;if(tui)ok=tui->choose("Permanently delete this session?",{"Cancel","Delete permanently"},0)==1;

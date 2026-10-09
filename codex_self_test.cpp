@@ -65,7 +65,13 @@ check(prompt_bundle.contextual_user_prefix.find("Project rule: run focused tests
 RuntimePolicy ro = p;ro.sandbox = SandboxMode::ReadOnly;ro.approval = ApprovalPolicy::OnRequest;PromptBuilder ro_builder{troot,ro,prompt_api,false,"",""};
 check(ro_builder.build().developer_instructions.find("workspace is read-only")!= std::string::npos,"prompt read-only permissions");
 write_all(troot/"Memory.md","# Project memory\n- Build with clang++\n",err);
-check(ro_builder.build().contextual_user_prefix.find("Build with clang++")!=std::string::npos,"project memory crosses sessions");
+ro_builder.memory=load_project_memory(troot);
+check(ro_builder.build().developer_instructions.find("Build with clang++")!=std::string::npos && ro_builder.build().contextual_user_prefix.find("Build with clang++")==std::string::npos,"memory stays outside user history");
+write_all(troot/"Memory.md","- Updated memory\n",err);
+check(ro_builder.build().developer_instructions.find("Updated memory")==std::string::npos,"memory snapshot stays stable between turns");
+ro_builder.memory=load_project_memory(troot);
+check(ro_builder.build().developer_instructions.find("Updated memory")!=std::string::npos,"explicit reload refreshes memory");
+check(s.replace_items({u}) && ro_builder.build().developer_instructions.find("Updated memory")!=std::string::npos,"memory survives history compaction");
 Session recovery;check(init_session(recovery,troot,false,std::nullopt,err),"recovery session creation");
 recovery.append_transcript("unfinished task\n");
 recovery.emit(EventKind::TurnStarted,"{\"task\":\"finish task\",\"sandbox\":\"read-only\"}");
