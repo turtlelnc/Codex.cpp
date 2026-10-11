@@ -1,8 +1,32 @@
 // Included by codex.cpp after its shared types and helpers.
 // ---------- API client ----------
 enum class ApiStyle{Responses,ChatCompletions};static const char* api_style_name(ApiStyle s){return s == ApiStyle::Responses ? "responses" : "chat"; }
+struct CodexQuota{bool available=false;long long reset=0;std::string report,brief;};
+static std::optional<CodexQuota> parse_codex_quota(const std::string& raw,long long now){auto j=parse_json(raw);if(!j || !j->get("rate_limit"))return{};
+CodexQuota q;std::ostringstream out;if(auto plan=j->get("plan_type"))out<<"Plan: "<<plan->str()<<'\n';
+auto bucket=[&](const Json* limit,const std::string& name,bool relevant=true){if(!limit || limit->kind!=Json::Object)return;
+ const bool reached=at(limit,"limit_reached") && at(limit,"limit_reached")->value=="true";out<<name<<": "<<(reached?"limit reached":"available")<<'\n';
+ for(const char* key:{"primary_window","secondary_window"}){auto w=limit->get(key);if(!w || w->kind!=Json::Object)continue;
+  try{auto used=w->get("used_percent"),reset=w->get("reset_at"),span=w->get("limit_window_seconds");
+   if(!used || !reset)continue;const auto stamp=std::stoll(reset->value);out<<"  "<<(span?std::to_string(std::stoll(span->value)/3600)+"h":std::string(key))<<": "<<used->value<<"% used; resets in "<<std::max(0LL,stamp-now)/3600<<"h "<<(std::max(0LL,stamp-now)%3600)/60<<"m\n";
+   if(relevant){const long long hours=span?std::stoll(span->value)/3600:0;const int left=std::max(0,std::min(100,100-static_cast<int>(std::stod(used->value)+0.5)));
+    if(!q.brief.empty())q.brief+=" · ";q.brief+=(hours>=24?std::to_string(hours/24)+"d":hours>0?std::to_string(hours)+"h":std::string(std::string(key)=="primary_window"?"5h":"wk"))+" "+std::to_string(left)+"%";}
+   if(relevant && reached && std::stod(used->value)>=100 && stamp>now)q.reset=std::max(q.reset,stamp);
+  }catch(...){}
+ }
+};bucket(j->get("rate_limit"),"Codex");
+if(auto extra=j->get("additional_rate_limits");extra && extra->kind==Json::Array)for(const auto& b:extra->items)bucket(b.get("rate_limit"),"Additional quota",false);
+auto main=j->get("rate_limit");q.available=at(main,"allowed") && at(main,"allowed")->value=="true" && at(main,"limit_reached") && at(main,"limit_reached")->value=="false";
+q.report=out.str();return q; }
+static std::optional<CodexQuota> read_codex_quota(std::string& err,bool renew=true){auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}
+if(a->expires<=epoch_now()+90){if(!renew){err="Login token expired; run /status or --quota to refresh";return{};}if(!refresh_auth(*a,err))return{};}
+auto request=[&](){std::vector<std::string> h={"Authorization: Bearer "+a->access,"Accept: application/json"};if(!a->account.empty())h.push_back("ChatGPT-Account-ID: "+a->account);
+ return web_post("https://chatgpt.com/backend-api/wham/usage","","application/json",h,true);};
+auto r=request();if(r.status==401 && renew && refresh_auth(*a,err))r=request();
+if(r.status!=200 || !r.error.empty()){err="Quota query failed (HTTP "+std::to_string(r.status)+")";return{};}
+auto q=parse_codex_quota(r.body,epoch_now());if(!q)err="Invalid quota response";return q; }
 struct ApiClient{std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
-ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;
+ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
 std::optional<std::string> post_codex(const std::string& body,std::string& err,const std::function<void(const std::string&)>& on_delta ={}, const std::function<void()>& on_tick ={},bool watch_escape = false)const{
   auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};
   auto request=[&](){WebReply result;const fs::path req=temp_path("codex-stream-req"),hdr=temp_path("codex-stream-hdr"), stderr_path=temp_path("codex-stream-stderr");
@@ -41,7 +65,7 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
     while(fgets(buf.data(),static_cast<int>(buf.size()),pipe))consume_bytes(buf.data(),std::strlen(buf.data()));
 #else
     termios saved_terminal{};bool raw_input=false;if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved_terminal)==0){
-    termios raw=saved_terminal;raw.c_lflag &= static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_cc[VMIN]=0;raw.c_cc[VTIME]=0; raw_input=tcsetattr(STDIN_FILENO,TCSANOW,&raw)==0; }
+    termios raw=saved_terminal;raw.c_lflag &= static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag &= static_cast<tcflag_t>(~(ICRNL|IXON));raw.c_cc[VMIN]=0;raw.c_cc[VTIME]=0; raw_input=tcsetattr(STDIN_FILENO,TCSANOW,&raw)==0; }
     auto last_tick=std::chrono::steady_clock::now();const int fd=channels[0];bool interrupted=false;for(;;){
 #if !defined(_WIN32)
     if(tui_interrupt_requested){interrupted=true;result.error="Interrupted by Ctrl+C";break;}
@@ -76,6 +100,22 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
       std::this_thread::sleep_for(std::chrono::milliseconds(100));if(on_tick)on_tick();
     }r=request();
   }
+  for(;;){if(!wait_quota || r.status!=429 || r.body.find("data:")!=std::string::npos)break;
+    auto q=read_codex_quota(err);if(!q || q->reset<=epoch_now())break;
+    auto deadline=q->reset+2;auto next_check=epoch_now()+30;std::cerr<<"[quota] waiting until "<<deadline<<" (Unix seconds); Ctrl+C stops waiting\n";
+    while(epoch_now()<deadline){
+#if !defined(_WIN32)
+      if(tui_interrupt_requested){err="Interrupted while waiting for quota";return{};}
+#endif
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));if(on_tick)on_tick();
+      if(epoch_now()>=next_check){std::string query_err;auto live=read_codex_quota(query_err);next_check=epoch_now()+30;
+        if(live && live->available){std::cerr<<"[quota] quota restored; continuing\n";break;}
+        if(live && live->reset>epoch_now())deadline=live->reset+2;
+      }
+    }
+    a=load_auth();if(!a){err="Not signed in while waiting for quota";return{};}
+    if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};r=request();
+  }
   if(r.error=="Interrupted by Esc"){err=r.error;return{};}if(r.status==401 && refresh_auth(*a,err))r=request();
   if(!r.error.empty()|| r.status!=200){err="Codex backend request failed (HTTP "+std::to_string(r.status)+"): "+r.error;
   // Avoid placing backend error bodies in logs: they may contain tokens.
@@ -106,7 +146,7 @@ std::optional<std::string> post(const std::string& path,const std::string& body,
   fs::permissions(header,fs::perms::owner_read | fs::perms::owner_write,fs::perm_options::replace);
 #endif
   cmd += " -H " + shell_quote("@" + header.string()); } cmd += " -H " + shell_quote("Content-Type: application/json")+ " --data-binary @" + shell_quote(req.string())+ " " + shell_quote(base_url + path);
-  CommandResult cr = run_capture_interruptible(cmd,100000,{},false);const std::string raw = slurp(out,2'000'000); std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(header,ec);if(cr.exit_code != 0){
+  CommandResult cr = run_capture_interruptible(cmd,100000,{},bool(busy_input));const std::string raw = slurp(out,2'000'000); std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(header,ec);if(cr.exit_code==130 && cr.output=="Interrupted by Esc"){err=cr.output;return std::nullopt;}if(cr.exit_code != 0){
   err = "HTTP request failed (curl " + std::to_string(cr.exit_code)+ "): " + cr.output;if(!raw.empty())err += "\n" + raw;return std::nullopt; } return raw;
 }
 std::optional<ApiResponse> call_text_only(const std::string& instructions,const std::string& text,std::string& err)const{
@@ -132,3 +172,30 @@ std::optional<ApiResponse> call_chat(const std::string& messages_json,const std:
   auto raw = post("/chat/completions",body,err);if(!raw)return std::nullopt;return parse_api_response(*raw,true,err);
 }
 };
+// ---------- model catalog ----------
+struct ModelInfo{std::string id,description,default_effort;std::vector<std::string> efforts;};
+static std::optional<std::vector<ModelInfo>> parse_codex_models(const std::string& raw){auto j=parse_json(raw);auto list=j?j->get("models"):nullptr;if(!list || list->kind!=Json::Array)return{};
+  std::vector<ModelInfo> out;for(const auto& m:list->items){if(m.kind!=Json::Object)continue;ModelInfo info;info.id=at(&m,"slug")?at(&m,"slug")->str():"";
+    const std::string visibility=at(&m,"visibility")?at(&m,"visibility")->str():"";if(info.id.empty()|| (!visibility.empty()&& visibility!="list"))continue;
+    if(auto d=at(&m,"description"))info.description=d->str();if(auto d=at(&m,"default_reasoning_level"))info.default_effort=d->str();
+    if(auto levels=at(&m,"supported_reasoning_levels");levels && levels->kind==Json::Array)for(const auto& l:levels->items)if(auto e=at(&l,"effort");e && !e->str().empty())info.efforts.push_back(e->str());
+    out.push_back(std::move(info)); }
+  return out; }
+// Standard GET /models shape (OpenAI, DeepSeek, most compatible servers). It carries no reasoning-effort data.
+static std::optional<std::vector<ModelInfo>> parse_openai_models(const std::string& raw){auto j=parse_json(raw);auto list=j?j->get("data"):nullptr;if(!list || list->kind!=Json::Array)return{};
+  static const char* const skip[]={"embedding","whisper","tts","dall-e","moderation","transcribe","audio","realtime","image","davinci","babbage"};std::vector<ModelInfo> out;
+  for(const auto& m:list->items){auto id=at(&m,"id");if(!id || id->str().empty())continue;bool drop=false;for(const char* word:skip)if(id->str().find(word)!=std::string::npos)drop=true;
+    if(!drop){ModelInfo info;info.id=id->str();out.push_back(std::move(info));} }
+  std::sort(out.begin(),out.end(),[](const ModelInfo& a,const ModelInfo& b){return a.id<b.id;});return out; }
+static std::optional<std::vector<ModelInfo>> read_codex_models(std::string& err){auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}
+  if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};
+  // This non-public endpoint hides newer models from clients that report an old version.
+  const std::string url="https://chatgpt.com/backend-api/codex/models?client_version=1.0.0";
+  auto request=[&](){std::vector<std::string> h={"Authorization: Bearer "+a->access,"Accept: application/json"};if(!a->account.empty())h.push_back("ChatGPT-Account-ID: "+a->account);return web_post(url,"","application/json",h,true);};
+  auto r=request();if(r.status==401 && refresh_auth(*a,err))r=request();if(r.status!=200 || !r.error.empty()){err="Model list query failed (HTTP "+std::to_string(r.status)+")";return{};}
+  auto models=parse_codex_models(r.body);if(!models || models->empty()){err="No models in response";return{};}return models; }
+static std::optional<std::vector<ModelInfo>> read_models(const ApiClient& api,std::string& err){if(api.chatgpt_auth)return read_codex_models(err);
+  std::vector<std::string> h={"Accept: application/json"};if(!api.no_api_key){if(api.api_key.empty()){err="API key is not set";return{};}h.push_back("Authorization: Bearer "+api.api_key);}
+  auto r=web_post(api.base_url+(api.style==ApiStyle::Responses?"/v1/models":"/models"),"","application/json",h,true);
+  if(r.status!=200 || !r.error.empty()){err="Model list not available from this provider (HTTP "+std::to_string(r.status)+")";return{};}
+  auto models=parse_openai_models(r.body);if(!models || models->empty()){err="No models in response";return{};}return models; }

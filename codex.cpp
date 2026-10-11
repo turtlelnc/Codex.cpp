@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstdint>
 #include <thread>
+#include <future>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -51,6 +52,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/select.h>
 #include <sys/wait.h>
@@ -116,7 +118,7 @@ gmtime_s(&tm,&t);
 #else
 gmtime_r(&t,&tm);
 #endif
-std::ostringstream o;o << std::put_time(&tm,"%Y-%m-%dT%H:%M:%SZ");return o.str(); } static std::string random_id(const char* prefix){static std::mt19937_64 rng{std::random_device{}()};std::ostringstream o;
+std::ostringstream o;o << std::put_time(&tm,"%Y-%m-%dT%H:%M:%SZ");return o.str(); } static std::string random_id(const char* prefix){static thread_local std::mt19937_64 rng{std::random_device{}()};std::ostringstream o;
 o << prefix << '-' << std::hex << rng()<< rng();return o.str(); } struct CommandResult{int exit_code = -1;std::string output; };
 static CommandResult run_capture(const std::string& command,size_t limit = 200000){CommandResult r;
 #if defined(_WIN32)
@@ -133,8 +135,9 @@ const int status = _pclose(pipe);r.exit_code = status;
 const int status = pclose(pipe);if(WIFEXITED(status))r.exit_code = WEXITSTATUS(status);else if(WIFSIGNALED(status))r.exit_code = 128 + WTERMSIG(status);
 #endif
 return r; }
+static std::function<bool(const char*,size_t)> busy_input;
 #if !defined(_WIN32)
-static bool contains_plain_escape(const char* keys,ssize_t count){for(ssize_t i=0;i<count;++i){if(keys[i]!=27)continue;if(i+1<count){
+static bool contains_plain_escape(const char* keys,ssize_t count){if(busy_input)return busy_input(keys,static_cast<size_t>(count));for(ssize_t i=0;i<count;++i){if(keys[i]!=27)continue;if(i+1<count){
   if(keys[i+1]=='[' || keys[i+1]=='O')continue;// mouse, arrow, or function key
   return true; } fd_set fds;FD_ZERO(&fds);FD_SET(STDIN_FILENO,&fds);timeval timeout{0,40000};if(select(STDIN_FILENO+1,&fds,nullptr,nullptr,&timeout)>0){char next=0;
   if(::read(STDIN_FILENO,&next,1)==1 &&(next=='[' || next=='O'))return false; } return true;
@@ -149,7 +152,7 @@ CommandResult result;int channels[2];if(::pipe(channels)!=0){result.output="pipe
   ::close(channels[0]);::dup2(channels[1],STDOUT_FILENO);::dup2(channels[1],STDERR_FILENO);::close(channels[1]); ::execl("/bin/sh","sh","-c",command.c_str(),static_cast<char*>(nullptr));_exit(127);
 }
 ::close(channels[1]);if(child<0){::close(channels[0]);result.output="fork failed";return result;}termios saved{};bool raw=false;
-if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved)==0){termios mode=saved;mode.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));
+if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved)==0){termios mode=saved;mode.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));mode.c_iflag&=static_cast<tcflag_t>(~(ICRNL|IXON));
   mode.c_cc[VMIN]=0;mode.c_cc[VTIME]=0;raw=tcsetattr(STDIN_FILENO,TCSANOW,&mode)==0;
 }
 auto last_tick=std::chrono::steady_clock::now();bool interrupted=false;std::array<char,4096> buf{};for(;;){
@@ -253,7 +256,7 @@ return out; } static std::optional<std::string> base64url_decode(std::string s){
 return out; } static std::optional<Json> jwt_claims(const std::string& token){auto a=token.find('.'),b=token.find('.',a==std::string::npos?a:a+1);
 if(a==std::string::npos||b==std::string::npos)return{};auto decoded=base64url_decode(token.substr(a+1,b-a-1)); return decoded?parse_json(*decoded):std::nullopt; }
 static std::string account_from_jwt(const std::string& token){auto j=jwt_claims(token);if(!j)return{};auto nested=j->get("https://api.openai.com/auth"); auto id=at(nested,"chatgpt_account_id");return id?id->str():""; }
-struct WebReply{long status=0;std::string body,error;};static WebReply web_post(const std::string& url,const std::string& body, const std::string& content_type,const std::vector<std::string>& headers={}){
+struct WebReply{long status=0;std::string body,error;};static WebReply web_post(const std::string& url,const std::string& body, const std::string& content_type,const std::vector<std::string>& headers={},bool get=false){
 WebReply result;fs::path req=temp_path("codex-auth-req"),out=temp_path("codex-auth-out"),hdr=temp_path("codex-auth-hdr");{
   std::ofstream f(req,std::ios::binary);if(!f){result.error="cannot create request";return result;}f<<body;
   std::ofstream h(hdr,std::ios::binary);if(!h){result.error="cannot create header";return result;}h<<"Content-Type: "<<content_type<<"\n"; for(const auto& line:headers)h<<line<<"\n";
@@ -262,7 +265,7 @@ WebReply result;fs::path req=temp_path("codex-auth-req"),out=temp_path("codex-au
 fs::permissions(req,fs::perms::owner_read|fs::perms::owner_write,fs::perm_options::replace); fs::permissions(hdr,fs::perms::owner_read|fs::perms::owner_write,fs::perm_options::replace);
 #endif
 const std::string cmd="curl -sS --connect-timeout 15 --max-time 300 --max-redirs 0 -o "+
-  shell_quote(out.string())+" -w '%{http_code}' -H "+shell_quote("@"+hdr.string())+ " --data-binary @"+shell_quote(req.string())+" "+shell_quote(url);
+  shell_quote(out.string())+" -w '%{http_code}' -H "+shell_quote("@"+hdr.string())+ (get?" --max-time 30":" --data-binary @"+shell_quote(req.string()))+" "+shell_quote(url);
 auto r=run_capture(cmd,2000);result.body=slurp(out,8'000'000);if(r.exit_code!=0)result.error="curl failed: "+r.output; else{try{result.status=std::stol(trim(r.output));}catch(...){result.error="invalid HTTP status";}}
 std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(hdr,ec);return result; }
 struct OwnAuth{std::string access,refresh,id,account;long long expires=0;};static bool save_auth(const OwnAuth& a,std::string& err){
@@ -292,14 +295,19 @@ if(auto e=j->get("expires_in")){try{seconds=std::stoll(e->value);}catch(...){}}a
 static bool refresh_auth(OwnAuth& a,std::string& err){std::string body="grant_type=refresh_token&client_id="+form_encode(kOAuthClient)+ "&refresh_token="+form_encode(a.refresh);
 auto r=web_post(std::string(kAuthIssuer)+"/oauth/token",body,"application/x-www-form-urlencoded");
 if(!r.error.empty()||r.status!=200){err="token refresh failed (HTTP "+std::to_string(r.status)+") "+r.error;return false;} if(!receive_tokens(r.body,a,err))return false;return save_auth(a,err); }
-static bool own_device_login(std::string& err){auto r=web_post(std::string(kAuthIssuer)+"/api/accounts/deviceauth/usercode", "{\"client_id\":\""+std::string(kOAuthClient)+"\"}","application/json");
+static bool own_device_login(std::string& err,const std::function<void(const std::string&)>& announce={}){auto r=web_post(std::string(kAuthIssuer)+"/api/accounts/deviceauth/usercode", "{\"client_id\":\""+std::string(kOAuthClient)+"\"}","application/json");
 if(!r.error.empty()||r.status!=200){err="device authorization unavailable (HTTP "+std::to_string(r.status)+") "+r.error;return false;}
 auto j=parse_json(r.body);if(!j){err="invalid device authorization response";return false;}
 auto get=[&](const char* key){auto v=j->get(key);return v?v->str():"";};std::string id=get("device_auth_id"),code=get("user_code");
 if(code.empty())code=get("usercode");if(id.empty()||code.empty()){err="device authorization response lacks code";return false;}
 int interval=5;if(auto v=j->get("interval")){try{interval=std::stoi(v->value);}catch(...){try{interval=std::stoi(v->str());}catch(...){}}}
-interval=std::max(1,std::min(30,interval));std::cout<<"Open https://auth.openai.com/codex/device and enter: "<<code<<"\n" <<"Only approve this code if you started this login. Waiting up to 15 minutes...\n"<<std::flush;
-auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(15);while(std::chrono::steady_clock::now()<deadline){ auto poll=web_post(std::string(kAuthIssuer)+"/api/accounts/deviceauth/token",
+interval=std::max(1,std::min(30,interval));{const std::string notice="Open https://auth.openai.com/codex/device and enter: "+code+"\nOnly approve this code if you started this login. Waiting up to 15 minutes... (Ctrl+C cancels)";
+  if(announce)announce(notice);else std::cout<<notice<<"\n"<<std::flush;}
+auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(15);while(std::chrono::steady_clock::now()<deadline){
+#if !defined(_WIN32)
+  if(announce && tui_interrupt_requested){tui_interrupt_requested=0;err="login cancelled";return false;}
+#endif
+  auto poll=web_post(std::string(kAuthIssuer)+"/api/accounts/deviceauth/token",
   "{\"device_auth_id\":\""+json_escape(id)+"\",\"user_code\":\""+json_escape(code)+"\"}","application/json"); if(!poll.error.empty()){err=poll.error;return false;}if(poll.status==200){
   auto data=parse_json(poll.body);if(!data){err="invalid authorization response";return false;} auto field=[&](const char* k){auto v=data->get(k);return v?v->str():"";};
   std::string auth_code=field("authorization_code"),verifier=field("code_verifier"); if(auth_code.empty()||verifier.empty()){err="authorization response incomplete";return false;}
@@ -308,7 +316,11 @@ auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(15);while(st
   auto token=web_post(std::string(kAuthIssuer)+"/oauth/token",form,"application/x-www-form-urlencoded");
   if(!token.error.empty()||token.status!=200){err="token exchange failed (HTTP "+std::to_string(token.status)+") "+token.error;return false;}
   OwnAuth a;if(!receive_tokens(token.body,a,err))return false;return save_auth(a,err); } if(poll.status!=403 && poll.status!=404){err="authorization polling failed (HTTP "+std::to_string(poll.status)+")";return false;}
-  std::this_thread::sleep_for(std::chrono::seconds(interval));
+  for(int waited=0;waited<interval;++waited){
+#if !defined(_WIN32)
+    if(announce && tui_interrupt_requested)break;
+#endif
+    std::this_thread::sleep_for(std::chrono::seconds(1));}
 }
 err="device authorization timed out";return false; } struct FunctionCall{std::string name,call_id,arguments; }; struct ApiResponse{std::string raw,id;std::optional<std::string> text;std::vector<FunctionCall> calls; };
 static std::optional<ApiResponse> parse_api_response(const std::string& raw,bool chat,std::string& err){
@@ -395,7 +407,7 @@ if(ec){err = "cannot create session dir: " + ec.message();return false;}s.echo_j
 s.events_path = s.dir /(s.id + ".jsonl");s.transcript_path = s.dir /(s.id + ".transcript");s.items_path = s.dir /(s.id + ".items.jsonl");
 s.meta_path = s.dir /(s.id + ".meta.json");if(resume){if(s.id.empty()|| s.id=="." || s.id==".." ||
   s.id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos){err="invalid session ID";return false; }
-  if(!fs::exists(s.transcript_path)){err = "session not found: " + s.id;return false;}s.transcript = slurp(s.transcript_path,2'000'000);
+  if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;return false;}if(fs::exists(s.transcript_path))s.transcript = slurp(s.transcript_path,2'000'000);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
     if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";return false;}s.items.push_back(line);
   }
@@ -409,7 +421,7 @@ s.meta_path = s.dir /(s.id + ".meta.json");if(resume){if(s.id.empty()|| s.id==".
   s.emit(EventKind::SessionStarted,"{\"cwd\":\"" + json_escape(root.string())+ "\"}");
 }
 return true; } static std::vector<std::string> session_ids(const fs::path& root){const fs::path dir = root / ".codex_cpp" / "sessions";std::error_code ec;
-std::vector<fs::path> files;if(!fs::exists(dir,ec))return{};for(const auto& e : fs::directory_iterator(dir,ec)) if(e.path().extension()== ".jsonl")files.push_back(e.path());
+std::vector<fs::path> files;if(!fs::exists(dir,ec))return{};for(const auto& e : fs::directory_iterator(dir,ec)) if(e.is_regular_file(ec) && e.path().extension()== ".jsonl" && e.path().filename().string().find(".items.jsonl")==std::string::npos)files.push_back(e.path());
 std::sort(files.begin(),files.end(),[](const fs::path& a,const fs::path& b){std::error_code ea,eb; return fs::last_write_time(a,ea)> fs::last_write_time(b,eb);
 });
 std::vector<std::string> out;for(const auto& f : files)out.push_back(f.stem().string());return out; } static void list_sessions(const fs::path& root){for(const auto& id:session_ids(root))std::cout << id << '\n';}
@@ -439,6 +451,11 @@ const std::string cmd = "pbcopy < " + shell_quote(tmp.string());
 const std::string cmd = "(command -v wl-copy >/dev/null 2>&1 && wl-copy < " + shell_quote(tmp.string())+ ") || (command -v xclip >/dev/null 2>&1 && xclip -selection clipboard < " + shell_quote(tmp.string())+ ")";
 #endif
 CommandResult r = run_capture(cmd,4096);std::error_code ec;fs::remove(tmp,ec);return r.exit_code == 0 ? std::string(): "clipboard command failed"; }
+struct CodeBlock{std::string lang,text;};
+static std::vector<CodeBlock> extract_code_blocks(const std::string& markdown){std::vector<CodeBlock> blocks;std::istringstream in(markdown);std::string line;bool open=false;CodeBlock current;
+  while(std::getline(in,line)){const std::string t=trim(line);if(t.rfind("```",0)==0 || t.rfind("~~~",0)==0){if(open){blocks.push_back(current);open=false;}else{open=true;current=CodeBlock{};current.lang=trim(t.substr(3));}continue;}
+    if(open){current.text+=line;current.text+='\n';} }
+  if(open)blocks.push_back(current);return blocks; }
 // ---------- tools ----------
 struct ToolResult{int exit_code = 0;std::string output; }; class ToolRuntime{public: virtual ~ToolRuntime()= default;virtual std::string name()const = 0;virtual std::string spec_json()const = 0;
 virtual bool mutates()const{return false;}virtual bool is_shell()const{return false;}
@@ -614,7 +631,7 @@ std::optional<Json> request(const std::string& method,const std::string& params,
 #else
   if(input<0 || output<0){err="MCP server is disconnected";return{};}int id=next_id++;std::string frame="{\"jsonrpc\":\"2.0\",\"id\":"+std::to_string(id)+
   ",\"method\":\""+json_escape(method)+"\",\"params\":"+params+"}\n"; if(frame.size()>1'000'000){err="MCP request too large";return{};}if(!send(frame,err,10))return{};termios saved{};bool raw=false;
-  if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved)==0){termios t=saved;t.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO)); t.c_cc[VMIN]=0;t.c_cc[VTIME]=0;raw=tcsetattr(STDIN_FILENO,TCSANOW,&t)==0; }
+  if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved)==0){termios t=saved;t.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));t.c_iflag&=static_cast<tcflag_t>(~(ICRNL|IXON)); t.c_cc[VMIN]=0;t.c_cc[VTIME]=0;raw=tcsetattr(STDIN_FILENO,TCSANOW,&t)==0; }
   auto restore=[&]{if(raw)tcsetattr(STDIN_FILENO,TCSANOW,&saved);};auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(timeout_seconds);
   auto last_tick=std::chrono::steady_clock::now();for(;;){size_t newline=buffered.find('\n');if(newline!=std::string::npos){ std::string line=buffered.substr(0,newline);buffered.erase(0,newline+1);
     auto msg=parse_json(line);if(!msg){err="invalid MCP JSON-RPC frame";restore();return{};}const Json* mid=msg->get("id");
@@ -626,7 +643,7 @@ std::optional<Json> request(const std::string& method,const std::string& params,
   if(std::chrono::steady_clock::now()>=deadline){err="MCP request timed out";restore();return{};}fd_set readfds;FD_ZERO(&readfds);FD_SET(output,&readfds);
   if(raw)FD_SET(STDIN_FILENO,&readfds);timeval tv{0,250000};int ready=::select(std::max(output,raw?STDIN_FILENO:output)+1,&readfds,nullptr,nullptr,&tv);
   if(ready<0 && errno!=EINTR){err="MCP transport failed";restore();return{};}if(ready>0){if(raw && FD_ISSET(STDIN_FILENO,&readfds)){
-    char keys[64];ssize_t n=::read(STDIN_FILENO,keys,sizeof(keys));if(n>0 && std::find(keys,keys+n,char(27))!=keys+n){ err="Interrupted by Esc";restore();stop();return{};
+    char keys[64];ssize_t n=::read(STDIN_FILENO,keys,sizeof(keys));if(n>0 && contains_plain_escape(keys,n)){ err="Interrupted by Esc";restore();stop();return{};
     }
     }
     if(FD_ISSET(output,&readfds)){char bytes[4096];ssize_t n=::read(output,bytes,sizeof(bytes)); if(n==0){err="MCP server closed output";restore();return{};}if(n>0)buffered.append(bytes,static_cast<size_t>(n));
@@ -718,9 +735,13 @@ return out.str(); } struct PromptBundle{std::string developer_instructions;std::
 static std::string load_project_memory(const fs::path& root){const fs::path file=root/"Memory.md";std::error_code ec;
 return within_root(root,file) && fs::is_regular_file(file,ec)?slurp(file,16384):""; }
 struct PromptBuilder{const fs::path& root;const RuntimePolicy& policy;const ApiClient& api;bool plan_mode = false;std::string personality;
-std::string goal;std::string memory = {};PromptBundle build()const{PromptBundle bundle;std::ostringstream developer;developer << kBaseInstructions << "\n\n";
+std::string goal;std::string memory = {};bool design_mode=false;PromptBundle build()const{PromptBundle bundle;std::ostringstream developer;developer << kBaseInstructions << "\n\n";
   developer << render_model_instructions(api)<< "\n\n";developer << render_permissions_instructions(policy);if(plan_mode){
   developer << "\n\n# Plan mode\nAnalyze the task and produce an implementation plan. Do not make mutating tool calls."; } if(!personality.empty()){developer << "\n\n# Communication style\n" << personality; }
+  if(design_mode)developer << R"(
+
+# Design mode
+Act as a practical interface designer and implementer. Inspect the existing source, assets, design system and relevant screens before choosing a direction. Follow the project's typography, spacing, palette, density, copy and interaction patterns; make targeted changes for targeted requests. If starting fresh, choose a coherent visual direction suited to the product rather than generic cards, gradients or decorative clutter. Prioritize hierarchy, readable typography, consistent spacing and useful content. Include keyboard access, visible focus, adequate contrast, responsive layouts and meaningful loading, empty and error states where applicable. Make controls actually work. Design around the user's end-to-end task, not a collection of individually polished screens: identify the main flow and test its transitions, navigation, state and scroll/focus position on desktop and mobile where applicable. After moving to the next item, ensure the new content and next action are visible. Keep interface copy task-relevant: remove repeated guidance, obvious operation instructions, internal classification rules and explanations of the design itself unless removing them would cause an operational mistake or misinterpretation. Keep information that changes user decisions, such as storage/privacy limits, provenance, scoring rules and consequential warnings. Prefer contextual or first-use help over permanent explanatory paragraphs. Do not turn a working tool into a promotional landing page. Do not impose blanket bans on ordinary fonts, symmetric layouts or cards to avoid an AI look; choose conventional or distinctive patterns based on usability and the project's needs. Verify real interaction, keyboard behavior and form/navigation semantics when tools allow; screenshots alone do not establish usability. When visual identity is open, choose one clear aesthetic direction appropriate to the audience and carry it consistently through typography, spacing, color and interaction. Establish deliberate heading/body contrast and a restrained palette; use accents to communicate meaning. Use negative space or density intentionally. Animation should clarify feedback or transitions, respect reduced-motion preferences and avoid distracting repetition. Keep components focused and composable, place state near its consumers and derive values instead of duplicating state. Use framework-specific patterns only when that framework is already present; optimize rendering only when there is evidence of a bottleneck. Reuse the existing stack and assets; avoid unnecessary dependencies. By default implement the design in the project, then run available checks and inspect the rendered result if tools allow. If the user asks for a proposal first, provide a concise layout and interaction proposal without changing project files; produce a separate preview artifact only when requested and permitted. Ask only questions that materially change the design and are not already answered. Preserve work outside the requested scope. Never claim visual verification or use preview tools that are not available. Finish with a brief account of the changes and verification.)";
   if(!memory.empty())developer << "\n\n# Project memory\nPrior notes may be outdated; verify them against the current project. Update Memory.md only when the user explicitly asks to remember something.\n\n" << memory;
   bundle.developer_instructions = developer.str();std::ostringstream contextual;if(auto agents = load_project_instructions(root)){
   contextual << "# AGENTS.md instructions for " << root.string()<< "\n\n<INSTRUCTIONS>\n" << *agents << "\n</INSTRUCTIONS>\n\n"; }
@@ -735,7 +756,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;bool no_api_key = false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
-std::string api_key_env;bool login = false,continue_turn = false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
@@ -762,6 +783,8 @@ Agent options:
   --root DIR                    workspace (default: current directory)
   --resume SESSION_ID           resume a saved structured session
   --continue                    continue its unfinished turn (requires --resume)
+  --wait-quota                  wait for confirmed Codex quota reset
+  --quota                       show current Codex quota
   --list-sessions               print known local session IDs
   --json                        echo rollout events as JSONL
   --auto                        never request approval
@@ -781,7 +804,7 @@ Provider presets:
   custom    values supplied by --api/--base-url/--model/--api-key-env
 
 Interactive commands:
-  /help  /status  /sessions  /new  /memory  /continue  /quit
+  /help  /status  /sessions  /clear(new)  /memory  /continue  /quit
 
 Security note:
   Restricted shell commands require macOS sandbox-exec or a working Linux bwrap.
@@ -796,8 +819,9 @@ Security note:
 static std::optional<Options> parse_options(int argc,char** argv,std::string& err){Options o;for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
-  if(a == "--resume" && i + 1 < argc){o.resume = argv[++i];continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a == "--json"){o.json = true;continue;}
+  if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
   if(a == "--continue"){o.continue_turn=true;continue;}
   if(a == "-i" || a == "--interactive"){o.interactive = true;continue;}if(a == "--ui" && i + 1 < argc){std::string v = argv[++i];
   if(v == "auto")o.ui_mode = UiMode::Auto;else if(v == "tui")o.ui_mode = UiMode::Tui;else if(v == "plain")o.ui_mode = UiMode::Plain; else{err = "invalid --ui: " + v;return std::nullopt;}continue; }
@@ -881,6 +905,8 @@ if(opt.provider == "codex"){if(opt.model.empty())opt.model = "gpt-5.6-sol";opt.a
 }else{
   std::cerr << "invalid --provider: " << opt.provider << '\n';return 2;
 }
+if((opt.wait_quota || opt.quota) && opt.provider!="codex"){std::cerr<<"--quota and --wait-quota require --provider codex\n";return 2;}
+if(opt.quota){auto quota=read_codex_quota(err);if(!quota){std::cerr<<err<<'\n';return 3;}std::cout<<quota->report;return 0;}
 std::error_code ec;opt.root = fs::absolute(opt.root,ec); if(ec || !fs::exists(opt.root)){std::cerr << "workspace does not exist: " << opt.root << '\n';return 2;}
 if(opt.list_sessions){list_sessions(opt.root);return 0;}if(opt.login){ if(opt.provider != "codex"){std::cerr << "--login requires --provider codex\n";return 2;}
   return own_device_login(err)?(std::cout<<"Signed in.\n",0):(std::cerr<<err<<'\n',3);
@@ -890,29 +916,52 @@ router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>()
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 const std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
 ApiClient api;api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
-api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";
+api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";api.wait_quota=opt.wait_quota;
 while(!api.base_url.empty()&& api.base_url.back()== '/')api.base_url.pop_back();const bool interactive = opt.interactive || (opt.prompt.empty() && !opt.continue_turn);
 bool use_tui = false;if(interactive && !opt.json){const bool vt = enable_and_detect_vt();if(opt.ui_mode == UiMode::Tui && !vt){
   std::cerr << "[ui] TUI requested but this terminal has no usable VT support; falling back to plain mode.\n"; } use_tui =(opt.ui_mode == UiMode::Tui && vt)||(opt.ui_mode == UiMode::Auto && vt);
 }
 std::optional<TuiRenderer> tui;
 #if !defined(_WIN32)
-if(use_tui){struct sigaction action{};action.sa_handler=request_tui_interrupt;sigemptyset(&action.sa_mask);
+if(use_tui || opt.wait_quota){struct sigaction action{};action.sa_handler=request_tui_interrupt;sigemptyset(&action.sa_mask);
   action.sa_flags=0;// wake blocking terminal reads for orderly cleanup
   sigaction(SIGINT,&action,nullptr);sigaction(SIGTERM,&action,nullptr);
 }
 #endif
 if(interactive && !opt.json && use_tui){tui.emplace(opt.root,opt.provider,api.model,sandbox_name(opt.policy.sandbox));
-  tui->set_model(api.model,api.reasoning_effort);tui->render(" /help  /status  /sessions  /new  /quit");
+  tui->set_model(api.model,api.reasoning_effort);tui->render(" /help  /status  /sessions  /clear(new)  /quit");
 }else if(interactive && !opt.json){
   print_plain_banner(opt,api);
 }
+struct SessionExitNotice{Session& session;std::optional<TuiRenderer>& tui;bool enabled;~SessionExitNotice(){tui.reset();if(enabled && (!session.transcript.empty() || !session.items.empty()) && fs::exists(session.events_path))std::cout<<"Session ID: "<<session.id<<'\n';}} exit_notice{session,tui,!opt.json};
 std::string first_prompt;if(!opt.prompt.empty()){for(size_t i = 0;i < opt.prompt.size();++i){if(i)first_prompt += ' ';first_prompt += opt.prompt[i];} }
-bool plan_mode = false;std::string goal;std::string personality;std::string last_assistant; std::vector<std::pair<std::string,std::string>> pending_mentions;std::vector<std::pair<std::string,std::string>> pending_images;
+bool plan_mode = false,design_mode=false;std::string goal;std::string personality;std::string last_assistant; std::vector<std::pair<std::string,std::string>> pending_mentions;std::vector<std::pair<std::string,std::string>> pending_images;
 if(opt.images.size()>4){std::cerr<<"Maximum four images per turn.\n";return 2;}for(const auto& image:opt.images){ const fs::path file=image.is_absolute()?image:opt.root/image;auto url=image_data_url(file,err);
   if(!url){std::cerr<<"image "<<file<<": "<<err<<'\n';return 2;}pending_images.emplace_back(file.string(),std::move(*url));
 }
+std::vector<ModelInfo> model_catalog;bool catalog_loaded=false;std::string model_err;
+auto load_catalog=[&](bool force)->bool{if(catalog_loaded && !force)return !model_catalog.empty();if(tui)tui->render("loading models...");std::string e;auto models=read_models(api,e);
+  if(tui)tui->render();if(models){model_catalog=std::move(*models);catalog_loaded=true;model_err.clear();return true;}model_err=e;return !model_catalog.empty(); };
+using QuotaResult=std::pair<std::optional<CodexQuota>,std::string>;std::future<QuotaResult> quota_job;
+std::string quota_brief,quota_report,quota_error,quota_updated;bool quota_status_visible=false,quota_tried=false;std::chrono::steady_clock::time_point quota_at{};
+auto pin_text=[&]()->std::string{std::ostringstream pin;pin<<"session "<<session.id<<"  ·  approval "<<(opt.policy.approval==ApprovalPolicy::Never?"never":"on-request")<<(plan_mode?"  ·  plan mode":"")
+  <<"\ncontext "<<session.context_bytes()/1024<<" KiB / "<<session.items.size()<<" items"<<"  ·  workspace "<<opt.root.string();if(!goal.empty())pin<<"\ngoal "<<goal;
+  if(!quota_error.empty())pin<<"\nQuota query failed: "<<quota_error;
+  if(!quota_updated.empty())pin<<"\nQuota snapshot updated "<<quota_updated<<(quota_error.empty()?"":" (stale)");
+  if(!quota_report.empty()){std::string q=quota_report;while(!q.empty()&&q.back()=='\n')q.pop_back();pin<<"\n"<<q;}return pin.str(); };
+auto accept_quota=[&](QuotaResult result){quota_error=std::move(result.second);if(result.first){quota_brief=result.first->brief;quota_report=result.first->report;quota_updated=now_iso8601();quota_error.clear();}
+  if(tui)tui->set_quota_brief(quota_error.empty()?quota_brief:quota_brief.empty()?"unavailable":"stale "+quota_brief);};
+// Detached packaged tasks own their state: quitting never waits for the HTTP request.
+auto refresh_bar=[&](bool allow_quota){if(!tui)return;tui->set_context_usage(session.context_bytes(),350000);
+  if(quota_job.valid() && quota_job.wait_for(std::chrono::seconds(0))==std::future_status::ready){try{accept_quota(quota_job.get());}catch(...){accept_quota({{},"Background query failed"});}}
+  if(allow_quota && api.chatgpt_auth && !quota_job.valid() && (!quota_tried || std::chrono::steady_clock::now()-quota_at>=std::chrono::minutes(2))){
+    quota_tried=true;quota_at=std::chrono::steady_clock::now();std::packaged_task<QuotaResult()> job([]{std::string err;auto q=read_codex_quota(err,false);return QuotaResult{std::move(q),std::move(err)};});
+    quota_job=job.get_future();std::thread(std::move(job)).detach();
+  }
+  if(tui->pinned_status())tui->set_pinned_status(pin_text());if(quota_status_visible)tui->set_status_details(pin_text()); };
+if(tui)tui->set_tick([&]{refresh_bar(true);});
 auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool continuing = false)->int{std::string user_prompt = trim(raw_prompt);if(user_prompt.empty())return 0;
+  struct BusyInputScope{~BusyInputScope(){busy_input={};}} input_scope;if(tui)busy_input=[&](const char* keys,size_t count){return tui->receive_busy_input(keys,count);};
   const auto pending=session.pending_turn();if(!session.close_unconfirmed_calls()){std::cerr << "cannot save interrupted tool results\n";return 3;}
   if(!pending_mentions.empty()){user_prompt += "\n\nMentioned file context:";for(const auto&[path,content]: pending_mentions) user_prompt += "\n\n--- " + path + " ---\n" + content;
   pending_mentions.clear(); } if(session.context_bytes()>350000){if(tui)tui->render("compacting context...");if(!compact_session(session,api,err)){
@@ -924,7 +973,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   if(!continuing){if(session.transcript.empty())session.append_transcript(start.str());else session.append_transcript("\n[resumed user turn]\n" + user_prompt + "\n");}
   RuntimePolicy turn_policy=opt.policy;if(plan_mode || review_only)turn_policy.sandbox=SandboxMode::ReadOnly;
   if(continuing && pending.second=="read-only")turn_policy.sandbox=SandboxMode::ReadOnly;
-  PromptBuilder prompt_builder{opt.root,turn_policy,api,plan_mode,personality,goal,project_memory};PromptBundle prompt_bundle = prompt_builder.build(); std::string turn_instructions = prompt_bundle.developer_instructions;
+  PromptBuilder prompt_builder{opt.root,turn_policy,api,plan_mode,personality,goal,project_memory,design_mode};PromptBundle prompt_bundle = prompt_builder.build(); std::string turn_instructions = prompt_bundle.developer_instructions;
   if(review_only)turn_instructions+="\n\n# Review\nInspect changes and report actionable issues with file locations. Do not edit files.";
   const std::string text_content=prompt_bundle.contextual_user_prefix+"\n\n"+user_prompt;std::string user_item;
   if(pending_images.empty())user_item="{\"role\":\"user\",\"content\":\""+json_escape(text_content)+"\"}";else{
@@ -932,10 +981,12 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   for(const auto&[path,url]:pending_images){(void)path;user_item+=",{\"type\":\"input_image\",\"image_url\":\""+json_escape(url)+"\"}"; } user_item+="]}"; }
   if(!continuing && !session.record_item(user_item)){err="could not save user message";if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n'; return 3; }
   session.emit(EventKind::TurnStarted,"{\"task\":\"" + json_escape(user_prompt)+ "\",\"sandbox\":\"" + sandbox_name(turn_policy.sandbox)+ "\"}");
+  auto apply_steering=[&](){bool added=false;if(tui)for(const auto& message:tui->take_steering()){if(!session.record_item("{\"role\":\"user\",\"content\":\""+json_escape(message)+"\"}")){err="could not save steering message";return -1;}session.append_transcript("\n[user steering]\n"+message+"\n");tui->add_user(message);added=true;}return added?1:0;};
   pending_images.clear();for(int step = 1;step <= opt.max_steps;++step){
 #if !defined(_WIN32)
   if(tui_interrupt_requested)return 130;
 #endif
+  if(apply_steering()<0)return 3;
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
   std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(opt.json)return;
@@ -986,11 +1037,11 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   }
   if(response->text && !trim(*response->text).empty()){const std::string answer = trim(*response->text);last_assistant = answer; session.append_transcript("\n[assistant final]\n" + answer + "\n");
     if(!session.record_item("{\"role\":\"assistant\",\"content\":\""+json_escape(answer)+"\"}")){err="could not save assistant response";return 3; }
-    session.emit(EventKind::TurnCompleted,"{\"status\":\"completed\",\"steps\":" + std::to_string(step)+ "}");if(!opt.json){
+    if(!opt.json){
     if(tui)tui->stream_assistant(answer);else if(streamed_text.empty())std::cout << "[assistant]\n" << answer << '\n';else{ if(trim(streamed_text)!=answer)std::cout<<"\n[assistant final]\n"<<answer;std::cout<<'\n';
     }
     }else std::cout << answer << '\n';
-    return 0;
+    const int steering=apply_steering();if(steering<0)return 3;if(steering>0)continue;session.emit(EventKind::TurnCompleted,"{\"status\":\"completed\",\"steps\":" + std::to_string(step)+ "}");return 0;
   }
   session.append_transcript("\n[system]\nModel returned neither text nor a function call.\n"); }
   session.emit(EventKind::TurnCompleted,"{\"status\":\"max_steps\"}");if(tui){tui->add_error("stopped after maximum agent steps");tui->render(); }else{ std::cerr << "[error] stopped after maximum agent steps\n"; }
@@ -1005,19 +1056,19 @@ if(!first_prompt.empty()){int rc = run_turn(first_prompt);
 #endif
   if(!interactive || rc != 0)return rc;
 }
-if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::string line;if(!opt.json && tui)line = tui->read_line(input_history);else{
+if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::string line;if(!opt.json && tui){refresh_bar(false);line=tui->take_queued();if(line.empty())line = tui->read_line(input_history);}else{
   if(!opt.json)std::cout << "codex> " << std::flush;if(!std::getline(std::cin,line))break; }
 #if !defined(_WIN32)
   if(tui_interrupt_requested)return 130;
 #endif
   line = trim(line);if(line.empty())continue;if(input_history.empty()|| input_history.back()!= line)input_history.push_back(line);
-  const std::string token = slash_command_token(line);const std::string args = command_arguments(line);
+  quota_status_visible=false;if(tui)tui->set_status_details("");const std::string token = slash_command_token(line);const std::string args = command_arguments(line);
   auto say =[&](const std::string& text,bool is_error=false){if(tui){if(is_error)tui->add_error(text);else tui->add_system(text);tui->render();}
   else{std::cout << text;if(text.empty()|| text.back()!='\n')std::cout << '\n';} }; auto fresh_session =[&]()->bool{Session next;std::string local_err;
   if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
   if(tui){tui->set_thread_name("");tui->reset_transcript();}return true; }; if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const auto& command : slash_commands()){
     const std::string name = command.name;if(name == "/sessions" || name == "/history" || name == "/quit")continue;
-    h << name << "  " << command.description;if(!command.implemented)h << "  [requires unsupported Codex capability]";h << '\n';
+    h << name << "  " << command.description;h << '\n';
   }
   say(h.str());continue; } if(token == "/history"){std::ostringstream h;for(size_t i=0;i<input_history.size();++i)h <<(i+1)<< ": " << input_history[i]<< "\n"; say(h.str().empty()?"No input history.":h.str());continue; }
   if(token == "/sessions"){auto ids=session_ids(opt.root);std::ostringstream out;for(const auto& id:ids)out <<(id==session.id?"› ":"  ")<< id << '\n'; say(out.str().empty()?"No saved sessions.":out.str());continue; }
@@ -1035,29 +1086,52 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     WriteFileTool writer;const auto result=writer.run("{\"path\":\"Memory.md\",\"content\":\""+json_escape(content)+"\"}",opt.root);
     if(result.exit_code==0)project_memory=content;say(result.output,result.exit_code!=0);continue;
   }
+  if(token == "/status" && args == "pin"){if(!tui){say("/status pin needs the TUI.",true);continue;}
+    if(tui->pinned_status()){tui->set_pinned_status("");say("Status panel unpinned.");continue;}
+    quota_tried=false;refresh_bar(true);tui->set_pinned_status(pin_text());say("Status panel pinned. Run /status pin again to unpin.");continue; }
   if(token == "/status"){std::ostringstream st;st << "session: " << session.id << "\n" << "workspace: " << opt.root.string()<< "\n"
   << "provider: " << opt.provider << " (" << api_style_name(api.style)<< ")\n" << "model: " << api.model;
   if(!api.reasoning_effort.empty())st << " " << api.reasoning_effort;st << "\nsandbox: " << sandbox_name(opt.policy.sandbox)
-  << "\napproval: " <<(opt.policy.approval==ApprovalPolicy::Never?"never":"on-request")<< "\nplan mode: " <<(plan_mode?"on":"off")
+  << "\napproval: " <<(opt.policy.approval==ApprovalPolicy::Never?"never":"on-request")<< "\nplan mode: " <<(plan_mode?"on":"off")<< "\ndesign mode: " <<(design_mode?"on":"off")
   << "\ntranscript: " << session.transcript.size()<< " bytes" << "\ncontext: " << session.context_bytes()<< " bytes / " << session.items.size()<< " items"
   << "\nshell sandbox: " <<(opt.policy.sandbox==SandboxMode::DangerFullAccess ? "disabled by danger-full-access"
     : restricted_shell_command(opt.root,"true",opt.policy.sandbox)? "available" : "unavailable (restricted shell denied)");
-  if(!goal.empty())st << "\ngoal: " << goal;if(!personality.empty())st << "\npersonality: " << personality;say(st.str());continue; }
+  if(!goal.empty())st << "\ngoal: " << goal;if(!personality.empty())st << "\npersonality: " << personality;
+  std::string quota_text;if(api.chatgpt_auth){if(tui)tui->render("querying quota...");std::string quota_err;auto quota=read_codex_quota(quota_err);
+    quota_text=quota?quota->report:quota_err;st<<"\n"<<quota_text;quota_job={};accept_quota({std::move(quota),std::move(quota_err)});quota_tried=true;quota_at=std::chrono::steady_clock::now();}
+  if(tui){quota_status_visible=true;tui->set_status_details(pin_text());tui->render();}else say(st.str());continue; }
   if(token=="/skills"){const auto list=skills_manifest(opt.root);say(list.empty()?"No skills found in .agents/skills or ~/.codex/skills.":list);continue; }
   if(token=="/mcp"){say(mcp_report.empty()?"No MCP servers configured. Use --mcp-config PATH or ~/.codex-cpp/mcp.json.":mcp_report);continue; }
   if(token == "/login" || token == "/auth"){if(opt.provider != "codex"){say("Use --provider codex for ChatGPT subscription sign-in.",true);continue;}
   if(token=="/login"){if(!args.empty()&& args!="device"){say("Usage: /login [device]",true);continue;}
-    if(tui)tui->render("waiting for device authorization...");std::string login_error;bool ok=own_device_login(login_error); say(ok?"Signed in.":login_error,!ok);
+    std::string login_error;bool ok;if(tui){tui->render("waiting for device authorization...");tui->quiet_input(true);
+      ok=own_device_login(login_error,[&](const std::string& notice){tui->add_system(notice);tui->render("waiting for device authorization...");});tui->quiet_input(false); }else ok=own_device_login(login_error); say(ok?"Signed in.":login_error,!ok);
   }else{
     auto auth=load_auth();say(auth?"Signed in to ChatGPT (local credentials).":"Not signed in.",!auth);
   }
   continue; } if(token == "/model"){std::string model=api.model,effort=api.reasoning_effort;auto words=split_words(args);
-  const std::set<std::string> efforts={"low","medium","high","xhigh","none"};if(words.empty()){if(tui){std::vector<std::string> options;
-    for(const auto& e:std::vector<std::string>{"low","medium","high","xhigh","none"})options.push_back(api.model +(e=="none"?" (default)":" "+e));
-    int c=tui->choose("Choose reasoning effort for " + api.model,options,0);if(c<0)continue; effort=std::vector<std::string>{"low","medium","high","xhigh","none"}[static_cast<size_t>(c)];
-    }else{say("Usage: /model MODEL [low|medium|high|xhigh|none] or /model EFFORT");continue;}
-  }else if(efforts.count(words[0]))effort=words[0];
-  else{model=words[0];if(words.size()>1)effort=words[1];} if(!effort.empty()&& !efforts.count(effort)){say("Invalid reasoning effort: "+effort,true);continue;}if(effort=="none")effort.clear();
+  if(!words.empty()&& words[0]=="refresh"){catalog_loaded=false;words.erase(words.begin());}
+  auto find_model=[&](const std::string& id)->const ModelInfo*{for(const auto& m:model_catalog)if(m.id==id)return &m;return nullptr;};
+  auto efforts_for=[&](const std::string& id){const ModelInfo* info=find_model(id);return info && !info->efforts.empty()?info->efforts:std::vector<std::string>{"low","medium","high","xhigh"};};
+  auto valid_effort=[&](const std::string& id,const std::string& e){if(e=="none")return true;const ModelInfo* info=find_model(id);
+    if(info && !info->efforts.empty())return std::find(info->efforts.begin(),info->efforts.end(),e)!=info->efforts.end();return e=="low"||e=="medium"||e=="high"||e=="xhigh"||e=="max"||e=="ultra"; };
+  auto shorten=[](std::string text,size_t n){if(text.size()<=n)return text;while(n>0 &&(static_cast<unsigned char>(text[n])&0xC0)==0x80)--n;return text.substr(0,n)+"…"; };
+  if(words.empty()){const bool have=load_catalog(false);
+    if(!tui){std::ostringstream list;if(have)for(const auto& m:model_catalog){list<<m.id;if(!m.efforts.empty()){list<<"  [";for(size_t i=0;i<m.efforts.size();++i)list<<(i?" ":"")<<m.efforts[i];list<<"]";}list<<'\n';}
+      else list<<model_err<<'\n';list<<"Usage: /model MODEL [EFFORT] | /model EFFORT | /model refresh";say(list.str());continue; }
+    if(have){std::vector<std::string> labels;size_t selected=0;for(size_t i=0;i<model_catalog.size();++i){const auto& m=model_catalog[i];if(m.id==model)selected=i;
+        labels.push_back(m.id+(m.id==api.model?" (current)":"")+(m.description.empty()?"":"  "+shorten(m.description,44))); }
+      const int c=tui->choose("Choose model",labels,selected);if(c<0)continue;model=model_catalog[static_cast<size_t>(c)].id; }
+    else say("Model list unavailable ("+model_err+"); changing effort only.",true);
+    const ModelInfo* info=find_model(model);const auto efs=efforts_for(model);std::vector<std::string> labels;size_t selected=0;
+    for(size_t i=0;i<efs.size();++i){labels.push_back(efs[i]+(info && efs[i]==info->default_effort?" (model default)":""));if(efs[i]==(model==api.model?api.reasoning_effort:info?info->default_effort:""))selected=i;}
+    labels.push_back("none (omit reasoning effort)");const int c=tui->choose("Choose reasoning effort for "+model,labels,selected);if(c<0)continue;
+    effort=static_cast<size_t>(c)<efs.size()?efs[static_cast<size_t>(c)]:"none";
+  }else{bool only_effort=false;if(words.size()==1){const auto& w=words[0];only_effort=w=="none"||w=="low"||w=="medium"||w=="high"||w=="xhigh"||w=="max"||w=="ultra";}
+    if(only_effort){load_catalog(false);effort=words[0];}else{model=words[0];if(words.size()>1){load_catalog(false);effort=words[1];}else if(!effort.empty()){load_catalog(false);if(!valid_effort(model,effort))effort.clear();}}
+  }
+  if(!effort.empty()&& !valid_effort(model,effort)){const auto efs=efforts_for(model);std::string known;for(const auto& e:efs)known+=(known.empty()?"":", ")+e;say("Invalid reasoning effort for "+model+": "+effort+" (supported: "+known+")",true);continue;}
+  if(effort=="none")effort.clear();
   api.model=model;api.reasoning_effort=effort;opt.model=model;opt.reasoning_effort=effort;if(tui)tui->set_model(model,effort); say("Model set to " + model +(effort.empty()?"":" ("+effort+")"));continue; }
   if(token == "/permissions"){std::string mode=args;if(mode.empty()&& tui){ int c=tui->choose("Choose permissions",{"read-only","workspace-write","danger-full-access"},
         opt.policy.sandbox==SandboxMode::ReadOnly?0:opt.policy.sandbox==SandboxMode::WorkspaceWrite?1:2);
@@ -1069,10 +1143,11 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   else{say("Unknown permission profile: "+mode,true);continue;}if(tui)tui->set_sandbox(sandbox_name(opt.policy.sandbox)); say("Permissions set to " + mode);continue; } if(token == "/personality"){std::string value=args;
   if(value.empty()&& tui){int c=tui->choose("Choose communication style",{"concise","balanced","detailed"},1);if(c<0)continue;value=std::vector<std::string>{"concise","balanced","detailed"}[static_cast<size_t>(c)];}
   if(value.empty()){say("Usage: /personality concise|balanced|detailed");continue;}personality=value;say("Personality set to " + personality);continue; }
+  if(token == "/design"){if(args.empty()||args=="on"||args=="off"){design_mode=args!="off";if(tui)tui->set_design(design_mode);say(design_mode?"Design mode enabled. Describe the interface, or use /design plan TASK for a read-only proposal.":"Design mode disabled.");continue;}const bool prior=design_mode;design_mode=true;if(tui)tui->set_design(true);const bool proposal=args=="plan"||args.rfind("plan ",0)==0;const std::string task=proposal?trim(args.substr(4)):args;if(task.empty())say("Usage: /design plan TASK");else (void)run_turn(proposal?"Propose a design first without modifying files: "+task:task,proposal);design_mode=prior;if(tui)tui->set_design(prior);continue;}
   if(token == "/plan"){if(args=="on")plan_mode=true;else if(args=="off")plan_mode=false;else plan_mode=!plan_mode; say(std::string("Plan mode ")+(plan_mode?"enabled":"disabled"));continue; }
   if(token == "/goal"){if(args.empty())say(goal.empty()?"No goal set.":"Current goal: "+goal);else if(args=="clear"){goal.clear();say("Goal cleared.");} else{goal=args;say("Goal set: "+goal);}continue; }
   if(token == "/rename"){if(args.empty()){say("Usage: /rename NAME");continue;} std::string local_err;if(!write_session_name(session,args,local_err)){say(local_err,true);continue;}
-  if(tui)tui->set_thread_name(args);say("Thread renamed to " + args);continue; } if(token == "/new"){if(fresh_session())say("Started a new chat: " + session.id);continue; }
+  if(tui)tui->set_thread_name(args);say("Thread renamed to " + args);continue; } if(token == "/new" || token == "/clear" || token == "/clear(new)"){if(fresh_session())say("Started a new chat: " + session.id);continue; }
   if(token == "/resume"){std::string id=args;
   if(id.empty()&& tui){auto ids=session_ids(opt.root);if(ids.empty()){say("No saved sessions.");continue;}int c=tui->choose("Resume a saved chat",ids,0);if(c<0)continue;id=ids[static_cast<size_t>(c)];}
   if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err)){say(local_err,true);continue;}
@@ -1099,13 +1174,23 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   pending_images.emplace_back(target.string(),std::move(*url));say("Attached image to the next turn: "+target.string());continue; } if(token == "/diff"){
   const std::string cmd="cd " + shell_quote(opt.root.string())+ " && git diff --no-ext-diff -- .; printf '\\n-- status --\\n'; git status --short";
   CommandResult r=run_capture(cmd,120000);say(r.output.empty()?"No git diff.":r.output,r.exit_code!=0);continue; }
+  if(token == "/mouse"){if(!tui){say("/mouse needs the TUI.",true);continue;}const bool on=args=="on"?true:args=="off"?false:!tui->mouse();tui->set_mouse(on);
+    say(on?"Mouse capture on: wheel scrolls the transcript. Hold Option (Terminal/iTerm2) or Shift to select text.":"Mouse capture off: select text with the mouse; scroll with ctrl+u / ctrl+d.");continue; }
+  if(token == "/copy" &&(args=="code" || args.rfind("code ",0)==0)){if(last_assistant.empty()){say("There is no assistant response to copy.",true);continue;}
+    const auto blocks=extract_code_blocks(last_assistant);if(blocks.empty()){say("The last response has no code blocks.",true);continue;}size_t n=blocks.size();const std::string num=trim(args.substr(4));
+    if(!num.empty()){try{n=std::stoul(num);}catch(...){n=0;}if(n<1 || n>blocks.size()){say("Usage: /copy code [1-"+std::to_string(blocks.size())+"]",true);continue;}}
+    else if(blocks.size()>1 && tui){std::vector<std::string> labels;for(size_t i=0;i<blocks.size();++i){std::string first=blocks[i].text.substr(0,blocks[i].text.find('\n'));if(first.size()>40){size_t cut=40;while(cut>0 &&(static_cast<unsigned char>(first[cut])&0xC0)==0x80)--cut;first=first.substr(0,cut)+"…";}
+        labels.push_back("#"+std::to_string(i+1)+(blocks[i].lang.empty()?"":" "+blocks[i].lang)+"  "+first); }
+      const int c=tui->choose("Copy which code block?",labels,blocks.size()-1);if(c<0)continue;n=static_cast<size_t>(c)+1; }
+    const auto& block=blocks[n-1];const std::string e=clipboard_copy(block.text);if(!e.empty())say(e,true);else say("Copied code block "+std::to_string(n)+(block.lang.empty()?"":" ("+block.lang+")")+".");continue; }
   if(token == "/copy"){if(last_assistant.empty()){say("There is no assistant response to copy.",true);continue;}
   const std::string e=clipboard_copy(last_assistant);if(!e.empty())say(e,true);else say("Copied last response as markdown.");continue; } if(token == "/review"){
   std::string focus=args.empty()?"Review the current workspace changes. Inspect the git diff, identify correctness or regression risks, and report concrete findings. Do not edit files unless explicitly asked.":"Review the current workspace changes with this focus: "+args;
   (void)run_turn(focus,true);continue; } if(token == "/compact"){if(session.items.empty()){say("Nothing to compact.");continue;}if(tui)tui->render("working...");
   if(!compact_session(session,api,err))say(err.empty()?"Compaction failed.":err,true); else say("Conversation compacted to " + std::to_string(session.context_bytes())+ " context bytes.");continue; }
   if(token == "/title"){const std::string title=args.empty()?"Codex C++":safe_terminal_text(args); std::cout << "\x1b]0;" << title << "\x07" << std::flush;say("Terminal title set to " + title);continue; }
-  if(token == "/statusline"){if(args.empty()){say("Usage: /statusline model,cwd[,thread,sandbox]");continue;}
+  if(token == "/statusline"){if(args.empty()){say("Usage: /statusline model,cwd[,thread,sandbox]  |  /statusline bar on|off");continue;}
+  if(args=="bar on"||args=="bar off"){if(tui)tui->set_bar_enabled(args=="bar on");say(args=="bar on"?"Top bar enabled.":"Top bar hidden.");continue;}
   std::string normalized=args;std::replace(normalized.begin(),normalized.end(),',',' ');auto items=split_words(normalized); if(tui)tui->set_statusline_items(items);say("Status line updated.");continue; }
   if(token == "/logout"){if(opt.provider == "codex"){std::error_code ec;fs::remove(own_auth_path(),ec); say(ec?"Could not remove local credentials.":"Signed out (local credentials removed).",bool(ec));continue;
   }
@@ -1115,8 +1200,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
 #else
   if(!opt.api_key_env.empty())unsetenv(opt.api_key_env.c_str());
 #endif
-  say("Cleared API credential from this process. Environment changes outside this process are unchanged.");continue; } if(token == "/ps"){say("No background terminals are managed by this runtime.");continue;}
-  if(token == "/stop"){say("No background terminals to stop.");continue;}if(!token.empty()){const SlashCommandDef* command=find_slash_command(token); const std::string message=command
+  say("Cleared API credential from this process. Environment changes outside this process are unchanged.");continue; }if(!token.empty()){const SlashCommandDef* command=find_slash_command(token); const std::string message=command
     ?(std::string(command->name)+" requires a Codex capability that this standalone C++ runtime does not currently provide."):("Unknown command: "+token);
   say(message,true);continue; } int rc = run_turn(line);
 #if !defined(_WIN32)

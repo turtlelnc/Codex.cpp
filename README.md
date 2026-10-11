@@ -106,6 +106,14 @@ python3 sandbox_probe.py
 
 `/memory 内容` 追加成功后刷新当前记忆；`/memory` 查看并重新加载，适合直接编辑文件后刷新。上下文压缩不会丢失当前记忆。只读模式禁止追加。
 
+TUI 默认在底部显示淡色状态行；`/statusline bar on` 可开启顶部浮空栏：模型与 reasoning、权限（`danger-full-access` 标红）、上下文占用（相对自动压缩阈值）、订阅剩余额度、会话名。输入等待时每 5 秒刷新；额度来自非公开后端，自动刷新在后台执行，最多每 2 分钟查询一次，不阻塞输入；缓存标注更新时间，查询失败显示 stale 和错误，令牌过期时用 `/status` 或 `--quota` 刷新登录，其余项均为本地数据。`/status pin` 在顶部固定详细状态面板（再次执行取消），`/statusline bar off|on` 隐藏或显示浮空栏。终端高度 <30 行时只显示浮空栏，<15 行时隐藏。
+
+`/model` 的模型列表：`--provider codex` 读取订阅账号的非公开模型接口，可得到每个模型支持的 effort（如 `max`、`ultra`）；其他 Provider 读取标准 `GET /models`，该接口不含 effort 信息，此时使用 `low/medium/high/xhigh`。读取失败时退回手动输入。
+
+交互模式下 `/status` 显示本地状态和订阅额度；TUI 在输入框下方保留额度面板，提交下一条输入后收起。查询失败仍显示本地状态。
+
+使用 `./codex-cpp --quota` 查询订阅用量和重置时间；添加 `--wait-quota` 后，HTTP 429 且查询确认主额度窗口耗尽时，等待已耗尽窗口中最晚的重置时间，再请求当前步骤。等待期间每 30 秒只读查询额度；使用重置卡或其他方式恢复额度后提前续跑。两项仅适用于 `--provider codex`。等待期间可按 Ctrl+C 退出，之后用 `--resume SESSION_ID --continue --wait-quota` 续跑。电脑休眠期间不会运行，唤醒后继续检查时间。查询失败、重置时间缺失、额外模型额度或流已开始时不会进入自动等待；查询路径属于非公开后端，可能变化。
+
 临时限流、部分服务错误和网络故障最多重试两次。Codex 流一旦收到 SSE 内容，不会自动重新请求，以免重复显示已输出的内容。持续限流仍会停止并保留会话；不会自动重新执行工具。
 
 恢复未完成的任务：
@@ -314,8 +322,13 @@ UI 模式：
 - 链接
 - fenced code block
 - 引用
-- 无序列表
+- 无序 / 有序 / 嵌套列表（自动悬挂缩进）
+- 分隔线
 - Markdown Table
+
+代码框右上角的 `⧉` 鼠标移入时高亮，可点击复制对应代码（需开启鼠标捕获，默认开启）；`/mouse off` 时可用 `/copy code`。
+
+其他体验细节：英文按单词换行并保持样式；代码块与 diff 使用底色带（diff 附 `+N -M` 统计）；工具调用只显示命令/路径，长输出折叠为 `… +N more lines`；等待模型时显示动态状态；调整终端大小在输入等待时立即重绘；向上滚动时底部会提示可返回最新输出。
 
 例如模型输出：
 
@@ -679,14 +692,14 @@ GIF
 
 | Command | 功能 |
 | --- | --- |
-| `/model` | 修改模型 / reasoning effort |
+| `/model` | 从 Provider 读取模型列表并选择模型与 reasoning effort（`/model refresh` 重新读取；`/model MODEL [EFFORT]` 直接设置） |
 | `/login` | ChatGPT Device Login |
 | `/auth` | 查看登录状态 |
 | `/permissions` | 修改 Sandbox 权限 |
 | `/status` | 当前模型、Session、Sandbox、上下文状态 |
 | `/sessions` | 查看保存的 Session |
 | `/resume` | 恢复 Session |
-| `/new` | 新建会话 |
+| `/clear(new)` | 新建会话并重置上下文；兼容 `/clear` 和 `/new` |
 | `/fork` | Fork 当前会话 |
 | `/rename` | 重命名 Session |
 | `/archive` | 归档 Session |
@@ -699,7 +712,7 @@ GIF
 | `/diff` | 查看 Git Diff |
 | `/mention` | 将文件加入下一轮上下文 |
 | `/image` | 将图片加入下一轮 |
-| `/skills` | 查看 Skills |
+| `/skills` | 打开技能选择面板；方向键或滚轮选择，回车插入，Esc 关闭（纯文本模式列出技能） |
 | `/mcp` | 查看 MCP |
 | `/init` | 创建基础 `AGENTS.md` |
 | `/copy` | 复制上一条模型 Markdown 回复 |
@@ -711,35 +724,6 @@ GIF
 
 ---
 
-## 尚未实现的 Codex 能力
-
-为了让命令提示尽可能接近 Codex，一些官方 Codex 风格命令目前会显示在 `/help` 中，但明确标记为 unsupported。
-
-包括例如：
-
-```text
-/ide
-/keymap
-/vim
-/experimental
-/approve
-/import
-/hooks
-/app
-/agent
-/raw
-/usage
-/theme
-/pets
-/plugins
-/feedback
-/subagents
-/memories
-```
-
-它们目前只是保留命令入口，不代表已经实现对应能力。
-
----
 
 ## JSONL / 自动化
 
@@ -1207,7 +1191,7 @@ Workspace conversations are stored separately under:
 
 This project implements the core Codex-style agent workflow, but it is not intended to be a complete replacement for every official Codex CLI feature.
 
-Several command names are retained for familiarity but currently report that the corresponding capability is unsupported.
+Only implemented slash commands are listed in the command menu and help.
 
 The focus is a small, hackable and understandable coding-agent runtime rather than full feature parity.
 
@@ -1222,3 +1206,33 @@ A complete modern coding-agent runtime normally includes a large application sta
 > How small can a useful C++ coding-agent runtime stay while keeping its major components easy to inspect?
 
 The result is intended to be easy to inspect, modify, compile and experiment with.
+
+在交互界面输入 `$` 也可打开技能面板，继续输入名称筛选；选中后会插入 `$技能名 `，补充任务再发送。
+
+交互界面默认使用简洁开屏、随机中英文短句和灰底输入框；模型、权限、上下文及额度集中在底部状态行。`/statusline bar on` 可开启顶部状态条。
+
+### 界面设计
+
+`/design` 或 `/design on` 开启设计模式，`/design off` 关闭。`/design 需求` 对单次任务应用设计规则；`/design plan 需求` 先给方案，并使用只读权限。设计模式复用现有工具和项目技术栈，不自带图片生成或浏览器预览。
+
+规则参考 [claude-design 提示词](https://github.com/asgeirtj/system_prompts_leaks/tree/main/Anthropic/claude-design)，重新提炼为现有界面分析、视觉一致性、可用交互、无障碍和验证要求，不依赖其专用运行时。
+
+设计模式优先验证完整任务流程和页面切换后的可见内容；删除重复、显而易见或解释内部组织方式的常驻文案，保留隐私、题源、给分等影响决策的信息。不以禁用常见字体或卡片来追求“反 AI 风格”。
+
+Design 模式切换紫色输入框和状态标识，保留页面聊天及模型上下文。`/clear` 与 `/new` 相同：开启新会话并重置上下文，原会话仍保存在本地。
+
+命令菜单将新建会话合并显示为 `/clear(new)`，输入 `/clear`、`/new` 或 `/clear(new)` 均执行同一个操作。
+
+设计规则另参考 [duyet/frontend-design](https://github.com/duyet/codex-claude-plugins/blob/master/frontend-design/skills/frontend-design/SKILL.md)，提炼视觉方向、字体层级、克制配色、有目的的动效、组件组合和局部状态；不引入其字体禁用清单或固定框架偏好。
+
+### 执行期间补充消息
+
+TUI 在等待模型或执行长工具时仍可输入。回车发送引导消息，当前请求或工具结束后、下一次模型请求前加入上下文；若本轮模型已给出最终回复，会继续处理引导。Tab 将消息放入队列，当前轮结束后按发送顺序自动执行；Ctrl+J 换行，Esc 中断当前操作。尚未发送的输入会留在输入框。审批面板打开时按键用于审批。
+
+队列仅保存在当前进程中；已应用的引导写入会话。`/clear(new)`、恢复或分叉会话会清空尚未应用的队列和草稿。纯文本及 JSON 模式不提供执行中的输入面板。
+
+TUI 粘贴超过 10 行文本时显示 `[Pasted text #N +行数 lines]`，左右移动和删除将标记视为一个整体；发送、引导和排队均展开完整原文。鼠标悬停高亮，点击打开全文编辑面板，回车换行、Ctrl+S 保存、Esc 取消。保存后行数标记随之更新。
+
+手动输入同样的标记会保留为普通文字。任务结束时尚未完成的粘贴会继续接收；运行中也支持 Delete 删除折叠块。
+
+输入回归测试（macOS/Linux，无需模型或登录）：`python3 tests/tui_input.py`。

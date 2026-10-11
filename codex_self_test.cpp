@@ -48,9 +48,11 @@ fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","h
   FunctionCall patch{"apply_patch","hardlink-patch",R"({"patch":""})"};check(router.invoke(patch,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard", "hardlinked apply_patch workspace refused");
   fs::remove(alias,ec);
 }else check(false,"create hardlink test fixture");
-fs::remove(guard_file,ec);Session s;check(init_session(s,troot,false,std::nullopt,err),"session creation");s.append_transcript("abc");
+fs::remove(guard_file,ec);Session s;check(init_session(s,troot,false,std::nullopt,err),"session creation");Session empty;check(init_session(empty,troot,false,s.id,err) && empty.items.empty(),"empty listed session can resume");s.append_transcript("abc");
 const std::string u="{\"role\":\"user\",\"content\":\"hello\"}";const std::string a="{\"role\":\"assistant\",\"content\":\"world\"}"; check(s.record_item(u)&& s.record_item(a),"structured item journal append");
 Session s2;check(init_session(s2,troot,false,s.id,err)&& s2.transcript == "abc" && s2.items==std::vector<std::string>({u,a}),"structured session resume");
+const auto ids=session_ids(troot);check(std::find(ids.begin(),ids.end(),s.id+".items")==ids.end(),"session list excludes item journals");
+char name[]="codex-cpp",flag[]="--resume";char* missing[]={name,flag};check(!parse_options(2,missing,err),"missing resume ID is rejected before model request");
 check(!init_session(s2,troot,false,std::string("../escape"),err),"invalid session ID rejected"); check(s.replace_items({u})&& init_session(s2,troot,false,s.id,err)&& s2.items.size()==1,"atomic item journal replacement");
 check(matching_slash_commands("").empty()&& matching_slash_commands("hello /model").empty(),"slash popup plain-text guard"); auto slash_model = matching_slash_commands("/mo");
 check(!slash_model.empty()&& std::string(slash_model.front()->name)== "/model","slash popup prefix matching"); check(matching_slash_commands("/model high").empty(),"slash popup closes for arguments");
@@ -64,6 +66,7 @@ check(prompt_bundle.contextual_user_prefix.find("Project rule: run focused tests
   prompt_bundle.contextual_user_prefix.find(troot.string())!= std::string::npos,"prompt AGENTS and environment context");
 RuntimePolicy ro = p;ro.sandbox = SandboxMode::ReadOnly;ro.approval = ApprovalPolicy::OnRequest;PromptBuilder ro_builder{troot,ro,prompt_api,false,"",""};
 check(ro_builder.build().developer_instructions.find("workspace is read-only")!= std::string::npos,"prompt read-only permissions");
+prompt_builder.design_mode=true;check(prompt_builder.build().developer_instructions.find("# Design mode")!=std::string::npos,"design instructions reach developer context");check(prompt_builder.build().developer_instructions.find("end-to-end task")!=std::string::npos && prompt_builder.build().developer_instructions.find("operational mistake or misinterpretation")!=std::string::npos,"design prioritizes task flow and consequential copy");prompt_builder.design_mode=false;check(prompt_builder.build().developer_instructions.find("# Design mode")==std::string::npos,"design instructions absent outside mode");ro_builder.design_mode=true;auto design_plan=ro_builder.build().developer_instructions;check(design_plan.find("# Design mode")!=std::string::npos && design_plan.find("workspace is read-only")!=std::string::npos,"design proposal retains read-only permissions");
 write_all(troot/"Memory.md","# Project memory\n- Build with clang++\n",err);
 ro_builder.memory=load_project_memory(troot);
 check(ro_builder.build().developer_instructions.find("Build with clang++")!=std::string::npos && ro_builder.build().contextual_user_prefix.find("Build with clang++")==std::string::npos,"memory stays outside user history");
@@ -72,6 +75,18 @@ check(ro_builder.build().developer_instructions.find("Updated memory")==std::str
 ro_builder.memory=load_project_memory(troot);
 check(ro_builder.build().developer_instructions.find("Updated memory")!=std::string::npos,"explicit reload refreshes memory");
 check(s.replace_items({u}) && ro_builder.build().developer_instructions.find("Updated memory")!=std::string::npos,"memory survives history compaction");
+auto quota=parse_codex_quota(R"({"rate_limit":{"limit_reached":true,"primary_window":{"used_percent":100,"reset_at":200},"secondary_window":{"used_percent":100,"reset_at":300}}})",100);
+check(quota && quota->reset==300,"quota waits for all exhausted windows");
+quota=parse_codex_quota(R"({"rate_limit":{"limit_reached":false,"primary_window":{"used_percent":100,"reset_at":200}}})",100);
+check(quota && quota->reset==0,"ordinary 429 does not trigger quota wait");
+{auto m=parse_codex_models(R"({"models":[{"slug":"a","visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"ultra"}]},{"slug":"h","visibility":"hide"}]})");
+check(m && m->size()==1 && (*m)[0].id=="a" && (*m)[0].efforts.size()==2 && (*m)[0].efforts[1]=="ultra" && (*m)[0].default_effort=="low","codex model catalog keeps listed models and their efforts");
+auto o=parse_openai_models(R"({"data":[{"id":"zeta"},{"id":"text-embedding-3"},{"id":"alpha"}]})");
+check(o && o->size()==2 && (*o)[0].id=="alpha" && (*o)[0].efforts.empty(),"openai model list is sorted and drops non-chat models");
+check(!parse_codex_models("{}") && !parse_openai_models("{}"),"model list parsers reject unrelated JSON");}
+quota=parse_codex_quota(R"({"rate_limit":{"limit_reached":true,"primary_window":{"used_percent":100,"reset_at":50}}})",100);
+check(quota && quota->reset==0 && !parse_codex_quota("{}",100),"missing or expired reset does not loop");
+check(parse_codex_quota(R"({"rate_limit":{"allowed":true,"limit_reached":false}})",100)->available,"reset card quota restoration is recognized");
 Session recovery;check(init_session(recovery,troot,false,std::nullopt,err),"recovery session creation");
 recovery.append_transcript("unfinished task\n");
 recovery.emit(EventKind::TurnStarted,"{\"task\":\"finish task\",\"sandbox\":\"read-only\"}");
