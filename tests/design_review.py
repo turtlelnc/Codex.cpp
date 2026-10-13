@@ -11,18 +11,39 @@ from threading import Thread
 requests = []
 parent_requests = []
 gate_mode = False
+reminder_mode = False
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        assert self.path == '/v1/responses'
+        assert self.path in ('/v1/responses', '/chat/completions')
         assert 'Authorization' not in self.headers
         data = {'id': 'review', 'output': [{'type': 'message', 'content': [
             {'type': 'output_text', 'text': 'confirmed test finding'}]}]}
-        if body['tools']:
+        if reminder_mode:
+            parent_requests.append(body)
+            history = body.get('input', body.get('messages'))
+            reminders = [x for x in history if x.get('content','').startswith('Current mode: Design.')]
+            if len(parent_requests) == 1:
+                assert len(reminders) == 1
+                assert history[-1] == reminders[0]
+                assert 'test the actual primary workflow' in reminders[0]['content']
+                assert 'otherwise explicitly report it unverified' in reminders[0]['content']
+                assert reminders[0]['role'] == ('developer' if 'input' in body else 'system')
+            else:
+                assert len(parent_requests) == 2 and not reminders
+                instructions = body.get('instructions', history[0].get('content',''))
+                assert '# Design mode' not in instructions
+            if 'messages' in body:
+                data = {'choices': [{'message': {'role': 'assistant', 'content': 'proposal done'}}]}
+        elif body['tools']:
             assert gate_mode
             parent_requests.append(body)
+            reminders = [x for x in body['input'] if x.get('role') == 'developer' and x.get('content','').startswith('Current mode: Design.')]
+            assert len(reminders) == (1 if len(parent_requests) in (3, 6) else 0)
+            body['input'] = [x for x in body['input'] if x not in reminders]
             if len(parent_requests) in (2, 5):
                 assert 'Before delivering Design work' in body['input'][-1]['content']
+                assert 'test the actual primary workflow' in body['input'][-1]['content']
                 data = {'id': 'main', 'output': [{'type': 'function_call',
                     'call_id': 'review-call', 'name': 'design_review',
                     'arguments': json.dumps({'decision': 'review', 'task': 'Check the quiz flow',
@@ -43,6 +64,8 @@ class Handler(BaseHTTPRequestHandler):
             assert 'quiz-source-marker' in body['input'][0]['content']
             assert 'parent-private-marker' not in body['input'][0]['content']
             assert 'no tools' in body['instructions']
+            assert 'state update and render branch' in body['instructions']
+            assert 'native buttons do not require custom Enter handlers' in body['instructions']
             if len(requests) == 3 and not gate_mode:
                 data = {}  # Empty response must never be a passed review.
         encoded = json.dumps(data).encode()
@@ -79,5 +102,17 @@ with tempfile.TemporaryDirectory() as folder:
                 text=True, check=True, env=env, capture_output=True)
             assert len(parent_requests) == 6 and len(requests) == 2
             print('Design delivery gate and separate reviewer context passed')
+            reminder_mode = True
+            for style in ['responses', 'chat']:
+                parent_requests.clear()
+                subprocess.run([sys.argv[2], '-i', '--ui', 'plain', '--provider', 'custom',
+                    '--api', style, '--base-url', f'http://127.0.0.1:{server.server_port}',
+                    '--model', 'review-test', '--no-api-key', '--root', str(root),
+                    '--mcp-config', str(root/'mcp.json'), '--auto', '--max-steps', '4'],
+                    input='/design plan Propose a quiz layout.\n/design off\nAnswer normally.\n/quit\n',
+                    text=True, check=True, env=env, capture_output=True)
+                assert len(parent_requests) == 2
+            print('Design reminder: one ephemeral tail message, both APIs, proposal and mode-off isolation passed')
+
     finally:
         server.shutdown()
