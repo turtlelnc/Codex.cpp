@@ -45,10 +45,14 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #if defined(_WIN32)
 #include <direct.h>
 #include <process.h>
 #include <io.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <fcntl.h>
@@ -965,7 +969,7 @@ if(use_tui || opt.wait_quota){struct sigaction action{};action.sa_handler=reques
 }
 #endif
 if(interactive && !opt.json && use_tui){tui.emplace(opt.root,opt.provider,api.model,sandbox_name(opt.policy.sandbox));
-  tui->set_model(api.model,api.reasoning_effort);tui->render(" /help  /status  /sessions  /clear(new)  /quit");
+  tui->set_model(api.model,api.reasoning_effort);tui->render();
 }else if(interactive && !opt.json){
   print_plain_banner(opt,api);
 }

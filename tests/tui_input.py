@@ -73,6 +73,10 @@ def main():
         binary = Path(build) / 'input-test'
         subprocess.run(['clang++', '-std=c++17', '-O2', '-Wall', '-Wextra', '-pedantic',
                         str(ROOT / 'tests/tui_input.cpp'), '-o', str(binary)], check=True)
+        # Slash selection uses the same editor as normal input, not line-buffered echo.
+        output = run(binary, 'read', '/status', [b'/sta', b'\r'])
+        assert b'choose' in output and b'/status' in output
+        run(binary, 'read', '/login', [b'/', b'\x1b[B', b'\r'])
         # The four review regressions, including transitions mid-paste and mid-CSI.
         run(binary, 'transition', 'FIRST\nSECOND', [b'SECOND\x1b[201~\r'], b'\x1b[200~FIRST\n')
         run(binary, 'transition', 'ok', [b'D\x1b[3~ok\r'], paste(TEXT) + b'\x1b[')

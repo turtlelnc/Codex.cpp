@@ -74,10 +74,22 @@ static std::string opening_line(){static const char* lines[]={
 class TuiRenderer{public: enum class CellKind{User,Assistant,Tool,Output,Patch,Error,System,SessionSummary,Notice};
 struct Cell{CellKind kind;std::string title;std::string body;};TuiRenderer(const fs::path& root,std::string provider,std::string model,std::string sandbox)
   : root_(root.string()),provider_(std::move(provider)),model_(std::move(model)),sandbox_(std::move(sandbox)){
+#if defined(_WIN32)
+  win_input_=GetStdHandle(STD_INPUT_HANDLE);win_output_=GetStdHandle(STD_OUTPUT_HANDLE);
+  win_cp_=GetConsoleCP();win_output_cp_=GetConsoleOutputCP();
+  win_mode_valid_=GetConsoleMode(win_input_,&win_mode_)!=0;
+  if(!win_mode_valid_ || !SetConsoleMode(win_input_,(win_mode_|ENABLE_EXTENDED_FLAGS|ENABLE_WINDOW_INPUT|ENABLE_MOUSE_INPUT)&~(ENABLE_LINE_INPUT|ENABLE_ECHO_INPUT|ENABLE_PROCESSED_INPUT|ENABLE_QUICK_EDIT_MODE|ENABLE_VIRTUAL_TERMINAL_INPUT)))throw std::runtime_error("could not enable Windows console input");
+  SetConsoleCP(CP_UTF8);SetConsoleOutputCP(CP_UTF8);
+#endif
   std::cout << "\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?25l\x1b[2J\x1b[H" << std::flush;active_ = true; cells_.push_back({CellKind::SessionSummary,"Codex C++",""});
   cells_.push_back({CellKind::Notice,"",opening_line()});render();
 }
-~TuiRenderer(){if(active_)std::cout << "\x1b[?25h\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?2004l\x1b[?1049l" << std::flush; } TuiRenderer(const TuiRenderer&)= delete;TuiRenderer& operator=(const TuiRenderer&)= delete;
+~TuiRenderer(){if(active_)std::cout << "\x1b[?25h\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?2004l\x1b[?1049l" << std::flush;
+#if defined(_WIN32)
+  if(win_mode_valid_)SetConsoleMode(win_input_,win_mode_);
+  if(win_cp_)SetConsoleCP(win_cp_);if(win_output_cp_)SetConsoleOutputCP(win_output_,win_output_cp_);
+#endif
+} TuiRenderer(const TuiRenderer&)= delete;TuiRenderer& operator=(const TuiRenderer&)= delete;
 void add_user(const std::string& text){add_cell(CellKind::User,"",text);}void add_tool(const std::string& name,const std::string& args ={}){
   std::string label;if(name == "shell")label = "Ran shell command";else if(name == "read_file")label = "Read file";
   else if(name == "list_dir")label = "Explored directory";else if(name == "write_file")label = "Wrote file";
@@ -165,12 +177,12 @@ bool receive_busy_input(const char* keys,size_t count){input_bytes_.erase(0,inpu
   else if(k=='\n'||k==KEY_NEWLINE || (k>=32&&k<127) || k==KEY_TEXT){const auto text=k==KEY_TEXT?key_text_:std::string(1,char(k==KEY_NEWLINE?'\n':k));replace_input(composer_,composer_cursor_,0,text);composer_cursor_+=text.size();}
 }draw_diff(build_frame());return false;}
 void stream_assistant(const std::string& text){finish_assistant_stream(text);}std::string read_line(std::vector<std::string>& history){
-#if defined(_WIN32)
-  std::cout << "\x1b[?25h" << std::flush;std::string line;std::getline(std::cin,line);std::cout << "\x1b[?25l" << std::flush;return line;
-#else
+#if !defined(_WIN32)
   termios oldt{};if(tcgetattr(STDIN_FILENO,&oldt)!= 0){std::string line;std::getline(std::cin,line);return line;}
   termios raw=oldt;raw.c_lflag &= static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag &= static_cast<tcflag_t>(~(IXON|ICRNL));raw.c_cc[VMIN]=1;raw.c_cc[VTIME]=0;
-  load_skill_choices();picker_closed_=false;tcsetattr(STDIN_FILENO,TCSANOW,&raw);std::string line=composer_;size_t cursor=composer_cursor_,hist=history.size();bool popup=false;
+  tcsetattr(STDIN_FILENO,TCSANOW,&raw);
+#endif
+  load_skill_choices();picker_closed_=false;std::string line=composer_;size_t cursor=composer_cursor_,hist=history.size();bool popup=false;
   command_popup_selected_=0;working_=false;watch_resize(true);tick_active_=true;render();for(;;){int k=read_key();
 #if !defined(_WIN32)
   if(tui_interrupt_requested){line.clear();break;}
@@ -214,8 +226,11 @@ void stream_assistant(const std::string& text){finish_assistant_stream(text);}st
   // Derive popup visibility from the current composer contents on every key.
   // It is never allowed to survive as stale UI state.
   auto matches = composer_commands(line);popup = !matches.empty();if(!popup)command_popup_selected_ = 0; else if(command_popup_selected_ >= matches.size())command_popup_selected_ = matches.size()-1;
-  cursor=snap_paste_cursor(line,cursor);composer_=line;composer_cursor_=cursor;render(); } tcsetattr(STDIN_FILENO,TCSANOW,&oldt);tick_active_=false;watch_resize(false);const auto result=paste_editing_?line:expand_pastes(line);composer_.clear();composer_cursor_=0;active_pastes_.clear();if(!paste_editing_)pastes_.clear();render();return result;
+  cursor=snap_paste_cursor(line,cursor);composer_=line;composer_cursor_=cursor;render(); }
+#if !defined(_WIN32)
+  tcsetattr(STDIN_FILENO,TCSANOW,&oldt);
 #endif
+  tick_active_=false;watch_resize(false);const auto result=paste_editing_?line:expand_pastes(line);composer_.clear();composer_cursor_=0;active_pastes_.clear();if(!paste_editing_)pastes_.clear();render();return result;
 }
 // While the program blocks outside the composer (e.g. device login), stop the terminal echoing
 // mouse/key reports as garbage and discard whatever arrived in the meantime.
@@ -224,7 +239,7 @@ void quiet_input(bool on){
   if(on){if(tcgetattr(STDIN_FILENO,&quiet_saved_)==0){quiet_valid_=true;termios t=quiet_saved_;t.c_lflag&=static_cast<tcflag_t>(~(ECHO|ICANON));t.c_cc[VMIN]=1;t.c_cc[VTIME]=0;tcsetattr(STDIN_FILENO,TCSANOW,&t);} }
   else if(quiet_valid_){tcflush(STDIN_FILENO,TCIFLUSH);tcsetattr(STDIN_FILENO,TCSANOW,&quiet_saved_);quiet_valid_=false;}
 #else
-  (void)on;
+  if(!on)FlushConsoleInputBuffer(win_input_);
 #endif
 }
 void set_mouse(bool on){mouse_=on;if(!on)hover_row_=hover_col_=size_t(-1);if(active_)std::cout<<(on?"\x1b[?1000h\x1b[?1003h\x1b[?1006h":"\x1b[?1003l\x1b[?1000l\x1b[?1006l")<<std::flush;}bool mouse()const{return mouse_;}
@@ -246,13 +261,40 @@ static void watch_resize(bool on){
 }
 #if !defined(_WIN32)
 termios quiet_saved_{};bool quiet_valid_=false;
+#else
+HANDLE win_input_=nullptr,win_output_=nullptr;DWORD win_mode_=0;UINT win_cp_=0,win_output_cp_=0;bool win_mode_valid_=false;WCHAR win_surrogate_=0;
+// Translate native console records into the existing UTF-8/CSI decoder.
+int windows_input(bool wait,int timeout){const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(std::max(0,timeout));for(;;){
+  DWORD ms=!wait?0:timeout<0?INFINITE:static_cast<DWORD>(std::max<long long>(0,std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now()).count()));
+  const DWORD ready=WaitForSingleObject(win_input_,ms);if(ready==WAIT_TIMEOUT)return KEY_INCOMPLETE;if(ready!=WAIT_OBJECT_0)return -1;
+  INPUT_RECORD record{};DWORD count=0;if(!ReadConsoleInputW(win_input_,&record,1,&count)||!count)return -1;
+  if(record.EventType==WINDOW_BUFFER_SIZE_EVENT)return KEY_RESIZE;
+  std::string bytes;
+  if(record.EventType==KEY_EVENT){const auto& k=record.Event.KeyEvent;if(!k.bKeyDown)continue;
+    switch(k.wVirtualKeyCode){case VK_LEFT:bytes="\x1b[D";break;case VK_RIGHT:bytes="\x1b[C";break;case VK_UP:bytes="\x1b[A";break;case VK_DOWN:bytes="\x1b[B";break;
+    case VK_HOME:bytes="\x1b[H";break;case VK_END:bytes="\x1b[F";break;case VK_DELETE:bytes="\x1b[3~";break;case VK_PRIOR:bytes="\x1b[5~";break;case VK_NEXT:bytes="\x1b[6~";break;
+    case VK_RETURN:bytes=(k.dwControlKeyState&SHIFT_PRESSED)?"\x1b[13;2u":"\r";break;default:break;}
+    if(bytes.empty()){WCHAR ch=k.uChar.UnicodeChar;if(!ch)continue;WCHAR text[2]={ch,0};int length=1;
+      if(ch>=0xd800&&ch<=0xdbff){win_surrogate_=ch;continue;}
+      if(ch>=0xdc00&&ch<=0xdfff){if(!win_surrogate_)continue;text[0]=win_surrogate_;text[1]=ch;length=2;}win_surrogate_=0;
+      char utf8[8];const int n=WideCharToMultiByte(CP_UTF8,0,text,length,utf8,sizeof utf8,nullptr,nullptr);if(n>0)bytes.assign(utf8,n);
+    }
+    const std::string key=bytes;for(WORD i=1;i<k.wRepeatCount;++i)bytes+=key;
+  }else if(record.EventType==MOUSE_EVENT && mouse_){const auto& m=record.Event.MouseEvent;int button=-1;
+    if(m.dwEventFlags==MOUSE_MOVED)button=32;else if(m.dwEventFlags==MOUSE_WHEELED)button=static_cast<SHORT>(HIWORD(m.dwButtonState))>0?64:65;
+    else if((m.dwEventFlags==0||m.dwEventFlags==DOUBLE_CLICK)&&(m.dwButtonState&FROM_LEFT_1ST_BUTTON_PRESSED))button=0;
+    if(button>=0){CONSOLE_SCREEN_BUFFER_INFO info{};if(!GetConsoleScreenBufferInfo(win_output_,&info))continue;const int x=m.dwMousePosition.X-info.srWindow.Left+1,y=m.dwMousePosition.Y-info.srWindow.Top+1;
+      if(x>0&&y>0)bytes="\x1b[<"+std::to_string(button)+";"+std::to_string(x)+";"+std::to_string(y)+"M";}
+  }
+  if(bytes.empty())continue;input_bytes_.erase(0,input_offset_);input_offset_=0;input_bytes_=std::move(bytes);return static_cast<unsigned char>(input_bytes_[input_offset_++]);
+}}
 #endif
 bool tick_active_=false;std::function<void()> tick_cb_;
 // Shared incremental decoder: partial CSI, UTF-8 and paste packets survive busy/idle transitions.
 std::string input_bytes_,input_escape_,paste_pending_,pasted_text_,key_text_,input_utf8_;size_t input_offset_=0;bool input_paste_=false;
 int input_byte(bool wait,int timeout=-1){if(input_offset_<input_bytes_.size())return static_cast<unsigned char>(input_bytes_[input_offset_++]);
 #if defined(_WIN32)
-  return wait?std::cin.get():KEY_INCOMPLETE;
+  return windows_input(wait,timeout);
 #else
   struct pollfd fd{STDIN_FILENO,POLLIN,0};const int ready=::poll(&fd,1,wait?timeout:0);if(ready==0)return KEY_INCOMPLETE;if(ready<0)return errno==EINTR&&!tui_interrupt_requested?KEY_RESIZE:-1;unsigned char c=0;if(::read(STDIN_FILENO,&c,1)!=1)return errno==EINTR&&!tui_interrupt_requested?KEY_RESIZE:-1;return c;
 #endif
