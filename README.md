@@ -1246,3 +1246,5 @@ TUI 粘贴超过 10 行文本时显示 `[Pasted text #N +行数 lines]`，左右
 ### 可选后台 Computer Use（实验）
 
 macOS Accessibility 和 Windows UI Automation 后端通过 `computer_batch` 观察控件、调用按钮或替换可编辑值，不发送全局鼠标/键盘事件，不主动切换焦点。系统不支持的控件直接报错，没有截图或全局输入回退。应用仍可能自行激活窗口；Windows 尚未实机验证。构建、MCP 配置和能力边界见 [tools/COMPUTER_USE.md](tools/COMPUTER_USE.md)。
+
+后台控制器可选启用可见接管：macOS MCP 程序加 `--takeover`，Windows 脚本加 `-Takeover`。目标窗口在前台时显示灰色鼠标蒙版和停止按钮；停止后该控制器拒绝后续动作，直到用户主动重启。它不锁定键盘，也不停止其他 Shell 工具。macOS 已验证界面及停止行为；Windows 尚未实测。

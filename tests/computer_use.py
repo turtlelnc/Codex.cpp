@@ -15,11 +15,15 @@ def call(method, params=None):
     return json.loads(proc.stdout.readline())['result']
 
 def batch(actions, observation='text'):
-    return call('tools/call', {'name': 'computer_batch', 'arguments': {'app': 'com.apple.TextEdit', 'actions': actions, 'observation': observation, 'state_id': snapshot}})
+    return call('tools/call', {'name': 'computer_batch', 'arguments': {'app': 'com.apple.TextEdit', 'window': 'Fixture', 'actions': actions, 'observation': observation, 'state_id': snapshot}})
 
 try:
     assert call('initialize')['serverInfo']['name'] == 'native-computer-use'
-    assert len(call('tools/list')['tools']) == 1
+    specs = call('tools/list')['tools']
+    assert len(specs) == 1
+    action_schema = specs[0]['inputSchema']['properties']['actions']['items']
+    assert action_schema['required'] == ['type', 'element']
+    assert action_schema['properties']['type']['enum'] == ['press_element', 'set_value']
     for actions in [
         [{'type': 'activate', 'bundle_id': 'com.apple.Mail'}],
         [{'type': 'type', 'text': 'x'*4001}],
@@ -32,6 +36,8 @@ try:
         result = batch(actions)
         assert result['isError']
         assert json.loads(result['content'][0]['text'])['completed_actions'] == 0
+    missing = call('tools/call', {'name': 'computer_batch', 'arguments': {'app': 'com.apple.TextEdit', 'actions': []}})
+    assert missing['isError']
     result = batch([])
     state = json.loads(result['content'][0]['text'])
     snapshot = state['state']['state_id']
@@ -40,6 +46,8 @@ try:
     assert not result['isError'] and state['completed_actions'] == 1
     assert state['state']['dry_run'] is True
     assert all(part['type'] == 'text' for part in result['content'])
+    stale = call('tools/call', {'name': 'computer_batch', 'arguments': {'app': 'com.apple.TextEdit', 'window': 'Other', 'actions': [{'type': 'set_value', 'element': 0, 'text': 'blocked'}], 'state_id': state['state']['state_id']}})
+    assert stale['isError']
     assert batch([], 'image')['isError']
     assert batch([], 'invalid')['isError']
     print('Native batch schema, allowlist, bounds and text-only observations passed (dry run)')
