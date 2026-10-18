@@ -38,8 +38,8 @@ int main(){try{
     key('C',3,LEFT_CTRL_PRESSED,"host.stop");key('G',7,LEFT_CTRL_PRESSED,"host.menu");
     INPUT_RECORD resize{};resize.EventType=WINDOW_BUFFER_SIZE_EVENT;resize.Event.WindowBufferSizeEvent.dwSize={80,24};DWORD n=0;WriteConsoleInputW(input,&resize,1,&n);
     auto resized=tui.external_key();if(!resized||resized->first!="resize")throw std::runtime_error("resize event missing");
-    tui.external_frame({"NATIVE_RENDER_OK"},0,0);WCHAR row[16]{};DWORD read=0;
-    if(!ReadConsoleOutputCharacterW(screen,row,15,{0,0},&read)||std::wstring(row,read)!=L"NATIVE_RENDER_OK")throw std::runtime_error("native VT frame did not render");
+    tui.external_frame({"NATIVE_RENDER_OK"},0,0);WCHAR row[32]{};DWORD read=0;
+    if(!ReadConsoleOutputCharacterW(screen,row,16,{0,0},&read)||std::wstring(row,read)!=L"NATIVE_RENDER_OK")throw std::runtime_error("native VT frame did not render");
   }
   std::cout.rdbuf(old_buffer);DWORD restored=0;GetConsoleMode(input,&restored);
   const bool restored_ok=restored==input_mode&&GetConsoleCP()==input_cp&&GetConsoleOutputCP()==output_cp;
