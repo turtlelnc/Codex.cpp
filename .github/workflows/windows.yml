@@ -36,12 +36,12 @@ jobs:
         run: |
           & .\build\codex-cpp.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\build\self-test.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\build\plugins-test.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\build\windows-runtime-test.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $failed = $false
+          foreach ($test in @('self-test', 'plugins-test', 'windows-runtime-test')) {
+            & ".\build\$test.exe"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

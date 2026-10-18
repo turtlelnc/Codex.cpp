@@ -45,7 +45,7 @@ R"({"command":"cd"})"
 R"({"command":"pwd"})"
 #endif
 };
-check(router.invoke(cwd_shell,troot,unrestricted,dummy).exit_code==0,"explicit unrestricted shell still runs");
+auto native_shell=router.invoke(cwd_shell,troot,unrestricted,dummy);if(native_shell.exit_code)std::cerr<<"native shell exit "<<native_shell.exit_code<<": "<<native_shell.output<<'\n';check(native_shell.exit_code==0,"explicit unrestricted shell still runs");
 fs::path guard_file=troot.parent_path()/"hardlink-guard.txt";write_all(guard_file,"guard",err);fs::path alias=troot/"hardlink-guard.txt";
 fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","hardlink",R"({"command":"printf escaped > hardlink-guard.txt"})"};
   auto denied=router.invoke(attack,troot,p,dummy);check(denied.exit_code==126 && denied.output.find("hardlink")!=std::string::npos &&

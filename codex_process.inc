@@ -112,7 +112,7 @@ public:
     std::wstring block;for(const auto& item:env){block+=fs::u8path(item).wstring();block+=L'\0';}block+=L'\0';
     if(ok)ok=CreateProcessW(nullptr,line.data(),nullptr,nullptr,TRUE,CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT,block.data(),cwd.c_str(),&startup,&child)!=0;
     CloseHandle(child_in);CloseHandle(child_out);if(quiet!=INVALID_HANDLE_VALUE)CloseHandle(quiet);
-    if(!ok){error="cannot start process";stop();return false;}process=child.hProcess;if(!AssignProcessToJobObject(job,process)){CloseHandle(child.hThread);error="cannot assign process job";stop();return false;}ResumeThread(child.hThread);CloseHandle(child.hThread);return true;
+    if(!ok){error="cannot start process: "+std::to_string(GetLastError());stop();return false;}process=child.hProcess;if(!AssignProcessToJobObject(job,process)){CloseHandle(child.hThread);error="cannot assign process job: "+std::to_string(GetLastError());stop();return false;}ResumeThread(child.hThread);CloseHandle(child.hThread);return true;
 #else
     int incoming[2],outgoing[2];if(::pipe(incoming)!=0){error="pipe failed";return false;}if(::pipe(outgoing)!=0){::close(incoming[0]);::close(incoming[1]);error="pipe failed";return false;}
     std::vector<char*> argv,environment;for(auto& arg:command)argv.push_back(arg.data());argv.push_back(nullptr);for(auto& item:env)environment.push_back(item.data());environment.push_back(nullptr);

@@ -22,7 +22,7 @@ import tempfile
 import threading
 import urllib.request
 
-EXPECTED_CODEX_SHA256 = "48115022056e140117fea52daca740799a9a42197993dc59cc0620bb5e4ede9f"
+EXPECTED_CODEX_SHA256 = "ba359e0eb254eef51f796b79034e8372a7269130b7b7947a92b8cb1ca9737d4b"
 
 
 class ProbeServer(http.server.ThreadingHTTPServer):
