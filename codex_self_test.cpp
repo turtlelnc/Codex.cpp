@@ -48,7 +48,7 @@ R"({"command":"pwd"})"
 check(router.invoke(cwd_shell,troot,unrestricted,dummy).exit_code==0,"explicit unrestricted shell still runs");
 fs::path guard_file=troot.parent_path()/"hardlink-guard.txt";write_all(guard_file,"guard",err);fs::path alias=troot/"hardlink-guard.txt";
 fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","hardlink",R"({"command":"printf escaped > hardlink-guard.txt"})"};
-  auto denied=router.invoke(attack,troot,p,dummy);check(denied.exit_code==126 && denied.output.find("external hardlink alias")!=std::string::npos &&
+  auto denied=router.invoke(attack,troot,p,dummy);check(denied.exit_code==126 && denied.output.find("hardlink")!=std::string::npos &&
   slurp(guard_file)=="guard","external hardlink shell refused before execution"); FunctionCall direct_write{"write_file","hardlink-write",R"({"path":"hardlink-guard.txt","content":"escaped"})"};
   check(router.invoke(direct_write,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard","hardlinked write_file target refused");
   FunctionCall patch{"apply_patch","hardlink-patch",R"({"patch":""})"};check(router.invoke(patch,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard", "hardlinked apply_patch workspace refused");

@@ -88,7 +88,7 @@ struct Cell{CellKind kind;std::string title;std::string body;};TuiRenderer(const
 ~TuiRenderer(){external_mode("",false);if(active_)std::cout << "\x1b[?25h\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?2004l\x1b[?1049l" << std::flush;
 #if defined(_WIN32)
   if(win_mode_valid_)SetConsoleMode(win_input_,win_mode_);
-  if(win_cp_)SetConsoleCP(win_cp_);if(win_output_cp_)SetConsoleOutputCP(win_output_,win_output_cp_);
+  if(win_cp_)SetConsoleCP(win_cp_);if(win_output_cp_)SetConsoleOutputCP(win_output_cp_);
 #endif
 } TuiRenderer(const TuiRenderer&)= delete;TuiRenderer& operator=(const TuiRenderer&)= delete;
 void add_user(const std::string& text){add_cell(CellKind::User,"",text);}void add_tool(const std::string& name,const std::string& args ={}){
