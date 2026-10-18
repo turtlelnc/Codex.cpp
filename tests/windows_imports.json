@@ -10,8 +10,10 @@
       "AssignProcessToJobObject",
       "CloseHandle",
       "CompareStringW",
+      "CopyFile2",
       "CopyFileW",
       "CreateDirectoryW",
+      "CreateFile2",
       "CreateFileW",
       "CreateHardLinkW",
       "CreateJobObjectW",
@@ -76,6 +78,7 @@
       "GetStdHandle",
       "GetStringTypeW",
       "GetSystemTimeAsFileTime",
+      "GetSystemTimePreciseAsFileTime",
       "GetTempPathW",
       "GetTickCount64",
       "GetTimeFormatW",
@@ -149,5 +152,22 @@
       "WriteConsoleW",
       "WriteFile"
     ]
+  },
+  "reviews": {
+    "GetSystemTimePreciseAsFileTime": {
+      "minimum_client": "Windows 8",
+      "source": "https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtimepreciseasfiletime",
+      "reason": "VS 2026 static runtime import; predates Windows 10 1809."
+    },
+    "CreateFile2": {
+      "minimum_client": "Windows 8",
+      "source": "https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfile2",
+      "reason": "VS 2026 static runtime import; predates Windows 10 1809."
+    },
+    "CopyFile2": {
+      "minimum_client": "Windows 8",
+      "source": "https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-copyfile2",
+      "reason": "VS 2026 static runtime import; predates Windows 10 1809."
+    }
   }
 }
