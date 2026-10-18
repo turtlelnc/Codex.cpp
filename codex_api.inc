@@ -36,20 +36,8 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
   const std::string marker="__CODEX_HTTP_"+random_id("status")+"__:";std::string cmd="curl -sS -N --connect-timeout 20 --max-time 300 --max-redirs 0"+
     std::string(" -w ")+shell_quote("\n"+marker+"%{http_code}\n")+ " -H "+shell_quote("@"+hdr.string())+" --data-binary @"+shell_quote(req.string())+
     " "+shell_quote("https://chatgpt.com/backend-api/codex/responses")+ " 2>"+shell_quote(stderr_path.string());
-#if defined(_WIN32)
-  FILE* pipe=_popen(cmd.c_str(),"r");
-#else
-  int channels[2]={-1,-1};pid_t child=-1;if(::pipe(channels)==0){child=::fork();if(child==0){
-    ::setsid();// own process group, so Esc stops the shell and curl
-    ::close(channels[0]);::dup2(channels[1],STDOUT_FILENO);::close(channels[1]);::execl("/bin/sh","sh","-c",cmd.c_str(),static_cast<char*>(nullptr)); _exit(127); }
-    ::close(channels[1]);if(child<0){::close(channels[0]);channels[0]=-1;}
-  }
-#endif
-#if defined(_WIN32)
-  if(!pipe)result.error="could not start curl";
-#else
-  if(child<0 || channels[0]<0)result.error="could not start curl";
-#endif
+  ManagedProcess process;std::string launch_error;const bool launched=process.start(shell_argv(cmd),ProcessPolicy::network(),launch_error,false);if(launched)process.close_input();
+  if(!launched)result.error=launch_error;
   else{std::array<char,4096> buf{};std::string line;auto consume_line=[&](){if(line.rfind(marker,0)==0){ try{result.status=std::stol(line.substr(marker.size()));}catch(...){}
     }else{
       if(result.body.size()+line.size()<=8'000'000)result.body+=line;else result.error="Codex stream exceeded 8 MB"; if(result.error.empty()&& line.rfind("data: ",0)==0 && on_delta){auto event=parse_json(line.substr(6));
@@ -61,32 +49,18 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
       else if(line.size()>1'000'000){result.error="Codex stream line exceeded 1 MB";line.clear(); }
     }
     };
-#if defined(_WIN32)
-    while(fgets(buf.data(),static_cast<int>(buf.size()),pipe))consume_bytes(buf.data(),std::strlen(buf.data()));
-#else
-    termios saved_terminal{};bool raw_input=false;if(watch_escape && isatty(STDIN_FILENO)&& tcgetattr(STDIN_FILENO,&saved_terminal)==0){
-    termios raw=saved_terminal;raw.c_lflag &= static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag &= static_cast<tcflag_t>(~(ICRNL|IXON));raw.c_cc[VMIN]=0;raw.c_cc[VTIME]=0; raw_input=tcsetattr(STDIN_FILENO,TCSANOW,&raw)==0; }
-    auto last_tick=std::chrono::steady_clock::now();const int fd=channels[0];bool interrupted=false;for(;;){
+    TerminalInputScope terminal_scope(watch_escape);bool interrupted=false;auto last_tick=std::chrono::steady_clock::now();const auto deadline=last_tick+std::chrono::minutes(5);
+    for(;;){
 #if !defined(_WIN32)
-    if(tui_interrupt_requested){interrupted=true;result.error="Interrupted by Ctrl+C";break;}
+      if(tui_interrupt_requested){interrupted=true;result.error="Interrupted by Ctrl+C";break;}
 #endif
-    fd_set readers;FD_ZERO(&readers);FD_SET(fd,&readers);if(raw_input)FD_SET(STDIN_FILENO,&readers);timeval timeout{0,250000};
-    int ready=select(std::max(fd,raw_input?STDIN_FILENO:fd)+1,&readers,nullptr,nullptr,&timeout);if(ready>0){
-      if(raw_input && FD_ISSET(STDIN_FILENO,&readers)){char keys[64];ssize_t count=::read(STDIN_FILENO,keys,sizeof(keys));
-      if(count>0 && contains_plain_escape(keys,count)){interrupted=true;result.error="Interrupted by Esc";break; } }
-      if(FD_ISSET(fd,&readers)){ssize_t n=::read(fd,buf.data(),buf.size());if(n>0)consume_bytes(buf.data(),static_cast<size_t>(n));else if(n==0)break; else if(errno!=EINTR){result.error="stream read failed";break;} }
-    }else if(ready<0 && errno!=EINTR){result.error="stream wait failed";break;}
-    auto now=std::chrono::steady_clock::now();if(on_tick && now-last_tick>=std::chrono::seconds(1)){on_tick();last_tick=now; } } if(raw_input)tcsetattr(STDIN_FILENO,TCSANOW,&saved_terminal);if(interrupted){
-    // The forked shell has its own session. Kill its whole group,
-    // including curl, before waiting so pclose-like hangs cannot occur.
-    if(::getpgid(child)==child)::kill(-child,SIGTERM);else::kill(child,SIGTERM); } ::close(fd);
-#endif
+      if(watch_escape&&busy_input&&busy_input("",0)){interrupted=true;result.error="Interrupted by Esc";break;}
+      const int n=process.receive(buf.data(),buf.size(),100);if(n>0)consume_bytes(buf.data(),static_cast<size_t>(n));else if(n<0)break;
+      const auto now=std::chrono::steady_clock::now();if(now>=deadline){result.error="Codex stream timed out";break;}if(on_tick&&now-last_tick>=std::chrono::seconds(1)){on_tick();last_tick=now;}
+    }if(interrupted)process.stop();
     if(!line.empty()&& result.error.empty())consume_line();
-#if defined(_WIN32)
-    int status=_pclose(pipe);if(status!=0 && result.error.empty())result.error="curl failed: "+trim(slurp(stderr_path,2000));
-#else
-    int status=0;while(::waitpid(child,&status,0)<0 && errno==EINTR){}if((!WIFEXITED(status)||WEXITSTATUS(status)!=0)&& result.error.empty()) result.error="curl failed: "+trim(slurp(stderr_path,2000));
-#endif
+    if(result.error.empty()&&process.wait(1000)!=0)result.error="curl failed: "+trim(slurp(stderr_path,2000));
+
   }
   std::error_code ec;fs::remove(req,ec);fs::remove(hdr,ec);fs::remove(stderr_path,ec);return result; };
   auto r=request();for(int retry=0;retry<2 && r.body.find("data:")==std::string::npos &&
@@ -146,7 +120,7 @@ std::optional<std::string> post(const std::string& path,const std::string& body,
   fs::permissions(header,fs::perms::owner_read | fs::perms::owner_write,fs::perm_options::replace);
 #endif
   cmd += " -H " + shell_quote("@" + header.string()); } cmd += " -H " + shell_quote("Content-Type: application/json")+ " --data-binary @" + shell_quote(req.string())+ " " + shell_quote(base_url + path);
-  CommandResult cr = run_capture_interruptible(cmd,100000,{},bool(busy_input));const std::string raw = slurp(out,2'000'000); std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(header,ec);if(cr.exit_code==130 && cr.output=="Interrupted by Esc"){err=cr.output;return std::nullopt;}if(cr.exit_code != 0){
+  CommandResult cr = run_capture_interruptible(cmd,100000,{},bool(busy_input),ProcessPolicy::network());const std::string raw = slurp(out,2'000'000); std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(header,ec);if(cr.exit_code==130 && cr.output=="Interrupted by Esc"){err=cr.output;return std::nullopt;}if(cr.exit_code != 0){
   err = "HTTP request failed (curl " + std::to_string(cr.exit_code)+ "): " + cr.output;if(!raw.empty())err += "\n" + raw;return std::nullopt; } return raw;
 }
 std::optional<ApiResponse> call_text_only(const std::string& instructions,const std::string& text,std::string& err)const{

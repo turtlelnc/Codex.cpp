@@ -36,11 +36,11 @@ winsize ws{};if(ioctl(STDOUT_FILENO,TIOCGWINSZ,&ws)== 0 && ws.ws_row > 10)return
   try{const int n = std::stoi(rows);if(n > 10)return static_cast<size_t>(n);}catch(...){}
 }
 #endif
-return 32; } struct SlashCommandDef{const char* name;const char* description; }; static const std::vector<SlashCommandDef>& slash_commands(){static const std::vector<SlashCommandDef> kCommands ={
+return 32; } struct SlashCommandDef{const char* name;const char* description; }; static const std::vector<SlashCommandDef>& slash_commands(){static const std::vector<SlashCommandDef> kCommands =[]{std::vector<SlashCommandDef> result={
   {"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
   {"/auth","show ChatGPT login status"},
   {"/permissions","choose what Codex is allowed to do"},
-  {"/skills","list available project and user skills"},
+  {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},
   {"/review","review my current changes and find issues"},
   {"/rename","rename the current thread"},{"/clear(new)","start a new chat and reset context"},{"/archive","archive this session and exit"},
   {"/delete","permanently delete this session and exit"},{"/resume","resume a saved chat"},{"/fork","fork the current chat"},
@@ -58,6 +58,7 @@ return 32; } struct SlashCommandDef{const char* name;const char* description; };
   // C++ port helpers. Hidden from the default popup but still accepted.
   {"/help","show available commands"},{"/sessions","list local saved sessions"},{"/history","show input history"}, {"/quit","exit Codex"},
 };
+static const auto extra=plugins.commands();for(const auto& command:extra)result.push_back({command.name.c_str(),command.description.c_str()});return result;}();
 return kCommands; } static const SlashCommandDef* find_slash_command(const std::string& name){for(const auto& command : slash_commands())if(name == command.name)return &command; return nullptr; }
 static std::string slash_command_token(const std::string& input){if(input.empty()|| input.front()!= '/')return{};
 const size_t end = input.find_first_of(" \t\r\n");return input.substr(0,end == std::string::npos ? input.size(): end); }
@@ -71,7 +72,7 @@ const std::string filter = slash_command_token(input);if(filter.empty())return o
 return out; }
 static std::string opening_line(){static const char* lines[]={
 "The source is strong with this one.","May your builds be green.","A small diff can make a big difference.","Every great program starts with a prompt.","Hello, world. What shall we build?","Less boilerplate, more possibilities.","Keep calm and commit carefully.","One good idea deserves a working prototype.","Make it work. Make it clear.","Your next idea is one prompt away.","Let curiosity drive the keyboard.","There is always room for one less bug.","Small steps. Useful software.","Today's TODO could be tomorrow's tool.","Turn coffee into code, carefully.","The best feature might be a deleted line.","A clean build is a lovely beginning.","Let's give that idea a command line.","Write a little. Learn a lot.","Good tools start with real problems.","Trust the tests. Read the diff.","Ship something small and useful.","Make the next step a good one.","A little less friction, a little more flow.","Build something you would use.","From 'what if' to 'it works'.","The terminal is yours.","Bring the idea. We'll find the edges.","Simplicity takes practice.","Let's make the boring parts easier.","先让它好用，再让它漂亮。","少一点重复，多一点创造。","今天的灵感，明天的工具。","从一个小问题开始。","代码不必多，刚好够用就好。","让想法跑起来。","愿今天的编译一次通过。","下一步，交给你的好奇心。","把麻烦变成一个命令。","写给未来的自己，也写得明白一点。"};static std::mt19937 rng{std::random_device{}()};return lines[std::uniform_int_distribution<size_t>(0,std::size(lines)-1)(rng)];}
-class TuiRenderer{public: enum class CellKind{User,Assistant,Tool,Output,Patch,Error,System,SessionSummary,Notice};
+class TuiRenderer{public: enum class CellKind{User,Assistant,Tool,Output,Patch,Error,System,SessionSummary,Notice,PluginCard};
 struct Cell{CellKind kind;std::string title;std::string body;};TuiRenderer(const fs::path& root,std::string provider,std::string model,std::string sandbox)
   : root_(root.string()),provider_(std::move(provider)),model_(std::move(model)),sandbox_(std::move(sandbox)){
 #if defined(_WIN32)
@@ -84,7 +85,7 @@ struct Cell{CellKind kind;std::string title;std::string body;};TuiRenderer(const
   std::cout << "\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?25l\x1b[2J\x1b[H" << std::flush;active_ = true; cells_.push_back({CellKind::SessionSummary,"Codex C++",""});
   cells_.push_back({CellKind::Notice,"",opening_line()});render();
 }
-~TuiRenderer(){if(active_)std::cout << "\x1b[?25h\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?2004l\x1b[?1049l" << std::flush;
+~TuiRenderer(){external_mode("",false);if(active_)std::cout << "\x1b[?25h\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?2004l\x1b[?1049l" << std::flush;
 #if defined(_WIN32)
   if(win_mode_valid_)SetConsoleMode(win_input_,win_mode_);
   if(win_cp_)SetConsoleCP(win_cp_);if(win_output_cp_)SetConsoleOutputCP(win_output_,win_output_cp_);
@@ -109,9 +110,25 @@ void set_context_usage(size_t bytes,size_t limit){context_pct_=limit?static_cast
 void set_quota_brief(const std::string& text){quota_brief_=text;}
 void set_tick(std::function<void()> callback){tick_cb_=std::move(callback);}
 void add_error(const std::string& text){add_cell(CellKind::Error,"Error",text);}void add_system(const std::string& text){add_cell(CellKind::System,"",text);}
-void reset_transcript(){pastes_.clear();paste_id_=0;pasted_text_.clear();steering_.clear();queued_.clear();composer_.clear();composer_cursor_=0;input_bytes_.clear();input_offset_=0;input_escape_.clear();input_utf8_.clear();paste_pending_.clear();input_paste_=false;active_pastes_.clear();cells_.clear();scroll_offset_=0; cells_.push_back({CellKind::SessionSummary,"Codex C++",""});
+void reset_transcript(){plugin_panels_.clear();plugin_status_.clear();pastes_.clear();paste_id_=0;pasted_text_.clear();steering_.clear();queued_.clear();composer_.clear();composer_cursor_=0;input_bytes_.clear();input_offset_=0;input_escape_.clear();input_utf8_.clear();paste_pending_.clear();input_paste_=false;active_pastes_.clear();cells_.clear();scroll_offset_=0; cells_.push_back({CellKind::SessionSummary,"Codex C++",""});
   cells_.push_back({CellKind::Notice,"",opening_line()});render();
 }
+void plugin_ui(const std::string& id,const std::string& kind,const std::string& text){if(kind=="card")add_cell(CellKind::PluginCard,id,sanitize_text(text));
+  else{auto& values=kind=="panel"?plugin_panels_:plugin_status_;if(text.empty())values.erase(id);else{auto clean=sanitize_text(text);if(kind=="status"){for(auto& ch:clean)if(ch=='\n'||ch=='\r'||ch=='\t')ch=' ';clean=truncate_display(clean,40);}values[id]=std::move(clean);}}}
+int plugin_menu(const std::string& id,const std::vector<std::string>& options){auto panel=plugin_panels_.find(id);overlay_body_=panel==plugin_panels_.end()?"":panel->second;const int choice=choose(id,options);overlay_body_.clear();return choice;}
+void external_mode(const std::string& id,bool on){external_id_=on?id:"";external_rows_.clear();
+#if !defined(_WIN32)
+  if(on&&!external_raw_&&tcgetattr(STDIN_FILENO,&external_saved_)==0){auto raw=external_saved_;raw.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO|ISIG));raw.c_iflag&=static_cast<tcflag_t>(~(IXON|ICRNL));raw.c_cc[VMIN]=0;raw.c_cc[VTIME]=0;external_raw_=tcsetattr(STDIN_FILENO,TCSANOW,&raw)==0;}
+  if(!on&&external_raw_){tcsetattr(STDIN_FILENO,TCSANOW,&external_saved_);external_raw_=false;}
+#endif
+  render_idle();}
+void external_frame(std::vector<std::string> rows,size_t row,size_t column){external_rows_=std::move(rows);external_cursor_row_=row;external_cursor_col_=column;render_idle();}
+std::optional<std::pair<std::string,std::string>> external_key(){const int k=read_key(false);if(k==KEY_INCOMPLETE||k==KEY_IGNORED||k==KEY_TICK)return{};
+  if(k==3)return std::pair<std::string,std::string>{"host.stop",""};if(k==7)return std::pair<std::string,std::string>{"host.menu",""};
+  if(k==KEY_TEXT)return std::pair<std::string,std::string>{"text",key_text_};if(k==KEY_PASTE){auto text=std::move(pasted_text_);pasted_text_.clear();return std::pair<std::string,std::string>{"paste",text};}
+  const std::map<int,std::string> keys={{'\r',"enter"},{'\n',"newline"},{KEY_NEWLINE,"newline"},{27,"escape"},{127,"backspace"},{8,"backspace"},{9,"tab"},{KEY_LEFT,"left"},{KEY_RIGHT,"right"},{KEY_UP,"up"},{KEY_DOWN,"down"},{KEY_HOME,"home"},{KEY_END,"end"},{KEY_DELETE,"delete"},{KEY_RESIZE,"resize"},{KEY_CLICK,"click"},{KEY_HOVER,"hover"},{KEY_SCROLL_UP,"scroll_up"},{KEY_SCROLL_DOWN,"scroll_down"}};
+  auto key=keys.find(k);if(key!=keys.end())return std::pair<std::string,std::string>{key->second,(k==KEY_CLICK||k==KEY_HOVER)?std::to_string(click_row_)+","+std::to_string(click_col_):""};
+  if(k>=32&&k<127)return std::pair<std::string,std::string>{"text",std::string(1,char(k))};return{};}
 void set_design(bool on){design_=on;render_idle();}
 void set_model(std::string model,std::string effort ={}){model_=std::move(model);effort_=std::move(effort);render();}
 void set_sandbox(std::string sandbox){sandbox_=std::move(sandbox);render();}void set_thread_name(std::string name){thread_name_=std::move(name);render();}
@@ -120,7 +137,7 @@ void set_statusline_items(const std::vector<std::string>& items){compact_footer_
   render();
 }
 int choose(const std::string& title,const std::vector<std::string>& options,size_t selected=0){if(options.empty())return -1;
-  overlay_active_=true;overlay_title_=title;overlay_options_=options;overlay_choice_=static_cast<int>(std::min(selected,options.size()-1));render();
+  overlay_active_=true;overlay_title_=sanitize_text(title);overlay_options_.clear();for(const auto& option:options)overlay_options_.push_back(sanitize_text(option));overlay_choice_=static_cast<int>(std::min(selected,options.size()-1));render();
 #if !defined(_WIN32)
   termios oldt{};bool raw_ok=tcgetattr(STDIN_FILENO,&oldt)==0;
   if(raw_ok){termios raw=oldt;raw.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag&=static_cast<tcflag_t>(~(IXON|ICRNL));tcsetattr(STDIN_FILENO,TCSANOW,&raw);}
@@ -137,7 +154,7 @@ int choose(const std::string& title,const std::vector<std::string>& options,size
 #endif
   watch_resize(false);overlay_active_=false;overlay_options_.clear();overlay_body_.clear();render();return result;
 }
-bool approval(const std::string& text){overlay_body_=text;const int choice=choose("Would you like to run this command?",{"Yes, proceed","No, cancel"},0); overlay_body_.clear();return choice==0;
+bool approval(const std::string& text){overlay_body_=sanitize_text(text);const int choice=choose("Would you like to run this command?",{"Yes, proceed","No, cancel"},0); overlay_body_.clear();return choice==0;
 }
 void render(const std::string& footer = ""){status_ = footer; if(!footer.empty()&&(footer.find("working")!= std::string::npos || footer.find("running")!= std::string::npos)){
   if(!working_){working_=true;working_started_=std::chrono::steady_clock::now();turn_bytes_=0;} }else if(footer.empty()){ working_=false; } draw_diff(build_frame());
@@ -189,7 +206,7 @@ void stream_assistant(const std::string& text){finish_assistant_stream(text);}st
 #endif
   if(k<0){line.clear();break;}
   if(k==KEY_SCROLL_UP||k==KEY_SCROLL_DOWN||k==KEY_PGUP||k==KEY_PGDN){auto matches=composer_commands(line);if(!matches.empty()){const size_t step=(k==KEY_PGUP||k==KEY_PGDN)?6:1;const bool up=k==KEY_SCROLL_UP||k==KEY_PGUP;command_popup_selected_=up?(command_popup_selected_>step?command_popup_selected_-step:0):std::min(matches.size()-1,command_popup_selected_+step);render();continue;}}
-  if(k==KEY_HOVER){const auto old_paste=paste_hit(hover_row_,hover_col_);auto hit=[&](size_t row,size_t col){for(size_t i=0;i<copy_buttons_.size();++i){const auto& b=copy_buttons_[i];if(row==b.row && col>=b.col && col<b.col+3)return i;}return size_t(-1);};const auto old=hit(hover_row_,hover_col_);hover_row_=click_row_;hover_col_=click_col_;if(old!=hit(hover_row_,hover_col_) || old_paste!=paste_hit(hover_row_,hover_col_))render();continue;}if(k==KEY_CLICK){const auto index=paste_hit(click_row_,click_col_);if(index!=size_t(-1)){edit_paste(index);line=composer_;cursor=composer_cursor_;tick_active_=true;watch_resize(true);render();continue;}if(paste_editing_ || !composer_commands(line).empty())continue;for(const auto& button:copy_buttons_)if(click_row_==button.row && click_col_>=button.col && click_col_<button.col+3){const auto err=clipboard_copy(button.text);add_system(err.empty()?"Code copied.":err);break;}render();continue;}if(k==KEY_IGNORED)continue;if(k==KEY_RESIZE){render();continue;}if(k==KEY_TICK){if(tick_cb_)tick_cb_();render();continue;}if(k==KEY_PASTE){
+  if(k==KEY_HOVER){const auto old_plugin=plugin_action_hit(hover_row_,hover_col_);const auto old_paste=paste_hit(hover_row_,hover_col_);auto hit=[&](size_t row,size_t col){for(size_t i=0;i<copy_buttons_.size();++i){const auto& b=copy_buttons_[i];if(row==b.row && col>=b.col && col<b.col+3)return i;}return size_t(-1);};const auto old=hit(hover_row_,hover_col_);hover_row_=click_row_;hover_col_=click_col_;if(old_plugin!=plugin_action_hit(hover_row_,hover_col_) || old!=hit(hover_row_,hover_col_) || old_paste!=paste_hit(hover_row_,hover_col_))render();continue;}if(k==KEY_CLICK){if(!paste_editing_&&composer_commands(line).empty()){const auto action=plugin_action_hit(click_row_,click_col_);if(!action.empty()){line=action;break;}}const auto index=paste_hit(click_row_,click_col_);if(index!=size_t(-1)){edit_paste(index);line=composer_;cursor=composer_cursor_;tick_active_=true;watch_resize(true);render();continue;}if(paste_editing_ || !composer_commands(line).empty())continue;for(const auto& button:copy_buttons_)if(click_row_==button.row && click_col_>=button.col && click_col_<button.col+3){const auto err=clipboard_copy(button.text);add_system(err.empty()?"Code copied.":err);break;}render();continue;}if(k==KEY_IGNORED)continue;if(k==KEY_RESIZE){render();continue;}if(k==KEY_TICK){if(tick_cb_)tick_cb_();render();continue;}if(k==KEY_PASTE){
     // Treat the whole bracketed paste as text. In particular, its
     // newlines must not submit the prompt or select a slash item.
     insert_paste(line,cursor,pasted_text_);pasted_text_.clear();popup=false; composer_=line;composer_cursor_=cursor;render();continue;
@@ -245,7 +262,7 @@ void quiet_input(bool on){
 void set_mouse(bool on){mouse_=on;if(!on)hover_row_=hover_col_=size_t(-1);if(active_)std::cout<<(on?"\x1b[?1000h\x1b[?1003h\x1b[?1006h":"\x1b[?1003l\x1b[?1000l\x1b[?1006l")<<std::flush;}bool mouse()const{return mouse_;}
 void render_idle(){if(active_)draw_diff(build_frame());}
 void prompt(){working_=false;status_.clear();render();} private:
-void load_skill_choices(){skill_labels_.clear();skill_choices_.clear();std::istringstream in(skills_manifest(root_));std::string line;while(std::getline(in,line)){auto colon=line.find(':');if(colon!=std::string::npos)skill_labels_.push_back({"$"+line.substr(0,colon),"[Skill] "+trim(line.substr(colon+1))});}for(const auto& item:skill_labels_)skill_choices_.push_back({item.first.c_str(),item.second.c_str()});}
+void load_skill_choices(){skill_labels_.clear();skill_choices_.clear();std::istringstream in(skills_manifest(root_));std::string line;while(std::getline(in,line)){auto colon=line.find(": ");if(colon!=std::string::npos)skill_labels_.push_back({"$"+line.substr(0,colon),"[Skill] "+trim(line.substr(colon+2))});}for(const auto& item:skill_labels_)skill_choices_.push_back({item.first.c_str(),item.second.c_str()});}
 std::vector<const SlashCommandDef*> composer_commands(const std::string& input)const{if(paste_editing_ || working_ || picker_closed_)return{};if(input.empty()||input.front()!='$')return matching_slash_commands(input);std::vector<const SlashCommandDef*> out;if(input.find_first_of(" \t\n")!=std::string::npos)return out;for(const auto& skill:skill_choices_)if(std::string(skill.name).find(input)!=std::string::npos)out.push_back(&skill);return out;}
 bool picker_closed_=false;std::vector<std::pair<std::string,std::string>> skill_labels_;std::vector<SlashCommandDef> skill_choices_;
 static constexpr int KEY_LEFT=1001,KEY_RIGHT=1002,KEY_UP=1003,KEY_DOWN=1004,KEY_HOME=1005,KEY_END=1006,KEY_PGUP=1007,KEY_PGDN=1008,
@@ -289,6 +306,22 @@ int windows_input(bool wait,int timeout){const auto deadline=std::chrono::steady
   if(bytes.empty())continue;input_bytes_.erase(0,input_offset_);input_offset_=0;input_bytes_=std::move(bytes);return static_cast<unsigned char>(input_bytes_[input_offset_++]);
 }}
 #endif
+std::string external_id_;std::vector<std::string> external_rows_;size_t external_cursor_row_=0,external_cursor_col_=0;
+#if !defined(_WIN32)
+termios external_saved_{};bool external_raw_=false;
+#endif
+std::map<std::string,std::string> plugin_panels_,plugin_status_;
+struct PluginButton{size_t row,col,width;std::string command;};mutable std::vector<PluginButton> plugin_buttons_;
+std::string plugin_action_hit(size_t row,size_t col)const{for(const auto& b:plugin_buttons_)if(row==b.row&&col>=b.col&&col<b.col+b.width)return b.command;return{};}
+std::vector<std::string> plugin_rows(size_t width,size_t top,size_t col,size_t limit)const{std::vector<std::string> result;if(width<8)return result;
+  for(const auto&[id,text]:plugin_panels_){auto p=plugins.find(id);const bool actions=p&&!p->actions.empty();size_t count=0;
+    for(const auto& line:wrap_words_display(id+": "+text,width-2)){if(result.size()>=limit||count++>=2)break;result.push_back(" "+line);}
+    if(actions&&result.size()<limit){std::string row=" ";size_t used=1;for(const auto& action:p->actions){if(used+5>=width)break;const auto label=truncate_display(action.label,width-used-4);const size_t size=display_width(label)+3;
+      const size_t y=top+result.size(),x=col+used;const bool hover=hover_row_==y&&hover_col_>=x&&hover_col_<x+size;
+      row+=(hover?"\x1b[1;38;5;81m":"\x1b[38;5;81m")+std::string("› ")+label+" \x1b[0m";plugin_buttons_.push_back({y,x,size,action.command});used+=size;}result.push_back(std::move(row));}
+    if(result.size()>=limit)break;}
+  return result;
+}
 bool tick_active_=false;std::function<void()> tick_cb_;
 // Shared incremental decoder: partial CSI, UTF-8 and paste packets survive busy/idle transitions.
 std::string input_bytes_,input_escape_,paste_pending_,pasted_text_,key_text_,input_utf8_;size_t input_offset_=0;bool input_paste_=false;
@@ -543,6 +576,7 @@ std::vector<std::string> cell_lines(const Cell& c,size_t width,std::vector<std::
     if(shown<rows.size())out.push_back("\x1b[2;3m  … +"+std::to_string(rows.size()-shown)+" more lines\x1b[0m");break;
   }
   case CellKind::Error:{out.push_back("\x1b[31;1m✘ "+c.title+"\x1b[0m");for(auto& l:body)out.push_back("\x1b[2m  └ \x1b[0m\x1b[38;5;217m"+l+"\x1b[0m");break; }
+  case CellKind::PluginCard:{out.push_back(paint_bg(" \x1b[1m"+c.title+"\x1b[22m",width,"\x1b[48;5;236m"));for(const auto& line:body)out.push_back(paint_bg(" "+line,width,"\x1b[48;5;236m"));break;}
   case CellKind::System:{for(auto& l:body)out.push_back("\x1b[2m"+l+"\x1b[0m");break;
   }
   case CellKind::SessionSummary:{out.push_back("");out.push_back("\x1b[38;5;75m>_ \x1b[97;1m"+c.title+"\x1b[0m");out.push_back("   \x1b[2m"+truncate_display(home_relative(root_),width>3?width-3:width)+"\x1b[0m");out.push_back("");break;}
@@ -566,6 +600,7 @@ std::string status_line()const{if(working_){ const auto elapsed=std::chrono::dur
 }
 std::string footer_line()const{const std::string cwd=home_relative(root_);
   std::vector<std::string> parts;if(footer_model_){std::string m="\x1b[38;5;223m"+model_;if(!effort_.empty())m+=" "+effort_; m+="\x1b[0m";parts.push_back(std::move(m)); }
+  for(const auto&[id,text]:plugin_status_)parts.push_back("\x1b[2m"+id+": "+text+"\x1b[0m");
   if(footer_thread_ && !thread_name_.empty())parts.push_back("\x1b[2m"+thread_name_+"\x1b[0m");
   if(footer_sandbox_)parts.push_back((sandbox_=="danger-full-access"?"\x1b[31;1m":"\x1b[2m")+sandbox_+"\x1b[0m");if(footer_cwd_)parts.push_back("\x1b[38;5;151m"+cwd+"\x1b[0m");std::ostringstream ss;
   for(size_t i=0;i<parts.size();++i){if(i)ss<<"\x1b[2m · \x1b[0m";ss<<parts[i];}return ss.str();
@@ -599,18 +634,24 @@ std::string hint_text()const{
   return "\x1b[2menter send · ctrl+j newline · / commands · ctrl+u/d scroll\x1b[0m";
 }
 std::vector<std::string> build_frame()const{const size_t cols=std::max<size_t>(1,terminal_columns()),rows=std::max<size_t>(1,terminal_rows());
-  std::vector<std::string> f(rows,"");const bool has_status = working_ || !status_.empty();const size_t left_margin=2;
+  if(!external_id_.empty()&&!overlay_active_){std::vector<std::string> frame(rows,"");const size_t count=rows>2?rows-2:0;for(size_t i=0;i<std::min(count,external_rows_.size());++i)frame[i]=truncate_display(external_rows_[i],cols);
+    if(rows>=2)frame[rows-2]=paint_bg(std::string(execution.unsafe?" UNSAFE · ":" Isolated · ")+external_id_+" · "+safe_terminal_text(model_),cols,execution.unsafe?"\x1b[48;5;52m":"\x1b[48;5;235m");
+    frame[rows-1]=truncate_display(" Host: ctrl+g menu · ctrl+c stop | "+safe_terminal_text(root_),cols);return frame;}
+
+  plugin_buttons_.clear();std::vector<std::string> f(rows,"");const bool sidebar=cols>=110&&rows>=18&&!overlay_active_&&!plugin_panels_.empty();const size_t sidebar_width=sidebar?32:0;const bool has_status = working_ || !status_.empty();const size_t left_margin=2;
   const size_t composer_width = cols > left_margin * 2 ? cols - left_margin * 2 : cols;const size_t text_width = composer_width > 4 ? composer_width - 4 : 1;
   const auto composer_all_lines = composer_.empty()? std::vector<std::string>{std::string()}: wrap(composer_,text_width); const size_t wrapped_rows = std::max<size_t>(1,composer_all_lines.size());
   const size_t composer_h = std::min<size_t>(paste_editing_?std::max<size_t>(3,rows>6?rows-6:3):6,std::max<size_t>(3,wrapped_rows + 2));const size_t bottom_h =(has_status ? 1 : 0)+ composer_h + 2 + wrap(status_details_,text_width,std::min<size_t>(6,rows>composer_h+3?rows-composer_h-3:0)).size(); const size_t panel_width=cols>left_margin*2?cols-left_margin*2:cols;
   const auto approval_lines=overlay_active_?wrap(overlay_body_,panel_width>6?panel_width-6:panel_width,4):std::vector<std::string>{};
   const size_t panel_wanted=overlay_active_?4+approval_lines.size()+overlay_options_.size():0;
-  const auto top=top_rows(cols,rows);const size_t top_h=top.size();const size_t avail=rows>top_h?rows-top_h:0;
+  auto top=top_rows(cols,rows);if(!sidebar&&!overlay_active_&&rows>=18)for(const auto& line:plugin_rows(panel_width,top.size(),left_margin,4))top.push_back(std::string(left_margin,' ')+paint_bg(line,panel_width,"\x1b[48;5;236m"));
+  const size_t top_h=top.size();const size_t avail=rows>top_h?rows-top_h:0;
   const size_t panel_h=avail>bottom_h+1?std::min(panel_wanted,avail-bottom_h-1):0;const size_t content_h=avail>bottom_h+panel_h?avail-bottom_h-panel_h:0;
-  auto content=content_lines(cols,left_margin,content_h);for(auto& button:copy_buttons_)button.row+=top_h;size_t y=top_h; for(size_t i=0;i<top_h;++i)f[i]=top[i];for(auto& l:content)if(y<top_h+content_h)f[y++]=l;const size_t base=rows-bottom_h;
+  auto content=content_lines(cols-sidebar_width,left_margin,content_h);for(auto& button:copy_buttons_)button.row+=top_h;size_t y=top_h; for(size_t i=0;i<top_h;++i)f[i]=top[i];for(auto& l:content)if(y<top_h+content_h)f[y++]=l;const size_t base=rows-bottom_h;
   if(mouse_ && !overlay_active_ && composer_commands(composer_).empty())for(const auto& button:copy_buttons_)if(hover_row_==button.row && hover_col_>=button.col && hover_col_<button.col+3){
     auto& row=f[button.row];const auto icon=row.find("⧉");if(icon!=std::string::npos)row.replace(icon,std::string("⧉").size(),"\x1b[22;1;38;5;81;48;5;240m⧉\x1b[0m\x1b[48;5;236m");break;
   }
+  if(sidebar){const auto side=plugin_rows(sidebar_width,top_h,cols-sidebar_width,content_h);for(size_t r=0;r<content_h;++r)f[top_h+r]=fit_display(f[top_h+r],cols-sidebar_width)+paint_bg(r<side.size()?side[r]:"",sidebar_width,"\x1b[48;5;236m");}
   if(has_status)f[base]=std::string(left_margin,' ')+status_line();const size_t composer_row=base+(has_status?1:0);
   const auto details=wrap(status_details_,text_width,std::min<size_t>(6,rows>composer_h+3?rows-composer_h-3:0));const size_t details_row=composer_row+composer_h;
   for(size_t i=0;i<details.size();++i)f[details_row+i]=std::string(left_margin+2,' ')+"\x1b[2m"+details[i]+"\x1b[0m";
@@ -623,7 +664,7 @@ for(size_t r=0;r<composer_h;++r){std::string row;
   if(r>=1 && r<=inner_rows){const size_t li=composer_scroll+(r-1);const std::string fg = composer_.empty()? "\x1b[38;5;245m" : "\x1b[97m";
     if(li<composer_lines.size()){auto text=composer_lines[li];if(!paste_editing_)for(const auto& b:paste_buttons_)if(b.row==composer_row+r && paste_hit(hover_row_,hover_col_)==b.index){const size_t col=b.col-left_margin-2;size_t start=text.size(),end=text.size();for(const auto& boundary:visual_boundaries(text,text_width)){if(boundary.col==col)start=boundary.byte;if(boundary.col==col+b.width)end=boundary.byte;}if(start<end && end<=text.size())text.insert(end,"\x1b[0m"),text.insert(start,"\x1b[1;38;5;81;48;5;240m");}row=(li==0?"\x1b[38;5;81;1m› \x1b[22m"+fg:fg+"  ")+text;} }
   f[composer_row+r]=std::string(left_margin,' ')+paint_bg(row,composer_width,design_?"\x1b[48;5;60m":"\x1b[48;5;237m"); }
-  f[footer_row]=std::string(left_margin+2,' ')+(design_?"\x1b[38;5;183mDesign\x1b[0m · ":"")+((bar_enabled_||!compact_footer_)?footer_line():"\x1b[2m"+sanitize_text(bar_line(composer_width>2?composer_width-2:composer_width))+"\x1b[0m"); f[hint_row]=std::string(left_margin+2,' ')+hint_text();
+  f[footer_row]=std::string(left_margin+2,' ')+(design_?"\x1b[38;5;183mDesign\x1b[0m · ":"")+((bar_enabled_||!compact_footer_||!plugin_status_.empty())?footer_line():"\x1b[2m"+sanitize_text(bar_line(composer_width>2?composer_width-2:composer_width))+"\x1b[0m"); f[hint_row]=std::string(left_margin+2,' ')+hint_text();
   if(context_pct_>=90 && !overlay_active_){const int left=std::max(0,100-context_pct_);const std::string note=std::string(context_pct_>=97?"\x1b[31m":"\x1b[38;5;214m")+std::to_string(left)+"% until auto-compact\x1b[0m";
     const size_t lw=left_margin+2+display_width(hint_text()),nw=display_width(note);if(cols>lw+nw+left_margin+2)f[hint_row]+=std::string(cols-lw-nw-left_margin,' ')+note; }{
   // Derive popup contents from the composer on every frame. Each command item can
@@ -674,7 +715,8 @@ void draw_diff(const std::vector<std::string>& frame){
   // Always reset SGR before erasing/redrawing a physical row.
   if(previous_frame_.size()!=clipped.size()){std::cout<<"\x1b[0m\x1b[2J";previous_frame_.assign(clipped.size(),"");}
   for(size_t i=0;i<clipped.size();++i)if(previous_frame_[i]!=clipped[i])std::cout<<"\x1b["<<(i+1)<<";1H\x1b[0m\x1b[2K"<<clipped[i]<<"\x1b[0m";
-  previous_frame_=clipped;const size_t rows=clipped.size();const bool has_status = working_ || !status_.empty();const size_t left_margin=2;
+  previous_frame_=clipped;const size_t rows=clipped.size();if(!external_id_.empty()&&!overlay_active_){const size_t row=rows>2?std::min(external_cursor_row_,rows-3):0,col=cols?std::min(external_cursor_col_,cols-1):0;std::cout<<"\x1b["<<(row+1)<<";"<<(col+1)<<"H\x1b[?25h"<<std::flush;return;}
+  const bool has_status = working_ || !status_.empty();const size_t left_margin=2;
   const size_t composer_width = cols > left_margin * 2 ? cols - left_margin * 2 : cols;const size_t text_width = composer_width > 4 ? composer_width - 4 : 1;
   const auto composer_all_lines = composer_.empty()? std::vector<std::string>{std::string()}: wrap(composer_,text_width); const size_t wrapped_rows = std::max<size_t>(1,composer_all_lines.size());
   const size_t composer_h = std::min<size_t>(paste_editing_?std::max<size_t>(3,rows>6?rows-6:3):6,std::max<size_t>(3,wrapped_rows + 2));const size_t bottom_h =(has_status ? 1 : 0)+ composer_h + 2 + wrap(status_details_,text_width,std::min<size_t>(6,rows>composer_h+3?rows-composer_h-3:0)).size();

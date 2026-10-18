@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "project": {
+      "command": "${config.python}",
+      "args": [
+        "${plugin}/server.py",
+        "${workspace}",
+        "${config.gitx}"
+      ]
+    }
+  }
+}

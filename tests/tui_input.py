@@ -73,6 +73,14 @@ def main():
         binary = Path(build) / 'input-test'
         subprocess.run(['clang++', '-std=c++17', '-O2', '-Wall', '-Wextra', '-pedantic',
                         str(ROOT / 'tests/tui_input.cpp'), '-o', str(binary)], check=True)
+        output = run(binary, 'plugin', '/fixture:run', [b'/fixture:', b'\r'])
+        for text in (b'PLUGIN_PANEL', b'PLUGIN_STATUS', b'PLUGIN_CARD', b'PLUGIN_PICKER'):
+            assert text in output, text
+        wide = run(binary, 'plugin', '/fixture:run', [b'/fixture:', b'\r'], width=120)
+        assert b'PLUGIN_PANEL' in wide and b'PLUGIN_CARD' in wide
+        run(binary, 'plugin-click', '/fixture:run', [b'\x1b[<0;5;2M'])
+        run(binary, 'plugin-click', '/fixture:run', [b'\x1b[<0;90;2M'], width=120)
+        print('PASS plugin panel, status, card and slash picker')
         # Slash selection uses the same editor as normal input, not line-buffered echo.
         output = run(binary, 'read', '/status', [b'/sta', b'\r'])
         assert b'choose' in output and b'/status' in output

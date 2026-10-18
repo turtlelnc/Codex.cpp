@@ -1,0 +1,62 @@
+{
+  "api": 1,
+  "id": "gitx",
+  "version": "1.0.0",
+  "description": "Read-only project review using Gitx status/history and Git diffs. No Gitx AI calls.",
+  "commands": {
+    "review": {
+      "description": "Review local changes using Gitx",
+      "prompt": "Read gitx:review, then call mcp__p_gitx_project__inspect. Review the actual changed source and relevant test evidence. Use plugin_ui with plugin gitx to show progress in the panel and concrete findings in a card. Do not edit, stage, commit, fetch, push, or invoke Gitx AI. Distinguish observed defects from hypotheses and unrun checks."
+    },
+    "status": {
+      "description": "Show Gitx status and recent history",
+      "prompt": "Call mcp__p_gitx_project__inspect and show a concise working-tree summary through plugin_ui with plugin gitx and kind card. Do not change files or call additional AI providers."
+    }
+  },
+  "ui": [
+    "panel",
+    "status",
+    "card"
+  ],
+  "events": {
+    "turn.started": [
+      {
+        "kind": "status",
+        "text": "Reviewing"
+      }
+    ],
+    "tool.completed": [
+      {
+        "kind": "status",
+        "text": "{{tool}} · exit {{exit_code}}"
+      }
+    ],
+    "turn.completed": [
+      {
+        "kind": "status",
+        "text": "{{status}}"
+      }
+    ],
+    "session.started": [
+      {
+        "kind": "panel",
+        "text": "Inspect changes using Gitx. Review does not modify the repository."
+      }
+    ]
+  },
+  "mcp": "mcp.json",
+  "settings": {
+    "python": "python3",
+    "gitx": "gitx"
+  },
+  "actions": [
+    {
+      "label": "Review",
+      "command": "review"
+    },
+    {
+      "label": "Status",
+      "command": "status"
+    }
+  ]
+}

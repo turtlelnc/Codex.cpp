@@ -3,12 +3,14 @@
 > A compact C++17 Codex-style coding agent runtime.
 > 精简的 C++17 Codex 风格终端编程 Agent。
 
+> 当前插件执行器与独立 TUI 为未完成的开发检查点，请勿用于运行不可信插件。已发现凭据读取拦截未生效；子进程清理仍需完善，Windows 安全沙盒尚未实现。最近改动未完成回归测试，恢复开发后优先修复并验证这些边界。
+
 `codex-cpp` 是一个独立的、clean-room 实现的 Codex 风格终端编程 Agent。
 
 它不是 OpenAI Codex CLI 的逐行移植，也不依赖官方 Codex CLI Runtime。核心 Agent loop、工具调用、会话存储、TUI、权限控制和 Provider 接入由少量 C++ 源文件实现；它们仍通过 `codex.cpp` 一次编译。
 
 ```text
-codex.cpp + codex_api.inc + codex_tui.inc
+codex.cpp + codex_api.inc + codex_tui.inc + codex_plugins.inc + codex_process.inc + codex_frontend.inc
     ↓ clang++ / g++ codex.cpp
 codex-cpp
 ```
@@ -56,6 +58,7 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - `codex.cpp`：入口、工具、会话与 Agent loop；编译此文件即可生成程序。
 - `codex_api.inc`：API 客户端与流式响应。
 - `codex_tui.inc`：终端界面与 Markdown 渲染。
+- `codex_plugins.inc`：用户插件清单、安装与声明式扩展。
 - `codex_self_test.cpp`：独立的解析、工具、会话与权限检查。
 - `sandbox_probe.py`：使用临时工作区验证 Shell 沙箱边界。
 
@@ -344,6 +347,65 @@ Windows TUI 使用 `ReadConsoleInputW` 处理逐键输入、方向键、鼠标�
 会直接渲染为终端表格，而不是显示原始 `|` 字符。
 
 ---
+
+## 用户插件（API 1）
+
+插件放在 `~/.codex-cpp/plugins/ID/`，设置 `CODEX_CPP_HOME` 可替换 `.codex-cpp` 目录。手动放入的插件也默认禁用；启用名单保存在插件目录外的 `plugins-enabled.json`，插件包不能通过自己的清单自动启用。
+
+先试不需要额外依赖的示例：
+
+```text
+/plugins install examples/plugins/workbench
+/plugins
+/plugins enable workbench
+/quit
+```
+
+重新启动 `./codex-cpp -i` 后，输入 `/workbench:` 会出现插件命令；`/workbench:inspect` 检查项目并生成摘要卡片，`/workbench:note 今天先修输入问题` 更新面板。这两条命令会调用当前模型，使用当前账号额度。首次安装、启停和卸载本身不调用模型。
+
+```text
+/plugins disable workbench
+/quit
+```
+
+重启后执行 `/plugins uninstall workbench` 可删除已停用插件。启停在重启后生效；活跃插件必须先停用并重启才能卸载。安装不覆盖已有同名目录，不自动下载依赖，不自动更新。`/plugins info ID` 查看能力与配置；`/plugins check PATH` 检查清单；`/plugins update PATH` 升级已停用插件，旧版本保留在 `plugin-backups/`，新版本默认禁用。卸载保留配置与备份。
+
+清单参考 [workbench/plugin.json](examples/plugins/workbench/plugin.json)：
+
+- 必填 `api: 1`、`id`、`version`。`api` 是宿主兼容版本，不是插件版本；不支持的 API 会报错并跳过该插件。ID 必须与文件夹名称一致，只含小写字母、数字、`_`、`-`，最长 32 字符。
+- `commands`：命令名称映射到 `description` 和 `prompt`，实际命令为 `/ID:NAME`。用户参数附加到提示词后；保留当前会话上下文，不暗中新建会话，也不覆盖内置命令。
+- `skills/NAME/SKILL.md`：自动以 `ID:NAME` 命名，进入技能选择面板和 `read_skill`，避免与项目技能重名。
+- `ui`：可声明 `panel`、`status`、`card`。模型通过 `plugin_ui(plugin, kind, text)` 更新已启用插件的已声明位置。宽终端（至少 110 列）将面板显示在右侧；窄终端放在聊天上方，最多共四行，过矮窗口会隐藏；状态显示在底部，卡片进入可滚动聊天区。面板和状态传空字符串可清除。文本最多 4096 字节，终端控制序列会被清理；`actions` 可声明引用本插件命令的按钮，支持点击与悬停；`/plugins open ID` 可用键盘选择命令。不支持任意绘制或替换输入编辑器。界面内容只是当前进程的临时状态，不写入模型上下文或恢复日志；`/clear` 后重新触发会话开始事件。
+- `events`：支持 `session.started`、`turn.started`、`tool.completed`、`turn.completed`，值为 `{"kind":"status","text":"..."}` 数组。可替换 `{{workspace}}`、`{{tool}}`、`{{exit_code}}`、`{{status}}`。事件执行声明式 UI 更新，不运行脚本、不额外调用模型；`turn.completed` 覆盖正常结束、请求错误、中断和步数耗尽；`status` 分别为 `completed`、`error`、`interrupted`、`max_steps`。UI 更新工具本身也触发 `tool.completed`，随后事件可能覆盖刚设置的状态。
+- `settings`：最多 16 个字符串默认值。`/plugins config ID KEY VALUE` 保存用户覆盖，`/plugins reset ID KEY` 恢复默认；重启生效。值存放在 `plugin-settings/ID.json`，可用于 MCP 参数 `${config.KEY}`。用于路径等普通配置，不应存储密码或令牌。
+- `actions`：`[{"label":"Review","command":"review"}]`，只能引用本插件已声明命令，不执行任意脚本。
+- `mcp`：可选的插件内配置文件路径，例如 `"mcp": "mcp.json"`，结构与现有 MCP 配置相同。命令参数可用 `${plugin}`（插件绝对路径）、`${workspace}`（工作区绝对路径）。工具前缀为 `mcp__p_ID_SERVER__TOOL`，名称冲突会报错并跳过冲突工具。
+
+**启用 MCP 插件允许它在下次启动时运行清单指定的本地进程。** MCP 进程启动不受 Shell 工具的工作区沙箱约束；插件不构成隔离边界，只安装可信来源。`/plugins` 会标出 `MCP=LOCAL PROCESS`。MCP 工具调用继续走原有审批策略；现有 MCP 传输只支持 macOS/Linux，Windows 可使用其他声明式贡献，MCP 会报告不可用。
+
+安装只接受本地文件夹，拒绝符号链接和特殊文件，限制 256 个文件、4 MiB；无效清单单独报错，不阻止其他插件启动。第一版没有市场、网络安装、依赖解析、热重载、原生动态库或任意事件脚本。
+
+实用示例 [Gitx 插件](examples/plugins/gitx/plugin.json)：需要独立安装 Gitx、Git 和 Python 3（仅用标准库，无 pip 依赖）。
+
+```text
+/plugins install examples/plugins/gitx
+/plugins config gitx gitx /绝对路径/gitx
+/plugins config gitx python /绝对路径/python3
+/plugins enable gitx
+/quit
+```
+
+重启后点面板的 **Review**，或输入 `/gitx:review`。插件读取 Gitx 状态与历史、Git diff；不调用 `gitx review --ai`，审查使用当前会话。未跟踪文件只列路径，需要模型另行读取；差异输出有截断标记，不自动运行仓库测试。Gitx 别名能够覆盖内置命令，因此插件隔离用户别名，发现团队别名时拒绝执行，不将其当作只读检查。测试已使用真实 Gitx 验证临时仓库文件、索引和历史不变；假模型仅验证调用链，不代表真实审查质量。
+
+无账号测试：
+
+```bash
+clang++ -std=c++17 -O2 -Wall -Wextra -pedantic tests/plugins.cpp -o /tmp/codex-plugins-test
+/tmp/codex-plugins-test
+python3 tests/plugins.py ./codex-cpp
+python3 tests/tui_input.py
+python3 tests/gitx_plugin.py /绝对路径/gitx
+```
 
 ## 内置工具
 

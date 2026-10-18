@@ -1,0 +1,25 @@
+{
+  "api": 1,
+  "id": "workbench",
+  "version": "0.1.0",
+  "description": "A small project dashboard with inspect and note commands.",
+  "commands": {
+    "inspect": {
+      "description": "Inspect the project and show a summary card",
+      "prompt": "Inspect the current project without changing files. Read the workbench:inspect skill. Report concrete findings and use plugin_ui with plugin workbench, kind card, to show a concise summary."
+    },
+    "note": {
+      "description": "Show a note in the workbench panel",
+      "prompt": "Use plugin_ui with plugin workbench and kind panel to show the user's note. This is temporary UI state, not a saved file."
+    }
+  },
+  "ui": ["panel", "status", "card"],
+  "events": {
+    "session.started": [
+      {"kind": "panel", "text": "Workspace: {{workspace}}"},
+      {"kind": "status", "text": "Ready"}
+    ],
+    "tool.completed": [{"kind": "status", "text": "{{tool}} · exit {{exit_code}}"}],
+    "turn.completed": [{"kind": "status", "text": "Ready"}]
+  }
+}
