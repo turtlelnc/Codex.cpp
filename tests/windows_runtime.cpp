@@ -28,7 +28,7 @@ int main(){try{
   ConsoleBuffer buffer(screen);auto old_buffer=std::cout.rdbuf(&buffer);struct RestoreStream{std::streambuf* old;~RestoreStream(){std::cout.rdbuf(old);}} restore_stream{old_buffer};
   for(SHORT columns:{SHORT(80),SHORT(24)}){
     CONSOLE_SCREEN_BUFFER_INFO before{};if(!GetConsoleScreenBufferInfo(screen,&before))throw std::runtime_error("cannot query console size");
-    SMALL_RECT small{0,0,23,23};if(!SetConsoleWindowInfo(screen,TRUE,&small)||!SetConsoleScreenBufferSize(screen,{columns,24}))throw std::runtime_error("cannot resize console buffer");
+    SMALL_RECT compact_window{0,0,23,23};if(!SetConsoleWindowInfo(screen,TRUE,&compact_window)||!SetConsoleScreenBufferSize(screen,{columns,24}))throw std::runtime_error("cannot resize console buffer");
     SMALL_RECT window{0,0,SHORT(columns-1),23};if(!SetConsoleWindowInfo(screen,TRUE,&window))throw std::runtime_error("cannot resize console window");
     TuiRenderer tui(root,"fixture","fixture","workspace-write");tui.external_mode("fixture",true);FlushConsoleInputBuffer(input);
     auto key=[&](WORD vk,WCHAR ch,DWORD modifiers,const std::string& expected,const std::string& text=""){
