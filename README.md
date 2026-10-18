@@ -318,6 +318,8 @@ UI 模式：
 
 Windows TUI 使用 `ReadConsoleInputW` 处理逐键输入、方向键、鼠标和窗口尺寸变化，与其他平台共用绘制和选择面板逻辑，并设置 UTF-8 编码；退出时恢复输入模式和编码。Windows 10 1809 尚未实机验证，中文和 `⧉` 等字符也需要终端字体支持。经典控制台没有可靠的 bracketed-paste 边界，长文本粘贴折叠不能视为已支持；Windows 请求进行中的消息引导、排队及 Esc 中断也仍受同步子进程实现限制。
 
+Windows CI 在 Server 2022/2025 运行，不模拟 1809。构建显式指定 `WINVER/_WIN32_WINNT=0x0A00`、`NTDDI_VERSION=0x0A000006`（[微软 1809 SDK 目标说明](https://learn.microsoft.com/en-us/windows/win32/winprog/using-the-windows-headers)），并用 `tests/windows_imports.py` 检查所有测试成品的直接 DLL/API 导入；新增导入必须审查最低系统版本，不能直接更新基线来消除报错。基线不是从 1809 系统提取的导出表，不能证明完整兼容；动态加载、外部 curl 等程序和字体外观不在此检查范围内。原生控制台测试覆盖 80/24 列、中文与代理对输入、鼠标移动/点击/滚轮、行裁切、宿主保留区域及退出后的输入模式/编码恢复。
+
 当前 TUI 支持基础 Markdown 显示，包括：
 
 - 标题
