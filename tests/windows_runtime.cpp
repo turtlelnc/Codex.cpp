@@ -12,7 +12,7 @@ int main(){try{
   if(fs::exists(root/"forbidden.txt")||error.find("DENIED")==std::string::npos)throw std::runtime_error("missing fail-closed denial");
   _putenv_s("OPENAI_API_KEY","DO_NOT_INHERIT");auto unsafe=restricted;unsafe.unsafe=true;
   const auto environment=run_capture("set",8000,unsafe);
-  if(environment.exit_code||environment.output.find("DO_NOT_INHERIT")!=std::string::npos||environment.output.find("SystemRoot=")==std::string::npos)throw std::runtime_error("Windows child environment invalid");
+  if(environment.exit_code||environment.output.find("DO_NOT_INHERIT")!=std::string::npos||environment.output.find("SystemRoot=")==std::string::npos)throw std::runtime_error("Windows child environment invalid: "+std::to_string(environment.exit_code)+" "+environment.output);
   auto output=run_capture(cd_prefix(root)+"echo WINDOWS_CHILD_OK",8000,unsafe);
   if(output.exit_code||output.output.find("WINDOWS_CHILD_OK")==std::string::npos)throw std::runtime_error("native child execution failed: "+output.output);
   std::cout<<"PASS Windows fail-closed policy and explicit unsafe child environment/pipes\n"<<std::flush;
