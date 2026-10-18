@@ -10,7 +10,7 @@ struct ExecutionContext{
   fs::path workspace,private_dir;bool unsafe=false;
   void initialize(const fs::path& root){workspace=fs::absolute(root);if(!private_dir.empty())return;std::error_code ec;
     private_dir=fs::temp_directory_path(ec)/random_id("codex-private");if(ec||!fs::create_directory(private_dir,ec))throw std::runtime_error("cannot create private execution directory");
-    fs::permissions(private_dir,fs::perms::owner_all,fs::perm_options::replace,ec);if(ec)throw std::runtime_error("cannot protect execution directory");}
+    fs::permissions(private_dir,fs::perms::owner_all,fs::perm_options::replace,ec);if(ec)throw std::runtime_error("cannot protect execution directory");private_dir=fs::canonical(private_dir);}
   ~ExecutionContext(){std::error_code ec;if(!private_dir.empty())fs::remove_all(private_dir,ec);}
 };
 static ExecutionContext execution;
@@ -32,7 +32,7 @@ static fs::path process_executable(const std::string& name){std::error_code ec;i
 }
 static std::vector<fs::path> system_runtime_paths(){return{
 #if defined(__APPLE__)
-  "/System","/usr/bin","/usr/lib","/usr/libexec","/usr/share","/bin","/sbin","/dev/null","/dev/random","/dev/urandom","/Library/Developer/CommandLineTools","/opt/homebrew/bin","/opt/homebrew/lib","/opt/homebrew/opt","/opt/homebrew/Cellar","/opt/homebrew/share","/private/etc/ssl","/Library/Keychains/System.keychain","/private/etc/localtime","/private/etc/hosts","/private/etc/resolv.conf","/private/var/db/dyld"
+  "/System","/usr/bin","/usr/lib","/usr/libexec","/usr/share","/bin","/sbin","/dev/null","/dev/random","/dev/urandom","/Library/Developer/CommandLineTools","/Applications/Xcode.app/Contents","/opt/homebrew/bin","/opt/homebrew/lib","/opt/homebrew/opt","/opt/homebrew/Cellar","/opt/homebrew/share","/private/etc/ssl","/Library/Keychains/System.keychain","/Library/Preferences/com.apple.dt.Xcode.plist","/private/etc/localtime","/private/etc/hosts","/private/etc/resolv.conf","/private/var/db/dyld"
 #else
   "/usr/bin","/usr/lib","/usr/lib64","/usr/share","/usr/local/bin","/usr/local/lib","/bin","/sbin","/lib","/lib64","/etc/ld.so.cache","/etc/localtime","/etc/hosts","/etc/resolv.conf","/etc/nsswitch.conf","/etc/passwd","/etc/group","/etc/ssl","/etc/pki"
 #endif
@@ -69,16 +69,23 @@ public:
     if(policy.role==ProcessRole::Network){reads.push_back(execution.private_dir);writes.push_back(execution.private_dir);}
     std::vector<std::string> env={"HOME="+(scratch/"home").string(),"TMPDIR="+scratch.string(),"TMP="+scratch.string(),"TEMP="+scratch.string(),"LANG=C.UTF-8","LC_ALL=C.UTF-8",
       "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin","GIT_TERMINAL_PROMPT=0","GIT_OPTIONAL_LOCKS=0","GIT_CONFIG_NOSYSTEM=1","GIT_CONFIG_GLOBAL=/dev/null","PAGER=cat"};
+#if defined(_WIN32)
+    wchar_t windows[MAX_PATH];const auto length=GetWindowsDirectoryW(windows,MAX_PATH);if(!length||length>=MAX_PATH){error="cannot locate Windows runtime";return false;}
+    const auto system=fs::path(windows);env.erase(std::remove_if(env.begin(),env.end(),[](const std::string& item){return item.rfind("PATH=",0)==0||item.rfind("GIT_CONFIG_GLOBAL=",0)==0;}),env.end());
+    env.push_back("SystemRoot="+system.u8string());env.push_back("WINDIR="+system.u8string());env.push_back("PATH="+(system/"System32").u8string()+";"+system.u8string());env.push_back("GIT_CONFIG_GLOBAL=NUL");
+#endif
     if(policy.role==ProcessRole::Network)for(const char* key:{"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","http_proxy","https_proxy","all_proxy","no_proxy"})if(const char* value=std::getenv(key))env.push_back(std::string(key)+"="+value);
 #if defined(__APPLE__)
     if(!unsafe){if(!fs::exists("/usr/bin/sandbox-exec")){error="sandbox-exec missing";return false;}
       auto quote=[](const std::string& value){std::string out="\"";for(char c:value){if(c=='\\'||c=='"')out+='\\';out+=c;}return out+'"';};
-      std::string profile="(version 1)(deny default)(allow process-fork)(allow process-exec)(allow sysctl-read)(allow file-read-metadata)(allow file-read-data (literal \"/\"))(allow signal (target children))";
+      std::string profile="(version 1)(deny default)(allow process-exec)(allow sysctl-read)(allow file-read-metadata)(allow file-read-data (literal \"/\"))(allow signal (target children))";
+      if(policy.role!=ProcessRole::Frontend)profile+="(allow process-fork)";
       for(const auto& path:reads)if(fs::exists(path,ec)){auto real=fs::canonical(path,ec);if(!ec)profile+="(allow file-read* (subpath "+quote(real.string())+"))";}
       for(const auto& path:writes){auto real=fs::weakly_canonical(path,ec);if(!ec)profile+="(allow file-read* file-write* (subpath "+quote(real.string())+"))";}
       if(policy.role!=ProcessRole::Network)profile+="(deny file-read* file-write* (require-all (subpath "+quote(execution.private_dir.string())+") (require-not (subpath "+quote(scratch.string())+"))))";
       profile+="(allow file-write-data (literal \"/dev/null\"))";
-      const auto home=getenv_or("HOME");const auto credentials=fs::path(getenv_or("CODEX_CPP_HOME",home+"/.codex-cpp"))/"auth.json";profile+="(deny file-read* file-write* (subpath "+quote(credentials.string())+"))";for(const auto& secret:{fs::path(home)/".ssh",fs::path(home)/".aws",fs::path(home)/".codex/auth.json",fs::path(home)/".codex-cpp/auth.json",fs::path(home)/"Library/Keychains"})profile+="(deny file-read* file-write* (subpath "+quote(secret.string())+"))";
+      auto protected_path=[&](const fs::path& path){auto real=fs::weakly_canonical(path);return quote(real.string());};
+      const auto home=getenv_or("HOME");const auto credentials=fs::path(getenv_or("CODEX_CPP_HOME",home+"/.codex-cpp"))/"auth.json";profile+="(deny file-read* file-write* (subpath "+protected_path(credentials)+"))";for(const auto& secret:{fs::path(home)/".ssh",fs::path(home)/".aws",fs::path(home)/".codex/auth.json",fs::path(home)/".codex-cpp/auth.json",fs::path(home)/"Library/Keychains"})profile+="(deny file-read* file-write* (subpath "+protected_path(secret)+"))";
       if(policy.role==ProcessRole::Network)profile+="(allow network-outbound)(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.trustd.agent\") (global-name \"com.apple.trustd\"))";
       if(policy.role==ProcessRole::Clipboard)profile+="(allow mach-lookup (global-name \"com.apple.pasteboard.1\"))";
       command.insert(command.begin(),{"/usr/bin/sandbox-exec","-p",profile});}
@@ -101,6 +108,7 @@ public:
     STARTUPINFOW startup{};startup.cb=sizeof startup;startup.dwFlags=STARTF_USESTDHANDLES;startup.hStdInput=child_in;startup.hStdOutput=child_out;HANDLE quiet=CreateFileW(L"NUL",GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,0,nullptr);startup.hStdError=merge_stderr?child_out:quiet;
     job=CreateJobObjectW(nullptr,nullptr);JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     bool ok=job&&SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof limits);PROCESS_INFORMATION child{};
+    std::sort(env.begin(),env.end(),[](std::string a,std::string b){std::transform(a.begin(),a.end(),a.begin(),::toupper);std::transform(b.begin(),b.end(),b.begin(),::toupper);return a<b;});
     std::wstring block;for(const auto& item:env){block+=fs::u8path(item).wstring();block+=L'\0';}block+=L'\0';
     if(ok)ok=CreateProcessW(nullptr,line.data(),nullptr,nullptr,TRUE,CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT,block.data(),cwd.c_str(),&startup,&child)!=0;
     CloseHandle(child_in);CloseHandle(child_out);if(quiet!=INVALID_HANDLE_VALUE)CloseHandle(quiet);
@@ -158,7 +166,7 @@ public:
 #if defined(_WIN32)
     if(!process)return exit_code;if(WaitForSingleObject(process,timeout)!=WAIT_OBJECT_0)return -1;DWORD code=0;GetExitCodeProcess(process,&code);exit_code=static_cast<int>(code);CloseHandle(process);process=nullptr;
 #else
-    const auto end=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);while(pid>0){int status=0;const auto done=::waitpid(pid,&status,WNOHANG);if(done==pid){exit_code=WIFEXITED(status)?WEXITSTATUS(status):128+WTERMSIG(status);pid=-1;break;}if(done<0&&errno!=EINTR){pid=-1;break;}if(std::chrono::steady_clock::now()>=end)return -1;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+    const auto end=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);while(pid>0){int status=0;const auto done=::waitpid(pid,&status,WNOHANG);if(done==pid){exit_code=WIFEXITED(status)?WEXITSTATUS(status):128+WTERMSIG(status);::kill(-pid,SIGKILL);pid=-1;break;}if(done<0&&errno!=EINTR){pid=-1;break;}if(std::chrono::steady_clock::now()>=end)return -1;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
 #endif
     return exit_code;}
   void stop(){close_input();

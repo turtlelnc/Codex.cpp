@@ -83,7 +83,7 @@ struct PluginRegistry{
   }
   std::string describe(const std::string& id)const{auto p=find(id);if(!p)return "Plugin not found.";std::ostringstream out;out<<p->id<<" "<<p->version<<"\n"<<p->description<<"\n"<<p->dir.string()<<"\n";
     if(!p->error.empty())out<<"ERROR: "<<p->error<<'\n';for(const auto& c:p->commands)out<<c.name<<"  "<<c.description<<'\n';
-    for(const auto&[key,value]:p->settings)out<<"setting "<<key<<" = "<<value<<'\n';if(p->manifest.get("mcp"))out<<"MCP: runs local processes outside the Shell sandbox.\n";return out.str();}
+    for(const auto&[key,value]:p->settings)out<<"setting "<<key<<" = "<<value<<'\n';if(p->manifest.get("mcp"))out<<"MCP: local child processes use the OS sandbox; unavailable backends fail closed.\n";return out.str();}
   std::string install(const fs::path& source,bool update=false){std::string error;auto p=read(source,error);if(!p)return error;
     auto dest=plugin_home()/"plugins"/p->id;std::error_code ec;const auto prior=find(p->id);
     if(update&&(!prior||prior->enabled))return "Update requires an installed inactive plugin; disable and restart first";

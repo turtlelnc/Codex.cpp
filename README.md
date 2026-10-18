@@ -3,7 +3,7 @@
 > A compact C++17 Codex-style coding agent runtime.
 > 精简的 C++17 Codex 风格终端编程 Agent。
 
-> 当前插件执行器与独立 TUI 为未完成的开发检查点，请勿用于运行不可信插件。已发现凭据读取拦截未生效；子进程清理仍需完善，Windows 安全沙盒尚未实现。最近改动未完成回归测试，恢复开发后优先修复并验证这些边界。
+> 当前插件执行器与独立 TUI 为未完成的开发检查点，请勿用于运行不可信插件。macOS 凭据路径拦截问题已修复并通过本地检查；脱离进程组的后台子进程清理仍需完善，Windows 安全沙盒尚未实现，Linux 新执行器尚未实机验证。
 
 `codex-cpp` 是一个独立的、clean-room 实现的 Codex 风格终端编程 Agent。
 
@@ -381,7 +381,7 @@ Windows TUI 使用 `ReadConsoleInputW` 处理逐键输入、方向键、鼠标�
 - `actions`：`[{"label":"Review","command":"review"}]`，只能引用本插件已声明命令，不执行任意脚本。
 - `mcp`：可选的插件内配置文件路径，例如 `"mcp": "mcp.json"`，结构与现有 MCP 配置相同。命令参数可用 `${plugin}`（插件绝对路径）、`${workspace}`（工作区绝对路径）。工具前缀为 `mcp__p_ID_SERVER__TOOL`，名称冲突会报错并跳过冲突工具。
 
-**启用 MCP 插件允许它在下次启动时运行清单指定的本地进程。** MCP 进程启动不受 Shell 工具的工作区沙箱约束；插件不构成隔离边界，只安装可信来源。`/plugins` 会标出 `MCP=LOCAL PROCESS`。MCP 工具调用继续走原有审批策略；现有 MCP 传输只支持 macOS/Linux，Windows 可使用其他声明式贡献，MCP 会报告不可用。
+**启用 MCP 插件允许它在下次启动时运行清单指定的本地进程。** 新执行器将 MCP 进程及其子程序放入 OS 沙盒：工作区只读、私有临时目录可写、网络默认禁止，不继承宿主密钥环境变量。MCP 工具调用仍走原有审批策略。`/plugins` 标记 `MCP=LOCAL PROCESS`；沙盒不可用时拒绝启动，不自动降级。当前仍只建议使用可信插件，平台限制见下文。
 
 安装只接受本地文件夹，拒绝符号链接和特殊文件，限制 256 个文件、4 MiB；无效清单单独报错，不阻止其他插件启动。第一版没有市场、网络安装、依赖解析、热重载、原生动态库或任意事件脚本。
 
@@ -1316,3 +1316,25 @@ TUI 粘贴超过 10 行文本时显示 `[Pasted text #N +行数 lines]`，左右
 macOS Accessibility 和 Windows UI Automation 后端通过 `computer_batch` 观察控件、调用按钮或替换可编辑值，不发送全局鼠标/键盘事件，不主动切换焦点。系统不支持的控件直接报错，没有截图或全局输入回退。应用仍可能自行激活窗口；Windows 尚未实机验证。构建、MCP 配置和能力边界见 [tools/COMPUTER_USE.md](tools/COMPUTER_USE.md)。
 
 后台控制器可选启用可见接管：macOS MCP 程序加 `--takeover`，Windows 脚本加 `-Takeover`。目标窗口在前台时显示灰色鼠标蒙版和停止按钮；停止后该控制器拒绝后续动作，直到用户主动重启。它不锁定键盘，也不停止其他 Shell 工具。macOS 已验证界面及停止行为；Windows 尚未实测。
+
+
+### 独立 TUI（开发中）
+
+开发者可以替换整个聊天和输入界面。宿主保留终端、文件权限、模型请求和审批权；插件仅通过管道接收逻辑按键，提交数据帧，不直接持有终端。底部两行由宿主绘制，Ctrl+G 打开宿主菜单，Ctrl+C 停止当前任务或退出界面。
+
+示例：安装 `examples/plugins/plain-ui`，启用 `plain-ui` 并重启，以 `./codex-cpp --frontend plain-ui` 启动。需要 Python 3 标准库；不安装 pip 包。插件设置 `python` 可指定解释器路径。
+
+`frontend` 清单包含 `protocol: 1`、`command` 和 `args`，可引用 `${plugin}`、`${config.KEY}`。接口为逐行 JSON-RPC 2.0，单帧上限 64 KiB，先调用 `initialize({protocol:1})`。参考 [SDK](examples/plugins/plain-ui/sdk.py) 和 [独立界面示例](examples/plugins/plain-ui/frontend.py)。
+
+- `ui.frame`：提交 `rows` 和 `cursor: {row,column}`；行可以是文本或 `{spans:[{text,fg,bold}]}`。颜色是固定枚举，控制字符被清除，尺寸裁切到宿主保留区之外。
+- `ui.input`、`ui.viewport`、`session.event`：宿主通知逻辑输入、可用尺寸和模型/工具进度。超长事件带 `truncated`，不保证完整输出。
+- `session.get/list/create/resume`：读取或切换当前工作区会话。`session.send/queue/steer({text})` 发送、排队或引导任务；文本按原文发送，不作为宿主斜杠命令执行。`session.cancel/close` 取消或关闭。
+- `model.list/select`：读取目录或选择 `{model,effort}`。
+- `fs.read/list/write`：经宿主文件工具访问工作区，遵守当前权限及审批策略。
+- `exec.run({command})`：由宿主执行工作区命令，返回 `{exit_code,text,truncated}`。执行期间仍接收取消与引导；插件无法通过 RPC 批准审批或提升权限。
+
+独立界面直接读取工作区和启动子进程在 macOS 默认被拒绝。它可读自己的插件包、写专属 `frontend-state/ID` 与临时目录。MCP 如需系统运行目录之外的辅助二进制，在服务器配置中声明 `executables: ["${config.gitx}"]`；宿主只授权已存在且具有执行位的单个文件读取，不授权其父目录或网络访问。
+
+`--unsafe-execution` 仅用于用户明确选择的兼容运行，启动时需真实终端确认，当前进程有效，界面显示 UNSAFE；不会在沙盒失败时自动启用。独立界面搭配 `--danger-full-access` 也必须显式选择该选项。Windows 当前只有这种非隔离兼容路径，Job Object 只管理生命周期，不能代替安全沙盒。
+
+本地无付费调用检查：`python3 tests/frontend.py ./codex-cpp`、`python3 tests/plugins.py ./codex-cpp`；凭据与子进程权限检查源文件为 `tests/process_security.cpp`。这些检查不证明任意第三方插件安全，也未覆盖 Windows/Linux 实机运行。macOS 命令派生的子进程继承沙盒，但主动脱离进程组后仍可能在任务结束后存活，此处尚未提供完整生命周期保证。

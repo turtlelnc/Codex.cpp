@@ -62,7 +62,7 @@ class Model(BaseHTTPRequestHandler):
         if len(seen) == 1:
             calls = [('read_skill', {'name': 'gitx:review'}), ('mcp__p_gitx_project__inspect', {})]
         elif len(seen) == 2:
-            assert 'gitx_status' in json.dumps(request['input'])
+            # Assert evidence in the parent after replying, avoiding a transport failure.
             calls = [('plugin_ui', {'plugin': 'gitx', 'kind': 'panel', 'text': 'Gitx evidence collected'}),
                      ('plugin_ui', {'plugin': 'gitx', 'kind': 'card', 'text': 'Fixture review: changed return value; tests not run.'})]
         else:
@@ -100,6 +100,7 @@ with tempfile.TemporaryDirectory(prefix='codex-gitx-host-') as temp:
         host_run(f'/plugins install {ROOT}/examples/plugins/gitx\n/plugins config gitx gitx {GITX}\n/plugins config gitx python {sys.executable}\n/plugins enable gitx\n/quit\n')
         output = host_run('/gitx:review\n/quit\n')
         assert len(seen) == 3, output
+        assert 'gitx_status' in json.dumps(seen[1]['input']), output
         assert 'Gitx evidence collected' in output and 'Fixture review:' in output and 'Review complete' in output, output
         assert (repo/'.git/index').read_bytes() == index_before
         assert (repo/'main.cpp').read_text() == 'int main(){return 1;}\n'

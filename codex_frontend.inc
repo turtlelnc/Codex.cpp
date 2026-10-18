@@ -2,12 +2,13 @@
 class FrontendBridge{public:
   ManagedProcess process;TuiRenderer& renderer;std::string id,buffer,error;bool active=false,initialized=false,busy=false,cancel=false,quit=false,switch_builtin=false,pumping=false;
   size_t sequence=0;std::vector<std::pair<std::string,std::string>> actions,steering;
+  std::vector<std::pair<Json,Json>> executions;
   std::function<std::string(const std::string&,const Json&)> dispatch;
   std::function<std::string()> state;
   size_t width=0,height=0;std::optional<std::vector<std::string>> pending_rows;size_t pending_row=0,pending_column=0;std::chrono::steady_clock::time_point last_frame{};
   explicit FrontendBridge(TuiRenderer& tui):renderer(tui){}~FrontendBridge(){stop();}
   void stop(){active=false;process.stop();renderer.external_mode("",false);}
-  static std::string clean(std::string text){text.erase(std::remove_if(text.begin(),text.end(),[](unsigned char c){return c<32||c==127;}),text.end());return text;}
+  static std::string clean(const std::string& text){return safe_terminal_text(text);}
   bool start(const Plugin& plugin){id=plugin.id;auto definition=plugin.manifest.get("frontend");if(!definition){error="plugin has no frontend";return false;}
     std::vector<std::string> command={plugin_string(*definition,"command")};if(auto args=definition->get("args"))for(const auto& arg:args->items)command.push_back(arg.str());
     std::map<std::string,std::string> variables={{"${plugin}",plugin.dir.string()}};for(const auto&[key,value]:plugin.settings)variables["${config."+key+"}"]=value;
@@ -46,6 +47,7 @@ class FrontendBridge{public:
       if(method=="session.send"||method=="session.queue"||method=="session.steer"){const auto text=plugin_string(*params,"text");if(text.empty()||text.size()>48000){reply(request,"text must be 1..48000 bytes",true);continue;}
         if(method=="session.steer"&&busy){if(steering.size()>=16){reply(request,"steering queue full",true);continue;}steering.emplace_back("steer",text);}else{if(actions.size()>=16){reply(request,"turn queue full",true);continue;}actions.emplace_back("send",text);}reply(request,"{\"accepted\":true}");continue;}
       if(method=="session.close"){quit=true;cancel=busy;reply(request,"true");continue;}
+      if(method=="exec.run"){const auto command=plugin_string(*params,"command");if(busy||!executions.empty()||command.empty()||command.size()>48000){reply(request,"exec requires an idle session and command of 1..48000 bytes",true);continue;}executions.emplace_back(*request,*params);break;}
       if(busy){reply(request,"session busy",true);continue;}
       if(dispatch){try{reply(request,dispatch(method,*params));}catch(const std::exception& why){reply(request,why.what(),true);}}else reply(request,"method not available",true);
     }

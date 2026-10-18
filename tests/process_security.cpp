@@ -13,11 +13,13 @@ int main(){
 #else
   setenv("HOME",home.c_str(),1);setenv("OPENAI_API_KEY","SHOULD_NOT_INHERIT",1);
 #endif
-  execution.initialize(root);if(!sandbox_available()){std::cout<<"UNAVAILABLE: "<<ManagedProcess::backend()<<" "<<sandbox_failure<<'\n';fs::remove_all(base);return 77;}
+  execution.initialize(root);write_all(execution.private_dir/"host-secret","HOST_SECRET",error);if(!sandbox_available()){std::cout<<"UNAVAILABLE: "<<ManagedProcess::backend()<<" "<<sandbox_failure<<'\n';fs::remove_all(base);return 77;}
   auto policy=ProcessPolicy::tool(root,true);auto call=[&](const std::string& command){return run_capture(command,8000,policy);};
   assert(call("cat ok").output.find("inside")!=std::string::npos);
   assert(call("cat "+shell_quote(outside.string())).exit_code!=0);
   assert(call("cat "+shell_quote((home/".ssh/key").string())).exit_code!=0);
+  assert(call("cat "+shell_quote((execution.private_dir/"host-secret").string())).exit_code!=0);
+  assert(FrontendBridge::clean("中文\x1b]52;\a\xc2\x9b\xff")=="中文]52;");
   assert(call("env").output.find("SHOULD_NOT_INHERIT")==std::string::npos);
   assert(call("printf allowed > allowed").exit_code==0&&slurp(root/"allowed")=="allowed");
   assert(run_capture("printf denied > denied",8000,ProcessPolicy::tool(root,false)).exit_code!=0);

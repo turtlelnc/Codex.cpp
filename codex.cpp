@@ -409,8 +409,13 @@ std::sort(files.begin(),files.end(),[](const fs::path& a,const fs::path& b){std:
 std::vector<std::string> out;for(const auto& f : files)out.push_back(f.stem().string());return out; } static void list_sessions(const fs::path& root){for(const auto& id:session_ids(root))std::cout << id << '\n';}
 static std::string command_arguments(const std::string& line){const size_t p = line.find_first_of(" \t\r\n"); return p == std::string::npos ? std::string(): trim(line.substr(p + 1)); }
 static std::vector<std::string> split_words(const std::string& text){std::istringstream in(text);std::vector<std::string> out;std::string word; while(in >> word)out.push_back(word);return out; }
-static std::string safe_terminal_text(std::string text){text.erase(std::remove(text.begin(),text.end(),'\x1b'),text.end());
-text.erase(std::remove(text.begin(),text.end(),'\a'),text.end());text.erase(std::remove(text.begin(),text.end(),'\r'),text.end()); text.erase(std::remove(text.begin(),text.end(),'\n'),text.end());return text; }
+static std::string safe_terminal_text(const std::string& text){std::string out;
+  for(size_t i=0;i<text.size();){const auto c=static_cast<unsigned char>(text[i]);size_t n=1;uint32_t cp=c;
+    if(c>=128){n=c>=0xc2&&c<=0xdf?2:c>=0xe0&&c<=0xef?3:c>=0xf0&&c<=0xf4?4:0;if(!n||i+n>text.size()){++i;continue;}
+      cp=c&((1u<<(7-n))-1);bool valid=true;for(size_t k=1;k<n;++k){auto next=static_cast<unsigned char>(text[i+k]);if((next&0xc0)!=0x80){valid=false;break;}cp=(cp<<6)|(next&63);}
+      if(!valid||cp<(n==2?0x80u:n==3?0x800u:0x10000u)||cp>0x10ffff||(cp>=0xd800&&cp<=0xdfff)){++i;continue;}}
+    if(cp>=32&&!(cp>=127&&cp<=159)&&!(cp>=0x202a&&cp<=0x202e)&&!(cp>=0x2066&&cp<=0x2069)&&cp!=0x2028&&cp!=0x2029)out.append(text,i,n);i+=n;
+  }return out;}
 static bool write_session_name(const Session& s,const std::string& name,std::string& err){std::ofstream meta(s.meta_path,std::ios::binary | std::ios::trunc);
 if(!meta){err = "cannot update session metadata";return false;}meta << "{\"id\":\"" << json_escape(s.id)<< "\",\"updated_at\":\""
   << json_escape(now_iso8601())<< "\",\"cwd\":\"" << json_escape(s.root.string())<< "\",\"name\":\"" << json_escape(name)<< "\"}\n";
@@ -598,9 +603,12 @@ if(!definitions || definitions->kind!=Json::Object)return "MCP config needs a mc
 for(const auto&[name,entry]:definitions->fields){if(++count>16){report<<"MCP server limit reached\n";break;}
   auto executable=entry.get("command"),args=entry.get("args");if(!executable || executable->kind!=Json::String ||(args && args->kind!=Json::Array)){ report<<name<<": invalid command/args\n";continue; }
   std::vector<std::string> command={executable->value};bool valid=true;if(args)for(const auto& a:args->items){ if(a.kind!=Json::String){valid=false;break;}command.push_back(a.value); }
-  if(!valid || command.size()>64){report<<name<<": invalid arguments\n";continue;}if(!plugin_dir.empty())for(auto& arg:command)for(const auto&[key,value]:std::map<std::string,std::string>{{"${plugin}",plugin_dir.string()},{"${workspace}",root.string()}}){size_t pos=0;while((pos=arg.find(key,pos))!=std::string::npos){arg.replace(pos,key.size(),value);pos+=value.size();}}
+  const size_t argument_count=command.size();const auto helpers=entry.get("executables");if(helpers){if(helpers->kind!=Json::Array||helpers->items.size()>16)valid=false;else for(const auto& helper:helpers->items){if(helper.kind!=Json::String){valid=false;break;}command.push_back(helper.value);}}
+  if(!valid || argument_count>64){report<<name<<": invalid arguments\n";continue;}if(!plugin_dir.empty())for(auto& arg:command)for(const auto&[key,value]:std::map<std::string,std::string>{{"${plugin}",plugin_dir.string()},{"${workspace}",root.string()}}){size_t pos=0;while((pos=arg.find(key,pos))!=std::string::npos){arg.replace(pos,key.size(),value);pos+=value.size();}}
   if(!plugin_dir.empty()){const auto owner=plugin_dir.filename().string();if(auto p=plugins.find(owner))for(auto& arg:command)for(const auto&[key,value]:p->settings){const auto token="${config."+key+"}";size_t pos=0;while((pos=arg.find(token,pos))!=std::string::npos){arg.replace(pos,token.size(),value);pos+=value.size();}}}
   auto server=std::make_shared<McpServer>(prefix+name);server->policy.reads.push_back(config.parent_path());std::string err;
+  for(size_t i=argument_count;i<command.size();++i){auto path=process_executable(command[i]);std::error_code ec;auto permissions=fs::status(path,ec).permissions();if(path.empty()||ec||(permissions&(fs::perms::owner_exec|fs::perms::group_exec|fs::perms::others_exec))==fs::perms::none){valid=false;break;}server->policy.reads.push_back(path);}
+  command.resize(argument_count);if(!valid){report<<name<<": invalid executable dependency\n";continue;}
   if(!server->start(command,root,err)){report<<name<<": "<<err<<'\n';continue;}servers.push_back(server);std::optional<std::string> cursor;size_t total=0;
   for(int page=0;page<20;++page){auto result=server->request("tools/list",cursor?"{\"cursor\":\""+json_escape(*cursor)+"\"}":"{}",err,10); if(!result){report<<name<<": "<<err<<'\n';break;}
   const Json* tools=result->get("tools");if(!tools || tools->kind!=Json::Array){report<<name<<": invalid tools/list\n";break;}
@@ -735,6 +743,8 @@ Provider/API options:
 UI:
   -i, --interactive             interactive mode
   --ui auto|tui|plain           auto uses TUI when VT/TTY is available, else plain
+  --frontend ID                independent enabled plugin UI (protocol 1)
+  --unsafe-execution           explicitly disable child isolation for this run
 
 Agent options:
   --root DIR                    workspace (default: current directory)
@@ -845,6 +855,7 @@ int main(int argc,char** argv){
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
 #endif
 std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
+if(!opt.frontend.empty()&&opt.policy.sandbox==SandboxMode::DangerFullAccess&&!opt.unsafe_execution){std::cerr<<"--frontend with danger-full-access requires explicit --unsafe-execution\n";return 2;}
 if(!opt.frontend.empty()&&(opt.json||opt.ui_mode==UiMode::Plain)){std::cerr<<"--frontend requires a real TUI terminal, without --json or --ui plain\n";return 2;}
 if(opt.unsafe_execution){if(!terminal_is_tty()||!approve("UNSAFE: disable OS isolation for this run?"))return 2;}
 if(opt.continue_turn && (!opt.resume || !opt.prompt.empty() || !opt.images.empty())){std::cerr << "--continue requires --resume, without a new prompt or image\n";return 2;}
@@ -1039,8 +1050,8 @@ if(frontend){frontend->state=[&](){const auto transcript=session.transcript.size
     return "{\"session_id\":\""+json_escape(session.id)+"\",\"model\":\""+json_escape(api.model)+"\",\"workspace\":\""+json_escape(opt.root.string())+"\",\"busy\":"+(frontend->busy?"true":"false")+",\"isolated\":"+(execution.unsafe?"false":"true")+",\"transcript\":\""+json_escape(transcript)+"\",\"columns\":"+std::to_string(terminal_columns())+",\"rows\":"+std::to_string(terminal_rows()>2?terminal_rows()-2:0)+"}";};
   frontend->dispatch=[&](const std::string& method,const Json& params)->std::string{
     if(method=="session.list"){std::string out="[";for(const auto& id:session_ids(opt.root)){if(out.size()>1)out+=",";out+="\""+json_escape(id)+"\"";}return out+"]";}
-    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why))throw std::runtime_error(why);session=std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
-    if(method=="model.select"){const auto model=plugin_string(params,"model");if(model.empty()||model.size()>128||model.find_first_of("\r\n\x1b")!=std::string::npos)throw std::runtime_error("invalid model");api.model=model;api.reasoning_effort=plugin_string(params,"effort");tui->set_model(api.model,api.reasoning_effort);return frontend->state();}
+    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why))throw std::runtime_error(why);session=std::move(next);frontend->actions.clear();frontend->steering.clear();project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
+    if(method=="model.select"){const auto model=plugin_string(params,"model");if(model.empty()||model.size()>128||safe_terminal_text(model)!=model)throw std::runtime_error("invalid model");const auto effort=plugin_string(params,"effort");if(!effort.empty()&&effort!="none"&&effort!="minimal"&&effort!="low"&&effort!="medium"&&effort!="high"&&effort!="xhigh"&&effort!="max"&&effort!="ultra")throw std::runtime_error("invalid reasoning effort");api.model=model;api.reasoning_effort=effort;tui->set_model(api.model,api.reasoning_effort);return frontend->state();}
     if(method=="model.list"){std::string why;auto models=read_models(api,why);if(!models)throw std::runtime_error(why);std::string out="[";for(const auto& model:*models){if(out.size()>1)out+=",";out+="\""+json_escape(model.id)+"\"";}return out+"]";}
     const std::map<std::string,std::string> files={{"fs.read","read_file"},{"fs.list","list_dir"},{"fs.write","write_file"}};auto file=files.find(method);if(file!=files.end()){
       FunctionCall call{file->second,random_id("frontend"),json_dump(params)};auto result=router.invoke(call,opt.root,opt.policy,session,[&](const std::string& text)->std::optional<bool>{return tui->approval(text);});
@@ -1061,7 +1072,12 @@ if(!first_prompt.empty()){int rc = run_turn(first_prompt);
   if(!interactive || rc != 0)return rc;
 }
 if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::string line;
-  if(frontend&&frontend->active){while(frontend->active&&!frontend->quit&&frontend->actions.empty())frontend->pump(50);if(frontend->quit)break;if(frontend->active&&!frontend->actions.empty()){line=frontend->actions.front().second;frontend->actions.erase(frontend->actions.begin());(void)run_turn(line);continue;}if(!frontend->switch_builtin){std::cerr<<frontend->error<<'\n';return 3;}}
+  if(frontend&&frontend->active){while(frontend->active&&!frontend->quit&&frontend->actions.empty()&&frontend->executions.empty())frontend->pump(50);if(frontend->quit)break;
+    if(frontend->active&&!frontend->executions.empty()){auto request=std::move(frontend->executions.front());frontend->executions.erase(frontend->executions.begin());frontend->busy=true;frontend->cancel=false;
+      busy_input=[&](const char*,size_t){frontend->pump();return frontend->cancel;};FunctionCall call{"shell",random_id("frontend-exec"),json_dump(request.second)};
+      auto result=router.invoke(call,opt.root,opt.policy,session,[&](const std::string& text)->std::optional<bool>{return tui->approval(text);},[&](){frontend->pump();},true);busy_input={};frontend->busy=false;
+      frontend->reply(&request.first,"{\"exit_code\":"+std::to_string(result.exit_code)+",\"text\":\""+json_escape(result.output.substr(0,40000))+"\",\"truncated\":"+(result.output.size()>40000?"true":"false")+"}");continue;}
+    if(frontend->active&&!frontend->actions.empty()){line=frontend->actions.front().second;frontend->actions.erase(frontend->actions.begin());(void)run_turn(line);continue;}if(!frontend->switch_builtin){std::cerr<<frontend->error<<'\n';return 3;}}
   if(frontend&&frontend->quit)break;if(!opt.json && tui){refresh_bar(false);line=tui->take_queued();if(line.empty())line = tui->read_line(input_history);}else{
   if(!opt.json)std::cout << "codex> " << std::flush;if(!std::getline(std::cin,line))break; }
 #if !defined(_WIN32)

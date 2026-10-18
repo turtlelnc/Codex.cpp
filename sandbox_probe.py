@@ -22,7 +22,7 @@ import tempfile
 import threading
 import urllib.request
 
-EXPECTED_CODEX_SHA256 = "ea8695083b26349a2b0a03c86d54b80773cd058e7ac7486b42a7934776cc87bc"
+EXPECTED_CODEX_SHA256 = "b9edfb489fde150ed4e6bf333cd3268a2a75165577274b725da86d92386b7ced"
 
 
 class ProbeServer(http.server.ThreadingHTTPServer):
@@ -77,7 +77,7 @@ class ProbeHandler(http.server.BaseHTTPRequestHandler):
 
 def build_agent(script_dir, build_dir):
     source = script_dir / "codex.cpp"
-    sources = [source, script_dir / "codex_api.inc", script_dir / "codex_tui.inc", script_dir / "codex_plugins.inc"]
+    sources = [source, script_dir / "codex_api.inc", script_dir / "codex_tui.inc", script_dir / "codex_plugins.inc", script_dir / "codex_process.inc", script_dir / "codex_frontend.inc"]
     compiler = shutil.which("clang++") or shutil.which("g++")
     if not all(path.is_file() for path in sources) or not compiler:
         raise RuntimeError("pass the compiled codex-cpp path, or keep codex.cpp and its .inc files beside this script and install clang++")

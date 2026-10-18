@@ -1,0 +1,49 @@
+name: Windows build and runtime
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build runtime and native checks
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          $sources = @{
+            'codex.cpp' = 'codex-cpp'
+            'codex_self_test.cpp' = 'self-test'
+            'tests/plugins.cpp' = 'plugins-test'
+            'tests/windows_runtime.cpp' = 'windows-runtime-test'
+          }
+          foreach ($source in $sources.Keys) {
+            cl /nologo /std:c++17 /EHsc /utf-8 /W4 /O1 /Fo"build\$($sources[$source]).obj" /Fe"build\$($sources[$source]).exe" $source
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Native runtime, plugins and console input
+        shell: pwsh
+        run: |
+          & .\build\codex-cpp.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\build\self-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\build\plugins-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\build\windows-runtime-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-${{ matrix.os }}
+          path: build/*.exe

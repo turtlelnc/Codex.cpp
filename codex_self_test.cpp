@@ -38,7 +38,13 @@ if(restricted_shell_command(troot,"true",SandboxMode::ReadOnly)){FunctionCall in
   FunctionCall cannot_write{"shell","c7",R"({"command":"touch read-only-denied.txt"})"};check(router.invoke(cannot_write,troot,plan,dummy).exit_code!=0 &&
   !fs::exists(troot/"read-only-denied.txt"),"read-only shell denies writes");
 }
-RuntimePolicy unrestricted=p;unrestricted.sandbox=SandboxMode::DangerFullAccess;FunctionCall cwd_shell{"shell","c8",R"({"command":"pwd"})"};
+RuntimePolicy unrestricted=p;unrestricted.sandbox=SandboxMode::DangerFullAccess;FunctionCall cwd_shell{"shell","c8",
+#if defined(_WIN32)
+R"({"command":"cd"})"
+#else
+R"({"command":"pwd"})"
+#endif
+};
 check(router.invoke(cwd_shell,troot,unrestricted,dummy).exit_code==0,"explicit unrestricted shell still runs");
 fs::path guard_file=troot.parent_path()/"hardlink-guard.txt";write_all(guard_file,"guard",err);fs::path alias=troot/"hardlink-guard.txt";
 fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","hardlink",R"({"command":"printf escaped > hardlink-guard.txt"})"};

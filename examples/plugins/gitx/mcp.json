@@ -6,6 +6,9 @@
         "${plugin}/server.py",
         "${workspace}",
         "${config.gitx}"
+      ],
+      "executables": [
+        "${config.gitx}"
       ]
     }
   }

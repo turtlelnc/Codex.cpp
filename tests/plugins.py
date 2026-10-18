@@ -10,7 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
 if len(sys.argv) > 1 and sys.argv[1] == '--mcp':
-    Path(sys.argv[2]).write_text('started')
+    marker = Path(os.environ['TMPDIR'])/'mcp-started'
+    marker.write_text('started')
     for line in sys.stdin:
         request = json.loads(line)
         if 'id' not in request:
@@ -59,8 +60,9 @@ with tempfile.TemporaryDirectory(prefix='codex-plugin-live-') as temp:
                            'tool.completed': [{'kind': 'status', 'text': '{{tool}}={{exit_code}}'}],
                            'turn.completed': [{'kind': 'status', 'text': 'PHASE={{status}}'}]}}
     (source/'plugin.json').write_text(json.dumps(manifest))
+    (source/'fixture.py').write_bytes(Path(__file__).read_bytes())
     (source/'mcp.json').write_text(json.dumps({'mcpServers': {'fixture': {
-        'command': sys.executable, 'args': [str(Path(__file__).resolve()), '--mcp', str(marker)]}}}))
+        'command': sys.executable, 'args': ['${plugin}/fixture.py', '--mcp']}}}))
     skill = source/'skills/check/SKILL.md'; skill.parent.mkdir(parents=True)
     skill.write_text('description: fixture\nSKILL_FIXTURE_OK')
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -80,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='codex-plugin-live-') as temp:
         assert not marker.exists()
         output = run('/mcp\n/demo:check user-args\n/quit\n')
         assert '[plugin demo] fixture: 1 tools' in output
-        assert marker.exists() and len(seen) == 2, (marker.exists(), len(seen), output)
+        assert len(seen) == 2, (len(seen), output)
         assert all(value in output for value in ('PANEL_FIXTURE_OK', 'CARD_FIXTURE_OK', 'MCP_FIXTURE_OK', 'DONE'))
         assert 'PLUGIN_TASK' in json.dumps(seen[0]['input']) and 'user-args' in json.dumps(seen[0]['input'])
         assert 'demo:check' in json.dumps(seen[0]['input'])
@@ -95,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix='codex-plugin-live-') as temp:
         assert 'PHASE=error' in output, output
         response_mode = 'normal'
         output = run('/plugins disable demo\n/quit\n')
-        marker.unlink()
+        marker.unlink(missing_ok=True)
         output = run('/plugins\n/plugins uninstall demo\n/quit\n')
         assert not marker.exists() and 'inactive' in output and 'Uninstalled demo' in output
         assert not (home/'plugins/demo').exists()
