@@ -37,7 +37,7 @@ winsize ws{};if(ioctl(STDOUT_FILENO,TIOCGWINSZ,&ws)== 0 && ws.ws_row > 10)return
 }
 #endif
 return 32; } struct SlashCommandDef{const char* name;const char* description; }; static const std::vector<SlashCommandDef>& slash_commands(){static const std::vector<SlashCommandDef> kCommands =[]{std::vector<SlashCommandDef> result={
-  {"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
+  {"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
   {"/auth","show ChatGPT login status"},
   {"/permissions","choose what Codex is allowed to do"},
   {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},
@@ -50,6 +50,7 @@ return 32; } struct SlashCommandDef{const char* name;const char* description; };
   {"/goal","set or view the goal for a long-running task"},
   {"/copy","copy last response (or: /copy code [N] for a code block)"},{"/mouse","toggle mouse capture; off allows selecting text with the mouse"},
   {"/diff","show git diff (including untracked files)"},
+  {"/undo","undo the latest write_file in this process"},
   {"/mention","mention a file"},{"/image","attach a PNG, JPEG, WebP or GIF to the next turn"},
   {"/status","show current session configuration and token usage"},
   {"/title","configure which items appear in the terminal title"},{"/statusline","configure which items appear in the status line"},
@@ -130,6 +131,7 @@ std::optional<std::pair<std::string,std::string>> external_key(){const int k=rea
   auto key=keys.find(k);if(key!=keys.end())return std::pair<std::string,std::string>{key->second,(k==KEY_CLICK||k==KEY_HOVER)?std::to_string(click_row_)+","+std::to_string(click_col_):""};
   if(k>=32&&k<127)return std::pair<std::string,std::string>{"text",std::string(1,char(k))};return{};}
 void set_design(bool on){design_=on;render_idle();}
+void set_provider(std::string provider){provider_=std::move(provider);}
 void set_model(std::string model,std::string effort ={}){model_=std::move(model);effort_=std::move(effort);render();}
 void set_sandbox(std::string sandbox){sandbox_=std::move(sandbox);render();}void set_thread_name(std::string name){thread_name_=std::move(name);render();}
 void set_statusline_items(const std::vector<std::string>& items){compact_footer_=false;footer_model_=footer_cwd_=footer_thread_=footer_sandbox_=false;for(const auto& item:items){

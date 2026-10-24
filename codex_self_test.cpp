@@ -102,6 +102,40 @@ check(reopened.close_unconfirmed_calls() && reopened.items.back().find("UNKNOWN"
 const auto count=reopened.items.size();check(reopened.close_unconfirmed_calls() && reopened.items.size()==count,"recovery is idempotent");
 reopened.emit(EventKind::TurnCompleted,"{\"status\":\"interrupted\"}");check(!reopened.pending_turn().first.empty(),"interrupted turn remains available to continue");
 reopened.emit(EventKind::TurnCompleted,"{\"status\":\"completed\"}");check(reopened.pending_turn().first.empty(),"completed turn is not resumed");
+// Provider defaults must not inherit the previous provider's configuration.
+{
+  std::string error;Options selected;selected.provider="deepseek";
+  check(configure_provider(selected,error)&&selected.api_style==ApiStyle::ChatCompletions&&selected.api_key_env=="DEEPSEEK_API_KEY","DeepSeek preset chooses chat API and its own key variable");
+  Options openai;openai.provider="openai";
+  check(configure_provider(openai,error)&&openai.api_style==ApiStyle::Responses&&openai.api_key_env=="OPENAI_API_KEY","OpenAI preset chooses Responses and its own key variable");
+  Options invalid;invalid.provider="unknown";
+  check(!configure_provider(invalid,error),"unknown provider rejected");
+  Options custom;custom.provider="custom";custom.base_url="http://127.0.0.1:1234/v1";custom.model="local";custom.no_api_key=true;
+  check(configure_provider(custom,error)&&custom.no_api_key&&custom.base_url=="http://127.0.0.1:1234/v1"&&custom.model=="local","custom preset preserves explicit endpoint and no-key mode");
+  check(find_slash_command("/provider")!=nullptr,"provider selector appears in command menu");
+}
+// Undo restores working-tree bytes rather than the committed version.
+{
+  FileUndoHistory history;const auto folder=troot/"undo";fs::create_directories(folder);
+  const auto file=folder/"user.txt";write_all(file,"uncommitted user work",err);
+  check(history.write(folder,file,"agent edit").exit_code==0,"undo captures existing working bytes");
+  check(history.undo(folder).exit_code==0&&slurp(file)=="uncommitted user work","undo preserves pre-existing user edits");
+  const auto created=folder/"created.txt";
+  check(history.write(folder,created,"first").exit_code==0&&history.write(folder,created,"second").exit_code==0,"undo captures consecutive writes");
+  check(history.undo(folder).exit_code==0&&slurp(created)=="first","undo restores previous write");
+  check(history.undo(folder).exit_code==0&&!fs::exists(created),"undo removes newly created file");
+  history.write(folder,file,"agent edit");write_all(file,"later user edit",err);
+  check(history.undo(folder).exit_code!=0&&slurp(file)=="later user edit","undo refuses to overwrite later user edits");
+  write_all(file,"agent edit",err);
+  const auto alias=folder/"alias";fs::create_hard_link(file,alias);
+  check(history.undo(folder).exit_code!=0,"undo rejects hardlinked target");fs::remove(alias);
+  fs::remove(file);
+#if !defined(_WIN32)
+  fs::create_symlink(folder/"other",file);
+  check(history.undo(folder).exit_code!=0,"undo rejects substituted symlink");fs::remove(file);
+#endif
+  check(history.write(folder,file,std::string(16*1024*1024+1,'x')).exit_code!=0&&!fs::exists(file),"undo rejects oversized write before mutation");
+}
 std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed == 0; }
 
 int main(int argc,char** argv){

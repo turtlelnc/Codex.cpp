@@ -1340,3 +1340,23 @@ macOS Accessibility 和 Windows UI Automation 后端通过 `computer_batch` 观�
 `--unsafe-execution` 仅用于用户明确选择的兼容运行，启动时需真实终端确认，当前进程有效，界面显示 UNSAFE；不会在沙盒失败时自动启用。独立界面搭配 `--danger-full-access` 也必须显式选择该选项。Windows 当前只有这种非隔离兼容路径，Job Object 只管理生命周期，不能代替安全沙盒。
 
 本地无付费调用检查：`python3 tests/frontend.py ./codex-cpp`、`python3 tests/plugins.py ./codex-cpp`；凭据与子进程权限检查源文件为 `tests/process_security.cpp`。这些检查不证明任意第三方插件安全，也未覆盖 Windows/Linux 实机运行。macOS 命令派生的子进程继承沙盒，但主动脱离进程组后仍可能在任务结束后存活，此处尚未提供完整生命周期保证。
+
+
+### 文件写入撤销 / File-write undo
+
+`/undo` 撤销当前进程最近一次成功的 `write_file` 写入。可以连续撤销；已有文件恢复写入前的实际内容（包括未提交改动），新建文件被删除。如果文件随后被手动修改、删除或替换为链接，撤销会拒绝覆盖。只读模式禁止撤销。
+
+第一版记录保存在内存中，退出程序后消失；最多保留最近 20 次写入，通常不超过 32 MiB（单条记录最多 32 MiB）。为保证可撤销，`write_file` 的原文件和新内容均限制为 16 MiB，并拒绝直接写入文件符号链接。新建的父目录在撤销后保留。Shell、`apply_patch`、MCP 以及其他外部修改不在此功能的覆盖范围内。撤销不是针对并发写入的事务锁；运行期间请避免其他进程同时修改目标文件。
+
+`/undo` restores the previous working bytes of the latest `write_file`, or removes a file created by that write. It refuses to overwrite subsequent edits and is disabled in read-only mode. History is process-local, bounded to 20 writes / 32 MiB, and does not cover shell commands, patches or MCP writes. Each original/new file is limited to 16 MiB. Created parent directories are retained. Avoid concurrent writers while undoing.
+
+
+### 会话内选择提供商 / Provider selection
+
+输入 `/provider` 打开 TUI 选择菜单；普通文本模式会显示当前提供商和用法。也可直接输入 `/provider codex`、`/provider openai`、`/provider deepseek` 或 `/provider custom`。之后用 `/model` 选择模型。
+
+切换保留对话，重置模型目录和额度显示，并为每个提供商分别保留本进程内的模型设置。首次切换使用对应提供商默认值，不继承上一个提供商的密钥、服务地址或免密钥选项。自定义服务使用首次启动的 CLI 配置，或 `CODEX_CPP_BASE_URL`、`CODEX_CPP_MODEL`、`CODEX_CPP_API_KEY_ENV` 环境变量；缺少配置时保留当前提供商。选择不会自动登录、请求模型、保存密钥或跨重启持久化。保留的对话会在下一次发送时交给所选提供商。
+
+Use `/provider` for the terminal picker, or `/provider codex|openai|deepseek|custom` in either UI mode. `/model` selects the model afterward. Provider settings are remembered only within this process; switching clears model/quota caches and keeps conversation history. The next message sends that history to the selected provider. Credentials and endpoint overrides are kept separate. Custom endpoints require the initial CLI configuration or the existing `CODEX_CPP_*` environment variables.
+
+提供商选择的本地终端回归测试：`python3 tests/provider_selection.py ./codex-cpp`（覆盖普通及窄终端，无需登录或模型请求）。
