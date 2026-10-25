@@ -1360,3 +1360,26 @@ macOS Accessibility 和 Windows UI Automation 后端通过 `computer_batch` 观�
 Use `/provider` for the terminal picker, or `/provider codex|openai|deepseek|custom` in either UI mode. `/model` selects the model afterward. Provider settings are remembered only within this process; switching clears model/quota caches and keeps conversation history. The next message sends that history to the selected provider. Credentials and endpoint overrides are kept separate. Custom endpoints require the initial CLI configuration or the existing `CODEX_CPP_*` environment variables.
 
 提供商选择的本地终端回归测试：`python3 tests/provider_selection.py ./codex-cpp`（覆盖普通及窄终端，无需登录或模型请求）。
+
+
+### 多用户服务器 / Multi-user remote workspaces
+
+服务器运行项目和 Agent，本地客户端通过 SSH 连接：
+
+```bash
+./codex-cpp connect alice@server.example.com --port 2222 --project demo --check
+./codex-cpp connect alice@server.example.com --port 2222 --project demo
+```
+
+每个用户使用独立 Linux 账号、工作区、凭据和 tmux 会话。断线不终止任务；重新连接同一项目可继续。部署、用户配置、登录、资源限制及已知边界见 [服务器部署说明](server/README.md)。客户端需要 OpenSSH；服务器为 Linux。
+
+
+### 协作开发 / Collaborative development
+
+```bash
+./codex-cpp connect alice@server --port 2222 --collaborate
+./codex-cpp connect alice@server --port 2222 --team demo
+./codex-cpp connect alice@server --port 2222 --team demo --personal
+```
+
+创建者管理成员和项目凭据；所有成员都能排队提交共同任务、审批、发布个人分支并明确合并。冲突会暂停并撤回合并尝试，在个人分支解决后再确认合并。操作人由服务器真实 UID 确定。完整流程、凭据边界、重启恢复和验证范围见 [协作开发说明](server/COLLABORATION.md)。

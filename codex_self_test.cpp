@@ -102,6 +102,30 @@ check(reopened.close_unconfirmed_calls() && reopened.items.back().find("UNKNOWN"
 const auto count=reopened.items.size();check(reopened.close_unconfirmed_calls() && reopened.items.size()==count,"recovery is idempotent");
 reopened.emit(EventKind::TurnCompleted,"{\"status\":\"interrupted\"}");check(!reopened.pending_turn().first.empty(),"interrupted turn remains available to continue");
 reopened.emit(EventKind::TurnCompleted,"{\"status\":\"completed\"}");check(reopened.pending_turn().first.empty(),"completed turn is not resumed");
+// Remote connection parsing must never allow local shell or SSH option injection.
+{
+  auto parse_remote=[&](std::vector<std::string> words,std::string& error){std::vector<char*> args;for(auto& word:words)args.push_back(word.data());return parse_remote_connection(static_cast<int>(args.size()),args.data(),error);};
+  std::string error;
+  auto connection=parse_remote({"codex-cpp","connect","alice@server","--project","demo","--port","2222","--check"},error);
+  check(connection&&connection->check&&connection->project=="demo"&&connection->port=="2222","remote connection accepts account, project and readiness check");
+  if(connection){auto command=remote_ssh_command(*connection);check(command.front()=="ssh"&&command.back()=="--check"&&std::find(command.begin(),command.end(),"ForwardAgent=no")!=command.end(),"remote transport uses OpenSSH without forwarding agent credentials");}
+  check(!parse_remote({"codex-cpp","connect","-oProxyCommand=touch"},error),"remote rejects SSH option injection");
+  check(!parse_remote({"codex-cpp","connect","alice@server;id"},error),"remote rejects shell metacharacters");
+  check(!parse_remote({"codex-cpp","connect","server","--project","../bob"},error),"remote rejects project traversal");
+  check(!parse_remote({"codex-cpp","connect","server","--port","65536"},error),"remote rejects invalid ports");
+  check(!parse_remote({"codex-cpp","connect","server","--danger-full-access"},error),"remote rejects local runtime flags");
+  check(!parse_remote({"codex-cpp","connect","server","--check","--login"},error),"remote rejects conflicting actions");
+}
+{
+  auto remote=[&](std::vector<std::string> words){std::vector<char*> args;for(auto& word:words)args.push_back(word.data());std::string error;return parse_remote_connection(static_cast<int>(args.size()),args.data(),error);};
+  auto team=remote({"codex-cpp","connect","alice@server","--team","demo","--personal"});
+  check(team&&team->collaborate&&team->personal&&team->team=="demo","remote personal team workspace selection");
+  check(bool(remote({"codex-cpp","connect","server","--collaborate"})),"remote team management console selection");
+  check(!remote({"codex-cpp","connect","server","--personal"}),"remote personal mode requires a team");
+  check(!remote({"codex-cpp","connect","server","--team","demo","--project","other"}),"remote rejects mixed private and team workspaces");
+  std::vector<std::string> words={"codex-cpp","--","--danger-full-access"};std::vector<char*> args;for(auto& word:words)args.push_back(word.data());std::string error;auto options=parse_options(static_cast<int>(args.size()),args.data(),error);
+  check(options&&options->policy.sandbox==SandboxMode::WorkspaceWrite&&options->prompt==std::vector<std::string>{"--danger-full-access"},"prompt delimiter prevents shared message from changing runtime permissions");
+}
 // Provider defaults must not inherit the previous provider's configuration.
 {
   std::string error;Options selected;selected.provider="deepseek";

@@ -361,7 +361,7 @@ bool replace_items(const std::vector<std::string>& compacted){const fs::path sta
 }
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
   << "\",\"session_id\":\"" << json_escape(id)<< "\",\"type\":\"" << event_name(kind)<< "\",\"payload\":" << payload << "}";
-  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n';if(session_observer)session_observer(line.str());
+  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n'<<std::flush;if(session_observer)session_observer(line.str());
 }
 void append_transcript(const std::string& text){transcript += text;std::ofstream f(transcript_path,std::ios::binary | std::ios::trunc); if(f)f << transcript;
 }
@@ -599,7 +599,7 @@ ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePol
   // Its mutating() marker is conservative for approval, not a reason to
   // suppress all shell commands before the OS policy sees them.
   if(tool->mutates()&& !tool->is_shell()&& !policy.can_write())return{126,"DENIED: mutation disabled by read-only policy"};
-  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\"}");
+  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\""+json_escape(call.call_id)+"\",\"arguments\":\""+json_escape(call.arguments)+"\"}");
   const std::string approval_text = call.name + ": " + call.arguments; const bool ok = approval_ui ? approval_ui(approval_text).value_or(false): approve(approval_text,false);
   session.emit(EventKind::ApprovalDecision,std::string("{\"approved\":")+(ok ? "true}" : "false}"));if(!ok)return{126,"DENIED by user"}; }
   session.emit(EventKind::ToolStarted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\"}");
@@ -782,6 +782,7 @@ std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 Usage:
   codex-cpp [options] [prompt...]
   codex-cpp -i [options]
+  codex-cpp connect USER@HOST [--project NAME] [--port PORT] [--check | --login]
 
 Provider/API options:
   --provider codex|openai|deepseek|custom
@@ -839,6 +840,7 @@ Security note:
 )HELP";
 }
 static std::optional<Options> parse_options(int argc,char** argv,std::string& err){Options o;for(int i = 1;i < argc;++i){std::string a = argv[i];
+  if(a=="--"){for(++i;i<argc;++i)o.prompt.emplace_back(argv[i]);break;}
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
@@ -923,7 +925,9 @@ return true;
 static void print_plain_banner(const Options& opt,const ApiClient& api){std::cout << "codex-cpp  plain terminal mode\n" << "workspace: " << opt.root << "\n"
   << "provider:  " << opt.provider << " / " << api_style_name(api.style)<< " / " << api.model << "\n" << "sandbox:   " << sandbox_name(opt.policy.sandbox)<< "\n" << "type /help for commands\n\n";
 }
+#include "codex_remote.inc"
 int main(int argc,char** argv){
+  if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
 #if !defined(_WIN32)
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
 #endif

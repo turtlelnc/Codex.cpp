@@ -1,0 +1,16 @@
+[Unit]
+Description=Codex.cpp multi-user SSH service
+After=network.target
+
+[Service]
+Type=simple
+RuntimeDirectory=codex-server
+ExecStartPre=/usr/sbin/sshd -t -f /etc/codex-server/sshd_config
+ExecStart=/usr/sbin/sshd -D -e -f /etc/codex-server/sshd_config
+Restart=on-failure
+# Stop the login service without killing users' tmux workers.
+KillMode=process
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

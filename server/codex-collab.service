@@ -1,0 +1,19 @@
+[Unit]
+Description=Codex.cpp collaboration coordinator
+After=network.target
+
+[Service]
+Type=simple
+RuntimeDirectory=codex-collab
+RuntimeDirectoryMode=0755
+StateDirectory=codex-collab
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/codex-server/collab_daemon.py
+Restart=on-failure
+KillMode=control-group
+UMask=0077
+LimitNOFILE=8192
+TasksMax=2048
+
+[Install]
+WantedBy=multi-user.target
