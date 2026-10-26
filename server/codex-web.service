@@ -1,0 +1,25 @@
+[Unit]
+Description=Codex.cpp browser gateway
+After=network.target codex-collab.service
+Requires=codex-collab.service
+
+[Service]
+User=codex-web
+Group=codex-web
+StateDirectory=codex-web
+StateDirectoryMode=0700
+EnvironmentFile=/etc/codex-server/web.env
+ExecStart=/usr/local/bin/codex-cpp serve --origin ${CODEX_WEB_ORIGIN}
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/codex-web
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=1024
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

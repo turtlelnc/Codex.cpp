@@ -121,3 +121,7 @@ python3 tests/remote_terminal.py ./codex-cpp /usr/bin/tmux
 ```
 
 当前验证：84 项 C++ 自测、14 项服务器基础测试、两账号真实 SSH 认证和跨账号权限测试通过；真实 tmux/Agent 断线重连后保留进程和撤销历史。测试容器中的嵌套 Bubblewrap 不可用，`--check` 正确返回未就绪；tmux/Agent 测试在支持 Bubblewrap 的外层环境单独通过。未在用户的目标服务器部署，未测试真实模型请求、Windows/macOS 客户端或生产资源配额。
+
+## 网页入口
+
+同一个二进制新增 `codex-cpp web`（本地）和 `codex-cpp serve`（多用户服务器），无需 TUI。直接部署与账号配置见 [WEB.md](WEB.md)。安装脚本安装网页服务，但需配置 HTTPS Origin 和账号后手动启用。

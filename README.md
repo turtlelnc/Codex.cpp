@@ -10,7 +10,7 @@
 它不是 OpenAI Codex CLI 的逐行移植，也不依赖官方 Codex CLI Runtime。核心 Agent loop、工具调用、会话存储、TUI、权限控制和 Provider 接入由少量 C++ 源文件实现；它们仍通过 `codex.cpp` 一次编译。
 
 ```text
-codex.cpp + codex_api.inc + codex_tui.inc + codex_plugins.inc + codex_process.inc + codex_frontend.inc
+codex.cpp + codex_api.inc + codex_tui.inc + codex_plugins.inc + codex_process.inc + codex_frontend.inc + codex_remote.inc + codex_web.inc
     ↓ clang++ / g++ codex.cpp
 codex-cpp
 ```
@@ -20,6 +20,20 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 主目录恢复自完成缩减的提交 `280e8cb`。远程网页与 Cloudflare Tunnel 版本已封存到 [archive/remote-web](archive/remote-web/ARCHIVE.md)，可独立查看和恢复。
 
 ---
+
+## 网页与服务器模式
+
+同一个程序现在可作为本地网页应用或多人服务器运行，原有 TUI 继续可用：
+
+```sh
+./codex-cpp web --root /path/to/project
+codex-cpp serve --origin https://codex.example.com
+```
+
+浏览器支持任务、审批、文件、Diff、个人与共同会话及显式分支合并。
+本地模式操作本机文件；服务器模式操作服务器工作区。
+配套 `server/`、`web/` 目录及 Python 3 是网页运行时的一部分，不需要 Docker 或前端构建。
+见 [网页使用与部署](server/WEB.md)。
 
 ## Features / 功能
 
@@ -58,11 +72,12 @@ API 请求使用系统 `curl`；`apply_patch` 和 `/diff` 还需要 `git`。
 - `codex.cpp`：入口、工具、会话与 Agent loop；编译此文件即可生成程序。
 - `codex_api.inc`：API 客户端与流式响应。
 - `codex_tui.inc`：终端界面与 Markdown 渲染。
+- `codex_web.inc`、`server/web_server.py`、`web/`：无 TUI 的本地/服务器网页入口、HTTP API 与界面。
 - `codex_plugins.inc`：用户插件清单、安装与声明式扩展。
 - `codex_self_test.cpp`：独立的解析、工具、会话与权限检查。
 - `sandbox_probe.py`：使用临时工作区验证 Shell 沙箱边界。
 
-构建时需要把 `codex.cpp` 和两个 `.inc` 文件放在同一目录。运行程序无需这些源码文件；API 请求需要系统 `curl`。
+构建时需要把 `codex.cpp` 和主目录所有 `.inc` 文件放在同一目录。TUI 运行无需源码；网页入口还需要配套 `server/`、`web/` 目录和 Python 3。API 请求需要系统 `curl`。
 
 ---
 

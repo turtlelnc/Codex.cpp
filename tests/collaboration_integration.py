@@ -24,6 +24,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('binary',type=Path)
+    parser.add_argument('--web-browser',action='store_true',help='Also test the HTTPS web UI with Playwright/Chromium on ports 18766/18767')
     parser.add_argument('--protocol-fixture',action='store_true',help='Use the explicit Agent protocol fixture; does not validate runtime isolation')
     args=parser.parse_args()
     env=dict(os.environ)
@@ -37,11 +38,14 @@ def main():
         for path in (ROOT/'server').glob('*.py'):
             shutil.copyfile(path,directory/path.name)
         shutil.copyfile(ROOT/'tests/fixtures/collab_model.py',directory/'collab_model.py')
+        shutil.copytree(ROOT/'web',directory/'web')
+        shutil.copyfile(ROOT/'tests/fixtures/web_integration_fixture.py',directory/'web_integration_fixture.py')
+        shutil.copyfile(ROOT/'tests/fixtures/web_test_forwarder.py',directory/'web_test_forwarder.py')
         shutil.copyfile(ROOT/'tests/fixtures/collab_protocol_agent.py' if args.protocol_fixture else args.binary.resolve(),directory/'codex-cpp')
         shutil.copyfile(args.binary.resolve(),directory/'client-codex-cpp')
         shutil.copyfile(ROOT/'tests/fixtures/collab.Dockerfile',directory/'Dockerfile')
         subprocess.run(docker+['build','-t','codex-collab-test:local',str(directory)],env=env,check=True)
-        subprocess.run(docker+['run','-d','--name',container,'--security-opt','seccomp=unconfined','--security-opt','apparmor=unconfined','-e','NO_PROXY=127.0.0.1,localhost','-e','no_proxy=127.0.0.1,localhost','codex-collab-test:local'],env=env,check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(docker+['run','-d','--name',container,'--security-opt','seccomp=unconfined','--security-opt','apparmor=unconfined','-e','NO_PROXY=127.0.0.1,localhost','-e','no_proxy=127.0.0.1,localhost',*(['-p','127.0.0.1:18766:9876'] if args.web_browser else []),'codex-collab-test:local'],env=env,check=True,stdout=subprocess.DEVNULL)
         def execute(user,command,data=None,check=True):
             return subprocess.run(docker+['exec','-i','--user',user,container]+command,input=data,text=True,capture_output=True,env=env,check=check,timeout=180)
         def rpc(user,request,ok=True):
@@ -133,7 +137,7 @@ for name in ('known_hosts','config'):
                 execute('root',['/usr/sbin/useradd','-m','-U','-G','codex-remote','-d','/srv/codex-users/'+name,'-s','/bin/sh',name])
                 execute('root',['chmod','700','/srv/codex-users/'+name])
                 execute(name,['mkdir','-m','700','/srv/codex-users/'+name+'/workspaces'])
-            execute('root',['/bin/sh','-c','/usr/bin/python3 -I /usr/local/libexec/codex-server/collab_daemon.py >/tmp/coordinator.log 2>&1 &'])
+            execute('root',['/bin/sh','-c','/usr/bin/python3 -I /usr/local/libexec/codex-server/collab_daemon.py --web-user codex-web >/tmp/coordinator.log 2>&1 &'])
             execute('root',['/bin/sh','-c','/usr/bin/python3 -I /test/model.py >/tmp/model.log 2>&1 &'])
             wait_for(lambda:execute('root',['test','-S','/run/codex-collab/control.sock'],check=False).returncode==0)
             call('codexalice','create')
@@ -215,15 +219,24 @@ for name in ('known_hosts','config'):
             job_done(submit('codexalice','checkpoint',message='Ignore untrusted Git configuration',fingerprint=preview['fingerprint']))
             assert execute('root',['test','-e',marker],check=False).returncode!=0
             print('PASS shared Git metadata cannot inject commands into the credential-bearing worker account',flush=True)
+            execute('codex-web',['/bin/sh','-c','/usr/bin/python3 -I /usr/local/libexec/codex-server/web_server.py --mode server --origin https://127.0.0.1:18767 >/tmp/web.log 2>&1 &'])
+            web_result=execute('codex-web',['/usr/bin/python3','-I','/test/web-check.py']+(['--protocol-fixture'] if args.protocol_fixture else []))
+            print(web_result.stdout.strip(),flush=True)
+            if args.web_browser:
+                execute('codex-web',['/bin/sh','-c','/usr/bin/python3 -I /test/web_test_forwarder.py >/tmp/forwarder.log 2>&1 &'])
+                subprocess.run(['node',str(ROOT/'tests/web_server_browser.cjs')],env=env,check=True)
+            # Ordinary members cannot forge the trusted gateway's identity.
+            rpc('codexbob',{'op':'web.dispatch','username':'codexalice','request':{'op':'list'}},ok=False)
             call('codexalice','remove',username='codexbob')
             rpc('codexbob',{'op':'status','project':'demo'},ok=False)
             print('PASS removal immediately revokes new shared requests and event access',flush=True)
             terminal_console()
             seen=json.loads(execute('root',['/usr/bin/python3','-c',"import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8123/seen').read().decode())"]).stdout)
-            if not args.protocol_fixture:assert len(seen)==6 and all(item['authorization']=='Bearer fixture-project-key' for item in seen),seen
+            if not args.protocol_fixture:assert len(seen)==(10 if args.web_browser else 8) and sum(item['authorization']=='Bearer fixture-project-key' for item in seen)==(8 if args.web_browser else 6) and sum(item['authorization']=='Bearer fixture-personal-key' for item in seen)==2,seen
             else:assert seen==[]
             print('PASS credential boundary; no real provider requests',flush=True)
-        except Exception:
+        except Exception as error:
+            if isinstance(error,subprocess.CalledProcessError):print(error.stderr)
             print(execute('root',['tail','-40','/tmp/coordinator.log'],check=False).stdout)
             print(execute('root',['tail','-20','/tmp/model.log'],check=False).stdout)
             try:print(status());print(call('codexalice','events',after=0))

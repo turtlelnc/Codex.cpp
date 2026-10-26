@@ -98,10 +98,10 @@ def safe_read(root, name, limit=1024*1024):
         for part in parts[:-1]:
             child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
             os.close(descriptor);descriptor=child
-        target=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=descriptor)
+        target=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=descriptor)
         with os.fdopen(target,'rb') as stream:
             info=os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size>limit:
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size>limit:
                 raise ValueError('File exceeds review limit')
             content=stream.read(limit+1)
             if len(content)>limit:raise ValueError('File exceeds review limit')
@@ -138,6 +138,23 @@ def preview(root):
             'untracked': names, 'truncated': len(tracked) > 524288}
 
 
+def file_list(root):
+    # Never follow directory links or disclose internal credential/session metadata.
+    result=[];visited=0
+    for directory, dirs, files, descriptor in os.fwalk(root, follow_symlinks=False):
+        visited+=1
+        if visited>10000: break
+        dirs[:] = sorted(d for d in dirs if d not in ('.git','.codex_cpp','.codex-cpp') and not stat.S_ISLNK(os.stat(d,dir_fd=descriptor,follow_symlinks=False).st_mode))
+        if len(Path(directory).relative_to(root).parts)>64: dirs[:]=[]
+        for name in sorted(files):
+            info=os.stat(name,dir_fd=descriptor,follow_symlinks=False)
+            if name in ('.git','.codex_cpp','.codex-cpp') or not stat.S_ISREG(info.st_mode) or info.st_nlink!=1: continue
+            result.append(str(Path(directory,name).relative_to(root)))
+            if len(result)>=5000: return result
+    return result
+
+
+
 def main():
     if os.getuid() == 0:
         raise ValueError('Git worker cannot run as root')
@@ -146,6 +163,12 @@ def main():
         _,hard=resource.getrlimit(kind);limit=maximum if hard==resource.RLIM_INFINITY else min(maximum,hard)
         resource.setrlimit(kind,(limit,limit))
     operation, *args = sys.argv[1:]
+    if operation=='settings':
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('gateway',Path(__file__).with_name('gateway.py'))
+        gateway=importlib.util.module_from_spec(spec);spec.loader.exec_module(gateway)
+        args,secrets=gateway.agent_settings(Path.home()/'.config/codex-server',os.getuid())
+        output({'args':args,'secrets':secrets});return
     if operation=='agent':
         root=Path(args[0]);os.chdir(root)
         os.execve('/usr/local/bin/codex-cpp', ['/usr/local/bin/codex-cpp','--root',str(root)]+args[1:], dict(os.environ))
@@ -199,6 +222,8 @@ def main():
             output({'agent':os.access('/usr/local/bin/codex-cpp',os.X_OK),'git':bool(shutil.which('git')),'sandbox':probe.returncode==0})
         elif operation == 'diff':
             output(preview(root))
+        elif operation == 'files':
+            output({'files':file_list(root)})
         elif operation == 'read':
             output({'path':args[1],'text':safe_read(root,args[1]).decode(errors='replace')})
         elif operation == 'refs':

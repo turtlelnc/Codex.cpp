@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,project 
 CREATE TABLE IF NOT EXISTS decisions(id TEXT PRIMARY KEY,project TEXT,actor INTEGER,allow INTEGER);
 CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
 ''')
+        if 'audience' not in [r[1] for r in self.db.execute('PRAGMA table_info(events)')]:
+            self.db.execute('ALTER TABLE events ADD COLUMN audience INTEGER')
+        self.db.execute('CREATE TABLE IF NOT EXISTS personal_sessions(project TEXT, uid INTEGER, session TEXT, PRIMARY KEY(project,uid))')
         self.active, self.pending, self.children = {}, {}, {}
         # Unknown execution outcomes must never be replayed automatically after a restart.
         interrupted = self.db.execute("SELECT id,project,actor FROM jobs WHERE status='running'").fetchall()
@@ -98,8 +101,12 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
     def event(self, project, uid, kind, data=None, owner_only=False):
         with self.lock:
             payload = {'type': kind, **(data or {})}
-            self.db.execute('INSERT INTO events(project,actor,created,data,owner_only) VALUES(?,?,?,?,?)',
-                            (project, uid, time.time(), encoded(payload), int(owner_only)))
+            job = (data or {}).get('job')
+            row = self.db.execute('SELECT kind FROM jobs WHERE id=?', (job,)).fetchone() if job else None
+            audience = uid if row and row[0].startswith('personal_') else None
+            payload['scope'] = 'personal' if audience is not None else 'shared'
+            self.db.execute('INSERT INTO events(project,actor,created,data,owner_only,audience) VALUES(?,?,?,?,?,?)',
+                            (project, uid, time.time(), encoded(payload), int(owner_only), audience))
 
     def environment(self, user, actor, secrets=None):
         env = gateway.clean_environment(Path(user.pw_dir), self.user(actor).pw_name, secrets or {})
@@ -231,7 +238,8 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
             with self.lock:
                 self.db.execute('INSERT INTO configuration(project,data) VALUES(?,?) ON CONFLICT(project) DO UPDATE SET data=excluded.data',
                                 (project,encoded({'settings':settings,'secrets':secrets})))
-                self.event(project, uid, 'credentials.updated', {'variables': sorted(secrets)})
+                if not project.startswith('personal:'):
+                    self.event(project, uid, 'credentials.updated', {'variables': sorted(secrets)})
         return {'configured': True, 'variables': sorted(secrets)}
 
     def personal_path(self, uid, project):
@@ -257,7 +265,7 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                 raise ValueError('Project queue is full')
             job = uuid.uuid4().hex
             self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,'queued',?)", (job, project, uid, rid, kind, text, time.time()))
-            self.event(project, uid, 'task.queued', {'job': job, 'kind': kind, **({'text': data['text']} if kind == 'send' else {})})
+            self.event(project, uid, 'task.queued', {'job': job, 'kind': kind, **({'text': data['text']} if kind in ('send', 'personal_send') else {})})
             self.start_worker(project)
             return {'job': job, 'status': 'queued'}
 
@@ -308,7 +316,14 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
         worker_uid = pwd.getpwnam(info['worker']).pw_uid
         home, shared, bare = self.paths(project)
         personal = self.personal_path(uid, project)
-        if kind in ('send', 'login'):
+        if kind in ('send', 'login', 'personal_send', 'personal_login'):
+            if kind in ('personal_send','personal_login'):
+                if self.personal_busy(uid, project):
+                    raise ValueError('Exit the SSH personal Agent before using its web session')
+                if not personal.exists():
+                    raise ValueError('Prepare your personal workspace first')
+                worker_uid = uid
+
             return self.agent(project, job, uid, worker_uid, kind, data)
         if kind in ('publish', 'sync') and self.personal_busy(uid, project):
             raise ValueError('Exit the personal Agent with /quit before publishing or synchronizing')
@@ -328,10 +343,20 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
     def agent(self, project, job, actor, worker_uid, kind, data):
         _, shared, _ = self.paths(project)
         with self.lock:
-            args, secrets = self.settings(project)
-            resume = self.project(project)['session']
+            if kind in ('personal_send','personal_login'):
+                shared = self.personal_path(actor, project)
+                if self.db.execute('SELECT 1 FROM configuration WHERE project=?', ('personal:'+str(actor),)).fetchone():
+                    args, secrets = self.settings('personal:'+str(actor))
+                else:
+                    personal_settings = self.git(actor,actor,'settings',self.personal_path(actor,project))
+                    args,secrets=personal_settings['args'],personal_settings['secrets']
+                row = self.db.execute('SELECT session FROM personal_sessions WHERE project=? AND uid=?',(project,actor)).fetchone()
+                resume = row[0] if row else ''
+            else:
+                args, secrets = self.settings(project)
+                resume = self.project(project)['session']
         command = ['/usr/bin/python3', '-I', str(WORKER), 'agent', str(shared)]
-        if kind == 'login':
+        if kind in ('login','personal_login'):
             command += ['--provider', 'codex', '--login']
         else:
             command += ['--json', '--sandbox', 'workspace-write', '--approval', 'on-request'] + args
@@ -372,8 +397,8 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                     while b'\n' in buffer:
                         line, _, remainder = buffer.partition(b'\n')
                         buffer = bytearray(remainder)
-                        if kind == 'login':
-                            self.event(project, actor, 'login.notice', {'job': job, 'text': line.decode(errors='replace')}, owner_only=True)
+                        if kind in ('login','personal_login'):
+                            self.event(project, actor, 'login.notice', {'job': job, 'text': line.decode(errors='replace')}, owner_only=kind=='login')
                             continue
                         try:
                             event = json.loads(line)
@@ -384,10 +409,13 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                         with self.lock:
                             session = event.get('session_id', '')
                             if re.fullmatch(r'session-[A-Za-z0-9_-]+', session):
-                                self.db.execute('UPDATE projects SET session=? WHERE id=?', (session, project))
+                                if kind in ('personal_send','personal_login'):
+                                    self.db.execute('INSERT INTO personal_sessions VALUES(?,?,?) ON CONFLICT(project,uid) DO UPDATE SET session=excluded.session',(project,actor,session))
+                                else:
+                                    self.db.execute('UPDATE projects SET session=? WHERE id=?', (session, project))
                             if event['type'] == 'approval.requested':
                                 approval = uuid.uuid4().hex
-                                self.pending[project] = {'id': approval, 'job': job, 'created': time.monotonic(), 'process': process}
+                                self.pending[project] = {'id': approval, 'job': job, 'created': time.monotonic(), 'process': process, 'private_actor':actor if kind.startswith('personal_') else None, 'tool':event.get('payload',{})}
                                 self.event(project, actor, 'approval.pending', {'approval': approval, 'job': job, 'tool': event.get('payload', {})})
                             else:
                                 self.event(project, actor, 'agent.event', {'job': job, 'event': event})
@@ -425,6 +453,8 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                     return {'recorded': True, 'duplicate': True}
                 raise ValueError('Approval already consumed by a member')
             pending = self.pending.get(project)
+            if pending and pending.get('private_actor') not in (None,uid):
+                raise ValueError('Only the personal session owner can approve this task')
             if not pending or pending['id'] != approval or pending['process'].poll() is not None:
                 raise ValueError('Approval is stale; refresh project events')
             self.db.execute('INSERT INTO decisions VALUES(?,?,?,?)', (approval, project, uid, int(allow)))
@@ -463,6 +493,8 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
             return {'updated': True}
         if op == 'configure':
             return self.configure(uid, project, request)
+        if op == 'personal_configure':
+            return self.configure(uid, 'personal:'+str(uid), request)
         if op == 'approve':
             return self.approve(uid, project, request)
         if op == 'events':
@@ -471,11 +503,11 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                 raise ValueError('Invalid event cursor')
             result=[];cursor=after;size=0
             with self.lock:
-                rows=self.db.execute('SELECT seq,actor,created,data,owner_only FROM events WHERE project=? AND seq>? ORDER BY seq LIMIT 100',(project,after))
-                for seq,actor,created,data,private in rows:
+                rows=self.db.execute('SELECT seq,actor,created,data,owner_only,audience FROM events WHERE project=? AND seq>? ORDER BY seq LIMIT 100',(project,after))
+                for seq,actor,created,data,private,audience in rows:
                     if size+len(data.encode())>3*1024*1024 and result:break
                     cursor=seq
-                    if not private or uid==info['owner']:
+                    if (not private or uid==info['owner']) and audience in (None,uid):
                         item={'seq':seq,'actor':self.user(actor).pw_name,'time':created,**json.loads(data)}
                         result.append(item);size+=len(data.encode())
             return {'events':result,'cursor':cursor}
@@ -486,6 +518,16 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
         if op=='check':
             checks=self.git(worker_uid,uid,'probe',shared)
             return {'project':project,'checks':checks,'ready':all(checks.values())}
+        if op in ('files', 'personal_files', 'personal_read', 'personal_diff'):
+            personal_op = op.startswith('personal_')
+            root = self.personal_path(uid, project) if personal_op else shared
+            operation = op.removeprefix('personal_')
+            args = [root]
+            if operation == 'read':
+                name = request.get('path')
+                if not isinstance(name,str) or len(name)>1024: raise ValueError('Invalid file path')
+                args += [name]
+            return self.git(uid if personal_op else worker_uid, uid, operation, *args)
         if op == 'diff':
             return self.git(worker_uid, uid, 'diff', shared)
         if op == 'read':
@@ -495,13 +537,14 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
             return self.git(worker_uid, uid, 'read', shared, path)
         if op == 'status':
             with self.lock:
-                jobs = self.db.execute('SELECT id,actor,kind,status FROM jobs WHERE project=? ORDER BY rowid DESC LIMIT 25', (project,)).fetchall()
+                jobs = self.db.execute("SELECT id,actor,kind,status FROM jobs WHERE project=? AND (kind NOT LIKE 'personal_%' OR actor=?) ORDER BY rowid DESC LIMIT 25", (project,uid)).fetchall()
                 members = [self.user(row[0]).pw_name for row in self.db.execute('SELECT uid FROM members WHERE project=? ORDER BY uid', (project,))]
                 pending = self.pending.get(project)
             return {'owner': self.user(info['owner']).pw_name, 'members': members,
                     'member_ids':{self.user(row[0]).pw_name:row[0] for row in self.db.execute('SELECT uid FROM members WHERE project=?',(project,))}, 'blocked': bool(info['blocked']),
                     'branches': self.git(worker_uid, uid, 'refs', bare), 'shared': self.git(worker_uid, uid, 'status', shared),
-                    'approval': pending['id'] if pending else None,
+                    'approval': pending['id'] if pending and pending.get('private_actor') in (None,uid) else None,
+                    'approval_details': pending.get('tool') if pending and pending.get('private_actor') in (None,uid) else None,
                     'jobs': [{'job': job, 'actor': self.user(actor).pw_name, 'kind': kind, 'status': status} for job, actor, kind, status in jobs]}
         if op == 'recover':
             alive = subprocess.run(['/usr/bin/pgrep', '-u', str(worker_uid)], stdout=subprocess.DEVNULL)
@@ -518,9 +561,9 @@ CREATE TABLE IF NOT EXISTS configuration(project TEXT PRIMARY KEY,data TEXT);
                 self.event(project, uid, 'project.recovered', {'head': state['head']})
                 self.start_worker(project)
             return {'recovered':True,'head':state['head'],'changes':state['changes']}
-        if op in ('send', 'publish', 'sync', 'checkpoint', 'merge', 'login'):
+        if op in ('send', 'personal_send', 'personal_login', 'publish', 'sync', 'checkpoint', 'merge', 'login'):
             data = {}
-            if op == 'send':
+            if op in ('send','personal_send'):
                 text = request.get('text')
                 if not isinstance(text, str) or not text.strip() or len(text.encode()) > 64000 or '\0' in text:
                     raise ValueError('Message must contain 1..64000 bytes')
@@ -551,7 +594,7 @@ class Handler(socketserver.StreamRequestHandler):
         self.connection.settimeout(180)
         peer = self.connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i'))
         _, uid, _ = struct.unpack('3i', peer)
-        if not self.server.coordinator.allowed(uid):
+        if not self.server.coordinator.allowed(uid) and uid != self.server.web_uid:
             self.wfile.write(b'{"ok":false,"error":"Authenticated server account required"}\n');return
         try:
             line = self.rfile.readline(1024*1024 + 1)
@@ -560,6 +603,14 @@ class Handler(socketserver.StreamRequestHandler):
             request = json.loads(line)
             if not isinstance(request, dict):
                 raise ValueError('Expected a JSON request')
+            if request.get('op') == 'web.dispatch':
+                if uid != self.server.web_uid:
+                    raise ValueError('Web relay identity denied')
+                username = request.get('username')
+                if not isinstance(username,str): raise ValueError('Invalid web identity')
+                uid = pwd.getpwnam(username).pw_uid
+                request = request.get('request')
+                if not isinstance(request,dict) or request.get('op')=='web.dispatch': raise ValueError('Invalid web request')
             value = {'ok': True, 'result': self.server.coordinator.dispatch(uid, request)}
         except (ValueError, KeyError, TypeError) as error:
             value = {'ok': False, 'error': str(error) if isinstance(error, ValueError) and not isinstance(error, json.JSONDecodeError) else 'Invalid request'}
@@ -572,7 +623,8 @@ class Server(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     request_queue_size = 32
 
-    def __init__(self, path, coordinator):
+    def __init__(self, path, coordinator, web_uid=None):
+        self.web_uid = web_uid
         self.coordinator = coordinator
         self.slots = threading.BoundedSemaphore(32)
         super().__init__(path, Handler)
@@ -592,6 +644,7 @@ class Server(socketserver.ThreadingUnixStreamServer):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--web-user', help='Dedicated trusted HTTP gateway Unix account (never a project member)')
     parser.add_argument('--socket', default='/run/codex-collab/control.sock')
     parser.add_argument('--state', default='/var/lib/codex-collab')
     parser.add_argument('--projects', default='/srv/codex-projects')
@@ -606,7 +659,10 @@ def main():
     if path.exists():
         raise ValueError('Socket already exists; stop the previous service or remove a verified stale socket')
     coordinator = Coordinator(args.state, args.projects)
-    with Server(str(path), coordinator) as server:
+    web_uid = pwd.getpwnam(args.web_user).pw_uid if args.web_user else None
+    if web_uid is not None and (web_uid == 0 or coordinator.allowed(web_uid)):
+        raise ValueError('Web relay must use a dedicated non-root account outside codex-remote')
+    with Server(str(path), coordinator, web_uid) as server:
         path.chmod(0o666)  # Every RPC is authenticated using kernel SO_PEERCRED, never a supplied actor name.
         try:
             server.serve_forever()

@@ -335,9 +335,9 @@ std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
 static std::function<void(const std::string&)> session_observer;
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -782,6 +782,8 @@ std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 Usage:
   codex-cpp [options] [prompt...]
   codex-cpp -i [options]
+  codex-cpp web [--root DIR] [--port PORT] [provider options]
+  codex-cpp serve --origin https://codex.example.com [--port PORT]
   codex-cpp connect USER@HOST [--project NAME] [--port PORT] [--check | --login]
 
 Provider/API options:
@@ -926,7 +928,9 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
   << "provider:  " << opt.provider << " / " << api_style_name(api.style)<< " / " << api.model << "\n" << "sandbox:   " << sandbox_name(opt.policy.sandbox)<< "\n" << "type /help for commands\n\n";
 }
 #include "codex_remote.inc"
+#include "codex_web.inc"
 int main(int argc,char** argv){
+  if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
   if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
 #if !defined(_WIN32)
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
@@ -1042,7 +1046,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   if(apply_steering()<0)return 3;
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
-  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json)return;
+  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
   const bool delivery_reminder=design_mode && (!turn_policy.can_write() || (!design_review->pending && (design_review->rounds || design_review->skipped)));
@@ -1060,7 +1064,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
     }else if(!opt.json)std::cout<<"[interrupted]\n";
     return 0; } session.emit(EventKind::Error,"{\"message\":\"" + json_escape(err)+ "\"}");if(tui){tui->add_error(err);tui->render(); }else{ std::cerr << "[error] " << err << '\n'; } return 3;
   }
-  session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\"}");
+  session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\",\"text\":\""+json_escape(response->text.value_or(""))+"\"}");
   if(!response->calls.empty()){if(!streamed_text.empty()&& !opt.json){if(tui)tui->finish_assistant_stream(streamed_text);else std::cout<<'\n'; }
     if(response->text && !response->text->empty())session.record_item("{\"role\":\"assistant\",\"content\":\""+json_escape(*response->text)+"\"}");
     for(const auto& c:response->calls)if(!session.record_item("{\"type\":\"function_call\",\"call_id\":\""+json_escape(c.call_id)+
