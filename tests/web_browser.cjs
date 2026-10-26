@@ -17,6 +17,10 @@ async function ready(){for(let i=0;i<100;i++){try{if((await fetch('http://127.0.
  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('http://127.0.0.1:18765/');await page.locator('#password').fill(fs.readFileSync(token,'utf8').trim());await page.locator('#login-form button').click();await page.locator('#workspace').waitFor({state:'visible'});
  await page.getByRole('button',{name:'hello.txt',exact:true}).click();await page.waitForFunction(()=>document.getElementById('file-content').textContent.includes('Hello browser'));
+ await page.locator('#model-chip').click();await page.getByRole('button',{name:'刷新模型列表',exact:true}).waitFor();
+ await page.waitForFunction(()=>document.getElementById('popover').textContent.includes('fixture'));
+ if(await page.locator('#popover').textContent().then(t=>t.includes('text-embedding-fixture')))throw Error('Non-chat model leaked into catalog');
+ await page.keyboard.press('Escape');
  await page.locator('#prompt').fill('FIRST');await page.locator('#send').click();await page.locator('#approval').waitFor({state:'visible',timeout:20000});
  await page.locator('#allow').click();await page.waitForFunction(()=>document.getElementById('messages').textContent.includes('DONE FIRST'),{},{timeout:20000});
  if(fs.readFileSync(path.join(project,'queue.txt'),'utf8')!=='first')throw Error('Approved write missing');

@@ -776,7 +776,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
-std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
@@ -811,6 +811,7 @@ Agent options:
   --wait-quota                  wait for confirmed Codex quota reset
   --quota                       show current Codex quota
   --list-sessions               print known local session IDs
+  --list-models                 print the provider's model list as JSON
   --json                        echo rollout events as JSONL
   --auto                        never request approval
   --approval on-request|never
@@ -846,7 +847,7 @@ static std::optional<Options> parse_options(int argc,char** argv,std::string& er
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
-  if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
   if(a == "--continue"){o.continue_turn=true;continue;}
@@ -946,6 +947,8 @@ if(!configure_provider(opt,err)){std::cerr<<err<<'\n';return 2;}
 
 if((opt.wait_quota || opt.quota) && opt.provider!="codex"){std::cerr<<"--quota and --wait-quota require --provider codex\n";return 2;}
 if(opt.quota){auto quota=read_codex_quota(err);if(!quota){std::cerr<<err<<'\n';return 3;}std::cout<<quota->report;return 0;}
+if(opt.list_models){ApiClient lister;lister.api_key=opt.no_api_key?"":getenv_or(opt.api_key_env.c_str());lister.base_url=opt.base_url;lister.style=opt.api_style;lister.no_api_key=opt.no_api_key;lister.chatgpt_auth=opt.provider=="codex";while(!lister.base_url.empty()&&lister.base_url.back()=='/')lister.base_url.pop_back();
+  auto models=read_models(lister,err);if(!models){std::cerr<<err<<'\n';return 3;}std::string out="[";for(const auto& m:*models){if(out.size()>1)out+=",";out+="{\"id\":\""+json_escape(m.id)+"\",\"description\":\""+json_escape(m.description)+"\",\"default_effort\":\""+json_escape(m.default_effort)+"\",\"efforts\":[";for(size_t i=0;i<m.efforts.size();++i)out+=(i?",\"":"\"")+json_escape(m.efforts[i])+"\"";out+="]}";}std::cout<<out<<"]\n";return 0;}
 std::error_code ec;opt.root = fs::absolute(opt.root,ec); if(ec || !fs::exists(opt.root)){std::cerr << "workspace does not exist: " << opt.root << '\n';return 2;}
 if(opt.list_sessions){list_sessions(opt.root);return 0;}if(opt.login){ if(opt.provider != "codex"){std::cerr << "--login requires --provider codex\n";return 2;}
   return own_device_login(err)?(std::cout<<"Signed in.\n",0):(std::cerr<<err<<'\n',3);

@@ -80,6 +80,27 @@ class HTTPTests(unittest.TestCase):
         self.assertFalse(self.app.config_path.stat().st_mode&0o077)
         self.assertNotIn(b'fixture-not-a-real-key',self.request('/api/rpc',{'op':'snapshot'})[1])
         request['settings']['api_key_env']='LD_PRELOAD';self.assertEqual(self.request('/api/rpc',request)[0],400)
+    def test_models_cache_refresh_and_credential_rotation(self):
+        b=self.app.bridge
+        done=SimpleNamespace(returncode=0,stdout='[{"id":"fixture","efforts":["low","high"]}]')
+        with patch.object(web.module('local_agent').subprocess,'run',return_value=done) as query:
+            b.secret_values={'OPENAI_API_KEY':'fixture-a'}
+            self.assertEqual(b.list_models()['models'][0]['id'],'fixture')
+            b.list_models();self.assertEqual(query.call_count,1)
+            b.list_models(force=True);self.assertEqual(query.call_count,2)
+            b.secret_values={'OPENAI_API_KEY':'fixture-b'}
+            b.list_models();self.assertEqual(query.call_count,3)
+
+    def test_reasoning_none_omits_option_and_busy_permissions_refused(self):
+        b=self.app.bridge
+        b.set_reasoning('high');self.assertIn('--reasoning',b.options)
+        b.set_reasoning('none');self.assertNotIn('--reasoning',b.options)
+        b.busy=True
+        for change in (lambda:b.set_permission('full'),lambda:b.set_reasoning('low')):
+            with self.assertRaises(RuntimeError):change()
+        b.busy=False
+        with self.assertRaises(ValueError):b.set_permission('unknown')
+
     def test_retry_does_not_execute_twice_or_change_prompt(self):
         b=self.app.bridge
         with patch.object(b,'_run') as run:

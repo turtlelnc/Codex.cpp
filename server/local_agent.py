@@ -8,6 +8,7 @@ import secrets
 import stat
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +45,15 @@ def load_token(path):
     return token
 
 
+REASONING_EFFORTS = ("", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
+PERMISSIONS = {
+    "readonly": ("read-only", "on-request"),
+    "workspace": ("workspace-write", "on-request"),
+    "full": ("danger-full-access", "never"),
+}
+
+
 class Bridge:
     def __init__(self, root, binary, token, options):
         self.root, self.binary, self.token, self.options = root, binary, token, options
@@ -61,6 +71,7 @@ class Bridge:
         self.submissions = {}
         self.process, self.busy = None, False
         self.model = self._option_value("--model") or ""
+        self.permission = "workspace"
         if self.state_path.exists():
             saved = json.loads(self.state_path.read_text(encoding="utf-8"))
             if isinstance(saved, dict):
@@ -177,6 +188,7 @@ class Bridge:
             return {"session_id": self.session_id, "busy": self.busy,
                     "messages": self.messages[-200:], "events": self.events[-100:],
                     "pending": self.pending, "error": self.error, "model": self.model,
+                    "permission": self.permission, "reasoning": self._option_value("--reasoning") or "",
                     "sessions": self.available_sessions()}
 
     def _option_value(self, name):
@@ -185,17 +197,63 @@ class Bridge:
         except (ValueError, IndexError):
             return None
 
+    def _replace_option(self, name, value):
+        self.options = [item for index, item in enumerate(self.options)
+                        if item != name and (index == 0 or self.options[index - 1] != name)]
+        if value:
+            self.options += [name, value]
+
     def set_model(self, model):
         if not isinstance(model, str) or len(model) > 200 or (model and not re.fullmatch(r"[A-Za-z0-9._:/-]+", model)):
             raise ValueError("model must contain only letters, numbers, '.', '_', ':', '/', or '-'")
         with self.lock:
             if self.busy:
                 raise RuntimeError("cannot change model while a turn is running")
-            self.options = [value for index, value in enumerate(self.options)
-                            if value != "--model" and (index == 0 or self.options[index - 1] != "--model")]
-            if model:
-                self.options += ["--model", model]
+            self._replace_option("--model", model)
             self.model = model
+
+    def set_reasoning(self, effort):
+        if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+            raise ValueError("unknown reasoning effort")
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("cannot change reasoning effort while a turn is running")
+            self._replace_option("--reasoning", "" if effort == "none" else effort)
+
+    def list_models(self, force=False):
+        with self.lock:
+            key = (tuple(self.options), hashlib.sha256(json.dumps(self.secret_values, sort_keys=True).encode()).hexdigest())
+            cached = getattr(self, "_models_cache", None)
+            if not force and cached and cached[0] == key and time.time() - cached[1] < 120:
+                return {"models": cached[2], "error": ""}
+            command = [str(self.binary), "--list-models"] + list(self.options)
+            if "--model" not in self.options:
+                command += ["--model", "list-models"]
+            env = {**os.environ, **self.secret_values}
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=25, env=env,
+                                  stdin=subprocess.DEVNULL, cwd=str(self.root))
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"models": [], "error": str(error)[:300]}
+        if done.returncode:
+            return {"models": [], "error": (done.stderr.strip().splitlines() or ["model list unavailable"])[-1][:300]}
+        try:
+            models = [{"id": str(m["id"]), "description": str(m.get("description", "")),
+                       "default_effort": str(m.get("default_effort", "")), "efforts": [str(e) for e in m.get("efforts", [])]}
+                      for m in json.loads(done.stdout) if isinstance(m, dict) and m.get("id")]
+        except (ValueError, TypeError):
+            return {"models": [], "error": "invalid model list"}
+        with self.lock:
+            self._models_cache = (key, time.time(), models)
+        return {"models": models, "error": ""}
+
+    def set_permission(self, permission):
+        if permission not in PERMISSIONS:
+            raise ValueError("unknown permission mode")
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("cannot change permissions while a turn is running")
+            self.permission = permission
 
     def select_session(self, session_id):
         with self.lock:
@@ -296,8 +354,10 @@ class Bridge:
             with self.lock: self.busy,self.process=False,None
 
     def _run(self, prompt):
+        with self.lock:
+            sandbox, approval = PERMISSIONS[self.permission]
         command = [str(self.binary), "--json", "--root", str(self.root),
-                   "--sandbox", "workspace-write", "--approval", "on-request"]
+                   "--sandbox", sandbox, "--approval", approval]
         command += self.options
         with self.lock:
             if self.session_id:

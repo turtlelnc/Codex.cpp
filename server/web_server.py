@@ -163,6 +163,15 @@ class App:
         if op == 'model':
             b.set_model(request.get('model'))
             return {'updated':True}
+        if op == 'models':
+            if not isinstance(request.get('refresh',False),bool): raise ValueError('Invalid refresh flag')
+            return b.list_models(request.get('refresh',False))
+        if op == 'reasoning':
+            b.set_reasoning(request.get('effort'))
+            return {'updated':True}
+        if op == 'permission':
+            b.set_permission(request.get('permission'))
+            return {'updated':True}
         if op in ('read', 'files', 'diff', 'status'):
             worker = module('collab_worker')
             if op == 'read': return {'text':worker.safe_read(b.root, request.get('path','')).decode(errors='replace')}

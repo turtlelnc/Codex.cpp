@@ -60,3 +60,7 @@ node tests/web_browser.cjs ./codex-cpp
 浏览器测试额外需要 Playwright 和 Chromium。测试不会自动安装这些依赖。
 `handoff/previews/` 是测试时的界面截图，`handoff/VALIDATION.md` 是验证记录。
 包内不含 Git 数据、登录凭据、真实会话、构建产物或编译器工具链。
+
+## 后续合并说明
+
+上传的 Codex.cpp-web.zip 已合入网页重做及本地模型目录功能。模型查询入口为 `codex-cpp --list-models`，网页通过 `models`、`reasoning`、`permission` 操作调用本地适配层。服务器模型目录尚未接入，详见 server/WEB.md 末节。handoff/SNAPSHOT.json 和旧截图记录初次交接快照，不是当前源码的校验清单。

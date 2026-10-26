@@ -1,18 +1,150 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex.cpp Workspace</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Codex.cpp Workspace</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
 <body>
-<section id="login" class="login"><form id="login-form" class="login-card"><span class="brand">C<span class="accent">.</span></span><h1>进入你的工作区</h1><p id="login-note">连接 Codex.cpp，继续开发。</p><label>用户名<input id="username" autocomplete="username"></label><label id="password-label">密码<input id="password" type="password" required autocomplete="current-password"></label><button class="primary">登录</button><p id="login-error" role="alert"></p></form></section>
+
+<section id="login" class="login">
+  <form id="login-form" class="login-card">
+    <span class="brand">C<span class="accent">.</span></span>
+    <h1>进入你的工作区</h1>
+    <p id="login-note">连接 Codex.cpp，继续开发。</p>
+    <label>用户名<input id="username" autocomplete="username"></label>
+    <label id="password-label"><span>密码</span><input id="password" type="password" required autocomplete="current-password"></label>
+    <button class="primary">登录</button>
+    <p id="login-error" role="alert"></p>
+  </form>
+</section>
+
 <div id="workspace" hidden>
-<aside class="sidebar"><a class="logo" href="/">C<span class="accent">.</span> <span>Codex.cpp</span></a><div class="sidebar-heading">工作区 <button id="create-project" aria-label="创建项目">＋</button></div><nav id="projects" aria-label="项目"></nav><div class="sidebar-footer"><span id="identity"></span><span id="connection" role="status">连接中</span><button id="logout">退出登录</button></div></aside>
-<main><header><div><span class="eyebrow" id="mode-label">WORKSPACE</span><h1 id="project-title">选择项目</h1></div><div class="header-actions"><button id="sessions-button" hidden>会话</button><button id="settings-button">设置</button></div></header>
-<div id="notice" role="status" hidden></div>
-<div class="workspace-body"><section class="conversation"><div class="conversation-heading"><div class="segmented" id="scope-controls"><button id="shared-tab" aria-pressed="true">共同会话</button><button id="personal-tab" aria-pressed="false">个人会话</button></div><span id="queue-state"></span></div>
-<div id="messages" aria-live="polite"><div class="empty"><h2>从一个任务开始</h2><p>描述目标、约束和期望的结果。</p></div></div>
-<div id="approval" hidden><strong>此操作需要批准</strong><pre id="approval-details"></pre><div class="actions"><button id="deny">拒绝</button><button id="allow" class="primary">批准执行</button></div></div>
-<form id="composer"><label class="sr-only" for="prompt">任务内容</label><textarea id="prompt" rows="3" placeholder="描述你想完成的任务…" required maxlength="60000"></textarea><div class="composer-footer"><span id="composer-hint">任务在工作区中执行</span><button class="primary" id="send">发送任务 ↗</button></div></form></section>
-<aside class="inspector"><div class="tabs"><button data-panel="files" aria-pressed="true">文件</button><button data-panel="changes" aria-pressed="false">变更</button><button data-panel="team" aria-pressed="false">团队</button></div>
-<section id="files-panel"><button id="refresh-files">刷新文件</button><div id="file-list"></div><h3 id="file-title"></h3><pre id="file-content" tabindex="0"></pre></section>
-<section id="changes-panel" hidden><div class="actions wrap"><button id="refresh-diff">刷新 Diff</button><button id="checkpoint">提交共同修改</button><button id="publish">发布个人分支</button><button id="sync">同步共同分支</button><button id="merge">合并成员分支</button></div><pre id="diff-content" tabindex="0">点击刷新查看当前修改。</pre><h3>任务队列</h3><div id="jobs"></div></section>
-<section id="team-panel" hidden><p id="owner"></p><div id="members"></div><button id="invite">邀请成员</button><button id="recover">恢复中断项目</button></section></aside></div></main></div>
-<dialog id="dialog"><form id="dialog-form"><div class="dialog-heading"><h2 id="dialog-title"></h2><button type="button" id="dialog-close" aria-label="关闭">×</button></div><div id="dialog-body"></div><p id="dialog-error" role="alert"></p><div class="actions"><button type="button" id="dialog-cancel">取消</button><button id="dialog-submit" class="primary">确认</button></div></form></dialog>
-</body></html>
+  <aside class="sidebar">
+    <a class="logo" href="/">C<span class="accent">.</span> <span>Codex.cpp</span></a>
+    <button id="new-chat" class="nav-item"><span aria-hidden="true">✎</span> 新对话</button>
+    <div class="sidebar-heading">
+      <span id="sidebar-heading-label">工作区</span>
+      <button id="create-project" aria-label="创建项目" title="创建项目">＋</button>
+    </div>
+    <nav id="projects" aria-label="项目"></nav>
+    <div class="sidebar-footer">
+      <span id="identity"></span>
+      <span id="connection" role="status" data-state="pending">连接中</span>
+      <button id="logout">退出登录</button>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <div class="header-title">
+        <button id="sidebar-toggle" aria-label="显示或隐藏侧栏" aria-pressed="true" title="侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+        <span class="eyebrow" id="mode-label">WORKSPACE</span>
+        <h1 id="project-title">选择项目</h1>
+      </div>
+      <div class="header-actions">
+        <button id="sessions-button" hidden>会话</button>
+        <button id="settings-button">设置</button>
+        <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-pressed="true" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
+      </div>
+    </header>
+    <div id="notice" role="status" hidden></div>
+
+    <div class="workspace-body">
+      <section class="conversation" aria-label="对话">
+        <div class="conversation-heading">
+          <div class="segmented" id="scope-controls" role="group" aria-label="会话范围">
+            <button id="shared-tab" aria-pressed="true">共同会话</button>
+            <button id="personal-tab" aria-pressed="false">个人会话</button>
+          </div>
+          <span id="queue-state" class="status-pill"></span>
+        </div>
+
+        <div id="messages" aria-live="polite">
+          <div class="empty"><h2>从一个任务开始</h2><p>描述目标、约束和期望的结果。</p></div>
+        </div>
+
+        <div id="approval" hidden role="alert">
+          <strong>此操作需要批准</strong>
+          <pre id="approval-details"></pre>
+          <div class="actions">
+            <button id="deny">拒绝</button>
+            <button id="allow" class="primary">批准执行</button>
+          </div>
+        </div>
+
+        <form id="composer">
+          <div id="popover" role="menu" hidden></div>
+          <div id="slash-menu" role="listbox" aria-label="斜杠命令" hidden></div>
+          <label class="sr-only" for="prompt">任务内容</label>
+          <textarea id="prompt" rows="3" placeholder="描述你想完成的任务…（Enter 发送，Shift + Enter 换行）" required maxlength="60000"></textarea>
+          <div class="composer-footer">
+            <div class="composer-tools">
+              <button type="button" id="permission-chip" class="chip" title="执行权限" hidden></button>
+              <button type="button" id="model-chip" class="chip" title="切换模型">模型</button>
+            </div>
+            <button class="primary" id="send" aria-label="发送任务" title="发送任务（Enter）">↑</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="inspector" aria-label="检查器">
+        <div class="tabs" role="group" aria-label="面板">
+          <button data-panel="files" aria-pressed="true">文件</button>
+          <button data-panel="changes" aria-pressed="false">变更<span id="diff-stat" class="diff-stat"></span></button>
+          <button data-panel="team" aria-pressed="false">团队</button>
+        </div>
+
+        <section id="files-panel">
+          <button id="refresh-files">刷新文件</button>
+          <div id="file-list"></div>
+          <h3 id="file-title"></h3>
+          <pre id="file-content" tabindex="0"></pre>
+        </section>
+
+        <section id="changes-panel" hidden>
+          <div class="actions wrap">
+            <button id="refresh-diff">刷新 Diff</button>
+            <button id="checkpoint">提交共同修改</button>
+            <button id="publish">发布个人分支</button>
+            <button id="sync">同步共同分支</button>
+            <button id="merge">合并成员分支</button>
+          </div>
+          <pre id="diff-content" tabindex="0">点击刷新查看当前修改。</pre>
+          <h3>任务队列</h3>
+          <div id="jobs"></div>
+        </section>
+
+        <section id="team-panel" hidden>
+          <p id="owner"></p>
+          <div id="members"></div>
+          <div class="actions wrap">
+            <button id="invite">邀请成员</button>
+            <button id="recover">恢复中断项目</button>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<dialog id="dialog">
+  <form id="dialog-form">
+    <div class="dialog-heading">
+      <h2 id="dialog-title"></h2>
+      <button type="button" id="dialog-close" aria-label="关闭">×</button>
+    </div>
+    <div id="dialog-body"></div>
+    <p id="dialog-error" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="dialog-cancel">取消</button>
+      <button id="dialog-submit" class="primary">确认</button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>
