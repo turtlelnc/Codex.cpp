@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Codex.cpp Workspace</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+
+<div id="workspace">
+  <button type="button" id="sidebar-backdrop" aria-label="关闭侧栏" tabindex="-1"></button>
+  <aside class="sidebar">
+    <a class="logo" href="/"><i class="logo-mark"></i>Codex.cpp</a>
+    <button id="new-chat" class="nav-item"><span aria-hidden="true">＋</span> 新会话</button>
+    <div class="sidebar-heading"><span>会话</span></div>
+    <nav id="projects" aria-label="会话"></nav>
+    <div class="sidebar-heading files-heading"><span>项目文件</span><button id="refresh-files" aria-label="刷新文件" title="刷新文件">↻</button></div>
+    <div id="tree" aria-label="项目文件"></div>
+    <div class="sidebar-footer">
+      <span id="connection" role="status" data-state="pending">连接中</span>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <div class="header-title">
+        <button id="sidebar-toggle" aria-label="显示或隐藏侧栏" aria-pressed="true" title="侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+        <h1 id="project-title">新会话</h1>
+        <span id="root-name" class="root-name"></span>
+      </div>
+      <div class="header-actions">
+        <span id="queue-state" class="status-pill" data-busy="false">就绪</span>
+        <button id="settings-button" title="模型提供商">提供商</button>
+        <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-pressed="true" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
+      </div>
+    </header>
+    <div id="notice" role="status" hidden></div>
+
+    <div class="workspace-body">
+      <section class="conversation" aria-label="对话">
+        <div id="messages" aria-live="polite"></div>
+
+        <form id="composer">
+          <div id="popover" role="menu" hidden></div>
+          <div id="slash-menu" role="listbox" aria-label="斜杠命令" hidden></div>
+          <label class="sr-only" for="prompt">任务内容</label>
+          <textarea id="prompt" rows="2" placeholder="描述你想完成的任务，输入 / 查看命令…" required maxlength="60000"></textarea>
+          <div class="composer-footer">
+            <div class="composer-tools">
+              <button type="button" id="permission-chip" class="chip" title="执行权限"></button>
+              <button type="button" id="model-chip" class="chip" title="切换模型">模型</button>
+            </div>
+            <button class="primary" id="send" aria-label="发送任务" title="发送（Enter）；运行中点击可停止">↑</button>
+          </div>
+        </form>
+        <p class="keys">Enter 发送 · Shift+Enter 换行 · Esc 关闭菜单</p>
+      </section>
+
+      <aside class="inspector" aria-label="检查器">
+        <div class="tabs" role="group" aria-label="面板">
+          <button data-panel="code" aria-pressed="true">代码</button>
+          <button data-panel="changes" aria-pressed="false">变更<span id="diff-stat" class="diff-stat"></span></button>
+          <button data-panel="terminal" aria-pressed="false">终端</button>
+        </div>
+
+        <section id="code-panel" class="panel">
+          <div id="file-view"><div class="none"><b>未打开文件</b>在左侧“项目文件”中选择一个文件，即可在这里查看和编辑</div></div>
+          <div id="editor" hidden>
+            <div class="editor-bar">
+              <span id="editor-path" class="editor-path"></span>
+              <span id="editor-state" class="editor-state"></span>
+              <button id="editor-reload" type="button" title="丢弃未保存的修改，重新读取磁盘内容">重新载入</button>
+              <button id="editor-save" type="button" class="primary" disabled title="保存（Ctrl/⌘+S）">保存</button>
+            </div>
+            <div class="editor-body">
+              <pre id="editor-gutter" class="editor-gutter" aria-hidden="true"></pre>
+              <div class="editor-stack">
+                <pre id="editor-hl" class="editor-hl" aria-hidden="true"></pre>
+                <textarea id="editor-text" class="editor-text" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off" aria-label="文件内容"></textarea>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="changes-panel" class="panel" hidden>
+          <div id="pending-diff"></div>
+          <div class="panel-bar"><span>工作区相对 HEAD 的修改</span><button id="refresh-diff">刷新</button></div>
+          <div id="diff-view"><div class="none"><b>暂无变更</b>Codex 修改代码前，补丁差异会显示在这里，供你审阅后再应用</div></div>
+        </section>
+
+        <section id="terminal-panel" class="panel" hidden>
+          <div id="term" class="term"><span class="term-empty">命令的输出会显示在这里</span></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<template id="empty-state">
+  <div class="empty">
+    <i class="empty-logo"></i>
+    <h2>今天想构建什么？</h2>
+    <p>Codex 会读取代码、运行命令，并在你批准后修改文件。</p>
+    <div class="sugg">
+      <button type="button" data-q="解释一下这个项目的结构">解释项目结构</button>
+      <button type="button" data-q="检查代码中可能的崩溃和边界问题，并给出修复">排查潜在崩溃</button>
+      <button type="button" data-q="为核心函数补充单元测试">补充单元测试</button>
+    </div>
+  </div>
+</template>
+
+<dialog id="dialog">
+  <form id="dialog-form">
+    <div class="dialog-heading">
+      <h2 id="dialog-title"></h2>
+      <button type="button" id="dialog-close" aria-label="关闭">×</button>
+    </div>
+    <div id="dialog-body"></div>
+    <p id="dialog-error" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="dialog-cancel">取消</button>
+      <button id="dialog-submit" class="primary">确认</button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>
