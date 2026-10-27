@@ -1,8 +1,0 @@
-{
-  "api": 1,
-  "id": "plain-ui",
-  "version": "1.0.0",
-  "description": "Independent terminal UI using the protected frontend protocol. Requires Python 3, no pip packages.",
-  "settings": {"python": "python3"},
-  "frontend": {"protocol": 1, "command": "${config.python}", "args": ["${plugin}/frontend.py"]}
-}

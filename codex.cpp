@@ -335,9 +335,9 @@ std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
 static std::function<void(const std::string&)> session_observer;
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -361,7 +361,7 @@ bool replace_items(const std::vector<std::string>& compacted){const fs::path sta
 }
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
   << "\",\"session_id\":\"" << json_escape(id)<< "\",\"type\":\"" << event_name(kind)<< "\",\"payload\":" << payload << "}";
-  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n';if(session_observer)session_observer(line.str());
+  std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n'<<std::flush;if(session_observer)session_observer(line.str());
 }
 void append_transcript(const std::string& text){transcript += text;std::ofstream f(transcript_path,std::ios::binary | std::ios::trunc); if(f)f << transcript;
 }
@@ -481,13 +481,68 @@ ToolResult run(const std::string& args,const fs::path& root)override{auto wanted
   for(const auto&[name,path]:available_skills(root))if(name==*wanted)return{0,slurp(path,100000)}; return{2,"ERROR: skill not found: "+*wanted};
 }
 };
+// Process-local history deliberately stores the user's working bytes, never Git HEAD.
+class FileUndoHistory {
+  struct Entry { fs::path root,path,resolved; bool existed; std::string before,after; };
+  std::vector<Entry> entries;
+  static constexpr size_t limit=16*1024*1024;
+  static bool read(const fs::path& path,std::string& bytes){
+    std::error_code ec;const auto size=fs::file_size(path,ec);if(ec||size>limit)return false;
+    std::ifstream input(path,std::ios::binary);if(!input)return false;
+    bytes.assign(std::istreambuf_iterator<char>(input),{});
+    return !input.bad()&&bytes.size()==size;
+  }
+public:
+  ToolResult write(const fs::path& root,const fs::path& path,const std::string& content){
+    std::error_code ec;
+    Entry entry{fs::weakly_canonical(root),fs::absolute(path).lexically_normal(),fs::weakly_canonical(path),false,{},content};
+    if(content.size()>limit)return {2,"ERROR: undo supports files up to 16 MiB"};
+    auto status=fs::symlink_status(path,ec);
+    if(ec&&ec!=std::errc::no_such_file_or_directory)return {2,"ERROR: cannot inspect undo target"};
+    if(fs::is_symlink(status))return {126,"DENIED: undo does not follow file symlinks"};
+    entry.existed=fs::exists(status);
+    if(entry.existed&&(!fs::is_regular_file(status)||!read(path,entry.before)))
+      return {2,"ERROR: cannot checkpoint file (must be readable and at most 16 MiB)"};
+    std::string error;
+    // Register before writing so even a partial write retains the original bytes.
+    entries.push_back(std::move(entry));
+    if(!write_all(path,content,error)){
+      auto& saved=entries.back();std::string actual;
+      if(read(path,actual))saved.after=std::move(actual);
+      return {2,"ERROR: "+error+"; original retained for /undo"};
+    }
+    size_t bytes=0;for(const auto& saved:entries)bytes+=saved.before.size()+saved.after.size();
+    while(entries.size()>1&&(entries.size()>20||bytes>32*1024*1024)){
+      bytes-=entries.front().before.size()+entries.front().after.size();entries.erase(entries.begin());
+    }
+    return {0,"OK: wrote "+std::to_string(content.size())+" bytes; /undo available"};
+  }
+  ToolResult undo(const fs::path& root){
+    if(entries.empty())return {0,"No file writes to undo in this process."};
+    const auto& saved=entries.back();std::error_code ec;
+    if(fs::weakly_canonical(root)!=saved.root)return {2,"Latest checkpoint belongs to another workspace."};
+    if(!within_root(root,saved.path)||sensitive_path(saved.path)||fs::weakly_canonical(saved.path)!=saved.resolved)
+      return {126,"DENIED: checkpoint path changed or is protected"};
+    auto status=fs::symlink_status(saved.path,ec);
+    if(ec||!fs::is_regular_file(status)||fs::hard_link_count(saved.path,ec)!=1||ec)
+      return {126,"DENIED: checkpoint target is missing, linked or not a regular file"};
+    std::string current;
+    if(!read(saved.path,current)||current!=saved.after)
+      return {2,"Undo refused: file changed since the recorded write; your edits were preserved."};
+    std::string error;
+    if(saved.existed){if(!write_all(saved.path,saved.before,error))return {2,"Undo failed: "+error};}
+    else if(!fs::remove(saved.path,ec)||ec)return {2,"Undo failed: cannot remove created file"};
+    const auto name=saved.path.filename().string();entries.pop_back();return {0,"Undid write_file: "+name};
+  }
+};
+static FileUndoHistory file_undo;
 class WriteFileTool final : public ToolRuntime{public: std::string name()const override{return "write_file";}bool mutates()const override{return true;} std::string spec_json()const override{
   return R"({"type":"function","name":"write_file","description":"Replace a text file inside the workspace with complete contents.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false},"strict":true})";
 }
 ToolResult run(const std::string& args,const fs::path& root)override{auto p = json_string_field(args,"path");auto c = json_string_field(args,"content");
   if(!p || !c)return{2,"ERROR: missing path/content"};fs::path t = root / *p;if(!within_root(root,t)||sensitive_path(t))return{2,"ERROR: path is outside the granted workspace or protected"};
   std::error_code ec;if(fs::exists(t,ec)&& fs::is_regular_file(t,ec)&& fs::hard_link_count(t,ec)>1) return{126,"DENIED: hardlinked target may modify an external file"};
-  if(ec)return{126,"DENIED: cannot inspect target: "+ec.message()};std::string err;if(!write_all(t,*c,err))return{2,"ERROR: " + err}; return{0,"OK: wrote " + std::to_string(c->size())+ " bytes to " + *p};
+  if(ec)return{126,"DENIED: cannot inspect target: "+ec.message()};return file_undo.write(root,t,*c);
 }
 };
 // A prompt-level policy cannot restrict a shell. The launcher must establish an
@@ -544,7 +599,7 @@ ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePol
   // Its mutating() marker is conservative for approval, not a reason to
   // suppress all shell commands before the OS policy sees them.
   if(tool->mutates()&& !tool->is_shell()&& !policy.can_write())return{126,"DENIED: mutation disabled by read-only policy"};
-  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\"}");
+  bool need = tool->is_shell()? policy.needs_shell_approval():(tool->mutates()&& policy.needs_write_approval()); if(need){session.emit(EventKind::ApprovalRequested,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\""+json_escape(call.call_id)+"\",\"arguments\":\""+json_escape(call.arguments)+"\"}");
   const std::string approval_text = call.name + ": " + call.arguments; const bool ok = approval_ui ? approval_ui(approval_text).value_or(false): approve(approval_text,false);
   session.emit(EventKind::ApprovalDecision,std::string("{\"approved\":")+(ok ? "true}" : "false}"));if(!ok)return{126,"DENIED by user"}; }
   session.emit(EventKind::ToolStarted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\"}");
@@ -721,12 +776,15 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
-std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
   codex-cpp [options] [prompt...]
   codex-cpp -i [options]
+  codex-cpp web [--root DIR] [--port PORT] [provider options]
+  codex-cpp serve --origin https://codex.example.com [--port PORT]
+  codex-cpp connect USER@HOST [--project NAME] [--port PORT] [--check | --login]
 
 Provider/API options:
   --provider codex|openai|deepseek|custom
@@ -753,6 +811,7 @@ Agent options:
   --wait-quota                  wait for confirmed Codex quota reset
   --quota                       show current Codex quota
   --list-sessions               print known local session IDs
+  --list-models                 print the provider's model list as JSON
   --json                        echo rollout events as JSONL
   --auto                        never request approval
   --approval on-request|never
@@ -784,10 +843,11 @@ Security note:
 )HELP";
 }
 static std::optional<Options> parse_options(int argc,char** argv,std::string& err){Options o;for(int i = 1;i < argc;++i){std::string a = argv[i];
+  if(a=="--"){for(++i;i<argc;++i)o.prompt.emplace_back(argv[i]);break;}
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
-  if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
   if(a == "--continue"){o.continue_turn=true;continue;}
@@ -847,20 +907,7 @@ for(const auto& item:session.items){std::string summarized=item;if(auto doc=pars
 if(!summarize())return false;const std::string compacted="{\"role\":\"user\",\"content\":\"[prior conversation summary]\\n"+ json_escape(summary)+"\"}";
 std::vector<std::string> replacement={compacted};replacement.insert(replacement.end(),recent_images.begin(),recent_images.end());
 if(!session.replace_items(replacement)){err="could not save compacted session";return false;} session.append_transcript("\n[context compacted]\n"+summary+"\n");return true; }
-static void print_plain_banner(const Options& opt,const ApiClient& api){std::cout << "codex-cpp  plain terminal mode\n" << "workspace: " << opt.root << "\n"
-  << "provider:  " << opt.provider << " / " << api_style_name(api.style)<< " / " << api.model << "\n" << "sandbox:   " << sandbox_name(opt.policy.sandbox)<< "\n" << "type /help for commands\n\n";
-}
-int main(int argc,char** argv){
-#if !defined(_WIN32)
-::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
-#endif
-std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
-if(!opt.frontend.empty()&&opt.policy.sandbox==SandboxMode::DangerFullAccess&&!opt.unsafe_execution){std::cerr<<"--frontend with danger-full-access requires explicit --unsafe-execution\n";return 2;}
-if(!opt.frontend.empty()&&(opt.json||opt.ui_mode==UiMode::Plain)){std::cerr<<"--frontend requires a real TUI terminal, without --json or --ui plain\n";return 2;}
-if(opt.unsafe_execution){if(!terminal_is_tty()||!approve("UNSAFE: disable OS isolation for this run?"))return 2;}
-if(opt.continue_turn && (!opt.resume || !opt.prompt.empty() || !opt.images.empty())){std::cerr << "--continue requires --resume, without a new prompt or image\n";return 2;}
-// Provider presets are deliberately small. Any OpenAI-compatible endpoint can
-// be configured explicitly with --provider custom.
+static bool configure_provider(Options& opt,std::string& error){
 if(opt.provider == "codex"){if(opt.model.empty())opt.model = "gpt-5.6-sol";opt.api_style = ApiStyle::Responses; }else if(opt.provider == "openai"){
   if(opt.base_url.empty())opt.base_url = getenv_or("OPENAI_BASE_URL","https://api.openai.com");
   if(opt.model.empty())opt.model = getenv_or("OPENAI_MODEL","gpt-5.6-sol");if(opt.api_key_env.empty())opt.api_key_env = "OPENAI_API_KEY";
@@ -872,12 +919,36 @@ if(opt.provider == "codex"){if(opt.model.empty())opt.model = "gpt-5.6-sol";opt.a
 }else if(opt.provider == "custom"){
   if(opt.base_url.empty())opt.base_url = getenv_or("CODEX_CPP_BASE_URL");if(opt.model.empty())opt.model = getenv_or("CODEX_CPP_MODEL");
   if(opt.api_key_env.empty())opt.api_key_env = getenv_or("CODEX_CPP_API_KEY_ENV","OPENAI_API_KEY");if(opt.base_url.empty()|| opt.model.empty()){
-  std::cerr << "custom provider requires --base-url and --model (or CODEX_CPP_* env vars)\n";return 2; }
+  error="custom provider requires --base-url and --model (or CODEX_CPP_* env vars)";return false; }
 }else{
-  std::cerr << "invalid --provider: " << opt.provider << '\n';return 2;
+  error="invalid provider: "+opt.provider;return false;
 }
+return true;
+}
+static void print_plain_banner(const Options& opt,const ApiClient& api){std::cout << "codex-cpp  plain terminal mode\n" << "workspace: " << opt.root << "\n"
+  << "provider:  " << opt.provider << " / " << api_style_name(api.style)<< " / " << api.model << "\n" << "sandbox:   " << sandbox_name(opt.policy.sandbox)<< "\n" << "type /help for commands\n\n";
+}
+#include "codex_remote.inc"
+#include "codex_web.inc"
+int main(int argc,char** argv){
+  if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
+  if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
+#if !defined(_WIN32)
+::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
+#endif
+std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
+if(!opt.frontend.empty()&&opt.policy.sandbox==SandboxMode::DangerFullAccess&&!opt.unsafe_execution){std::cerr<<"--frontend with danger-full-access requires explicit --unsafe-execution\n";return 2;}
+if(!opt.frontend.empty()&&(opt.json||opt.ui_mode==UiMode::Plain)){std::cerr<<"--frontend requires a real TUI terminal, without --json or --ui plain\n";return 2;}
+if(opt.unsafe_execution){if(!terminal_is_tty()||!approve("UNSAFE: disable OS isolation for this run?"))return 2;}
+if(opt.continue_turn && (!opt.resume || !opt.prompt.empty() || !opt.images.empty())){std::cerr << "--continue requires --resume, without a new prompt or image\n";return 2;}
+// Provider presets are deliberately small. Any OpenAI-compatible endpoint can
+// be configured explicitly with --provider custom.
+if(!configure_provider(opt,err)){std::cerr<<err<<'\n';return 2;}
+
 if((opt.wait_quota || opt.quota) && opt.provider!="codex"){std::cerr<<"--quota and --wait-quota require --provider codex\n";return 2;}
 if(opt.quota){auto quota=read_codex_quota(err);if(!quota){std::cerr<<err<<'\n';return 3;}std::cout<<quota->report;return 0;}
+if(opt.list_models){ApiClient lister;lister.api_key=opt.no_api_key?"":getenv_or(opt.api_key_env.c_str());lister.base_url=opt.base_url;lister.style=opt.api_style;lister.no_api_key=opt.no_api_key;lister.chatgpt_auth=opt.provider=="codex";while(!lister.base_url.empty()&&lister.base_url.back()=='/')lister.base_url.pop_back();
+  auto models=read_models(lister,err);if(!models){std::cerr<<err<<'\n';return 3;}std::string out="[";for(const auto& m:*models){if(out.size()>1)out+=",";out+="{\"id\":\""+json_escape(m.id)+"\",\"description\":\""+json_escape(m.description)+"\",\"default_effort\":\""+json_escape(m.default_effort)+"\",\"efforts\":[";for(size_t i=0;i<m.efforts.size();++i)out+=(i?",\"":"\"")+json_escape(m.efforts[i])+"\"";out+="]}";}std::cout<<out<<"]\n";return 0;}
 std::error_code ec;opt.root = fs::absolute(opt.root,ec); if(ec || !fs::exists(opt.root)){std::cerr << "workspace does not exist: " << opt.root << '\n';return 2;}
 if(opt.list_sessions){list_sessions(opt.root);return 0;}if(opt.login){ if(opt.provider != "codex"){std::cerr << "--login requires --provider codex\n";return 2;}
   return own_device_login(err)?(std::cout<<"Signed in.\n",0):(std::cerr<<err<<'\n',3);
@@ -922,6 +993,7 @@ bool plan_mode = false,design_mode=false;std::string goal;std::string personalit
 if(opt.images.size()>4){std::cerr<<"Maximum four images per turn.\n";return 2;}for(const auto& image:opt.images){ const fs::path file=image.is_absolute()?image:opt.root/image;auto url=image_data_url(file,err);
   if(!url){std::cerr<<"image "<<file<<": "<<err<<'\n';return 2;}pending_images.emplace_back(file.string(),std::move(*url));
 }
+std::map<std::string,Options> provider_profiles;
 std::vector<ModelInfo> model_catalog;bool catalog_loaded=false;std::string model_err;
 auto load_catalog=[&](bool force)->bool{if(catalog_loaded && !force)return !model_catalog.empty();if(tui)tui->render("loading models...");std::string e;auto models=read_models(api,e);
   if(tui)tui->render();if(models){model_catalog=std::move(*models);catalog_loaded=true;model_err.clear();return true;}model_err=e;return !model_catalog.empty(); };
@@ -977,7 +1049,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   if(apply_steering()<0)return 3;
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
-  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json)return;
+  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
   const bool delivery_reminder=design_mode && (!turn_policy.can_write() || (!design_review->pending && (design_review->rounds || design_review->skipped)));
@@ -995,7 +1067,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
     }else if(!opt.json)std::cout<<"[interrupted]\n";
     return 0; } session.emit(EventKind::Error,"{\"message\":\"" + json_escape(err)+ "\"}");if(tui){tui->add_error(err);tui->render(); }else{ std::cerr << "[error] " << err << '\n'; } return 3;
   }
-  session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\"}");
+  session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\",\"text\":\""+json_escape(response->text.value_or(""))+"\"}");
   if(!response->calls.empty()){if(!streamed_text.empty()&& !opt.json){if(tui)tui->finish_assistant_stream(streamed_text);else std::cout<<'\n'; }
     if(response->text && !response->text->empty())session.record_item("{\"role\":\"assistant\",\"content\":\""+json_escape(*response->text)+"\"}");
     for(const auto& c:response->calls)if(!session.record_item("{\"type\":\"function_call\",\"call_id\":\""+json_escape(c.call_id)+
@@ -1093,6 +1165,11 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     h << name << "  " << command.description;h << '\n';
   }
   say(h.str());continue; } if(token == "/history"){std::ostringstream h;for(size_t i=0;i<input_history.size();++i)h <<(i+1)<< ": " << input_history[i]<< "\n"; say(h.str().empty()?"No input history.":h.str());continue; }
+  if(token == "/undo"){
+    if(!args.empty()){say("Usage: /undo",true);continue;}
+    if(!opt.policy.can_write()){say("Undo is disabled under read-only policy.",true);continue;}
+    const auto result=file_undo.undo(opt.root);if(result.exit_code==0)project_memory=load_project_memory(opt.root);say(result.output,result.exit_code!=0);continue;
+  }
   if(token == "/sessions"){auto ids=session_ids(opt.root);std::ostringstream out;for(const auto& id:ids)out <<(id==session.id?"› ":"  ")<< id << '\n'; say(out.str().empty()?"No saved sessions.":out.str());continue; }
   if(token == "/continue"){const auto pending=session.pending_turn();if(pending.first.empty())say("No unfinished turn.");
     else run_turn(pending.first,false,true);continue;
@@ -1107,6 +1184,42 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     if(content.size()>16384){say("Memory.md is limited to 16 KiB; edit it to remove stale notes",true);continue;}
     WriteFileTool writer;const auto result=writer.run("{\"path\":\"Memory.md\",\"content\":\""+json_escape(content)+"\"}",opt.root);
     if(result.exit_code==0)project_memory=content;say(result.output,result.exit_code!=0);continue;
+  }
+  if(token == "/provider"){
+    std::string selected=args;
+    const std::vector<std::string> names={"codex","openai","deepseek","custom"};
+    if(selected.empty()&&tui){
+      std::vector<std::string> labels={"codex — ChatGPT subscription","openai — OpenAI API","deepseek — DeepSeek API","custom — OpenAI-compatible endpoint"};
+      size_t current=0;for(size_t i=0;i<names.size();++i)if(names[i]==opt.provider){current=i;labels[i]+=" (current)";}
+      const int choice=tui->choose("Choose provider",labels,current);if(choice<0)continue;selected=names[static_cast<size_t>(choice)];
+    }
+    if(selected.empty()){say("Current provider: "+opt.provider+"\nUsage: /provider codex|openai|deepseek|custom\nCustom uses CODEX_CPP_BASE_URL, CODEX_CPP_MODEL and CODEX_CPP_API_KEY_ENV, or the initial CLI configuration.");continue;}
+    if(std::find(names.begin(),names.end(),selected)==names.end()){say("Unknown provider. Choose codex, openai, deepseek or custom.",true);continue;}
+    if(selected==opt.provider){say("Provider already set to "+selected);continue;}
+    Options next;
+    auto prior=provider_profiles.find(selected);
+    if(prior!=provider_profiles.end())next=prior->second;else{
+      next.provider=selected;std::string error;
+      if(!configure_provider(next,error)){say(error,true);continue;}
+    }
+    // Cache only after validation; never carry one provider's credentials to another.
+    opt.model=api.model;opt.reasoning_effort=api.reasoning_effort;
+    provider_profiles[opt.provider]=opt;
+    opt.provider=next.provider;opt.base_url=next.base_url;opt.model=next.model;
+    opt.reasoning_effort=next.reasoning_effort;opt.api_style=next.api_style;
+    opt.api_key_env=next.api_key_env;opt.no_api_key=next.no_api_key;
+    api=ApiClient{};api.base_url=opt.base_url;api.model=opt.model;api.style=opt.api_style;
+    api.reasoning_effort=opt.reasoning_effort;api.no_api_key=opt.no_api_key;
+    api.api_key=opt.no_api_key?"":getenv_or(opt.api_key_env.c_str());
+    api.chatgpt_auth=opt.provider=="codex";api.wait_quota=api.chatgpt_auth&&opt.wait_quota;
+    while(!api.base_url.empty()&&api.base_url.back()=='/')api.base_url.pop_back();
+    // Dropping a detached task's future prevents an old quota result appearing later.
+    quota_job=std::future<QuotaResult>{};quota_brief.clear();quota_report.clear();quota_error.clear();quota_updated.clear();quota_tried=false;quota_status_visible=false;
+    model_catalog.clear();catalog_loaded=false;model_err.clear();
+    if(tui){tui->set_quota_brief("");tui->set_status_details("");tui->set_provider(opt.provider);tui->set_model(api.model,api.reasoning_effort);if(tui->pinned_status())tui->set_pinned_status(pin_text());}
+    say("Provider set to "+opt.provider+" ("+api.model+"). Conversation retained; use /model to choose a model.");
+    if(!api.chatgpt_auth&&!api.no_api_key&&api.api_key.empty())say("No API key configured. Set "+opt.api_key_env+" before starting the program.",true);
+    continue;
   }
   if(token == "/status" && args == "pin"){if(!tui){say("/status pin needs the TUI.",true);continue;}
     if(tui->pinned_status()){tui->set_pinned_status("");say("Status panel unpinned.");continue;}
