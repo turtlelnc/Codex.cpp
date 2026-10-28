@@ -7,3 +7,6 @@
 .DS_Store
 *.o
 __pycache__/
+/build/
+/codex-cpp.exe
+/codex-self-test.exe

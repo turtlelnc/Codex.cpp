@@ -366,3 +366,12 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; animation: none !important; }
 }
+/* Native hosted mode uses the same workspace UI. */
+#host-login { min-height: 100dvh; display: grid; place-items: center; }
+#host-login-form { width: min(360px, 90vw); padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+#host-login-error { color: var(--danger); }
+#host-controls { padding: 8px; }
+#host-controls label { font-size: 12px; margin: 10px 0; }
+#host-controls select { width: 100%; }
+.host-actions { display:flex; gap: 6px; }
+#host-jobs { font-size: 12px; }
