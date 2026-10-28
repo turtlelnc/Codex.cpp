@@ -6,8 +6,7 @@
 #include <csignal>
 #include <cwctype>
 #include <regex>
-#ifdef CODEX_WITH_GITX
-#include <gitx/git_repository.hpp>
+#ifdef CODEX_WITH_LIBGIT2
 #include <git2.h>
 #endif
 #if defined(_WIN32)
@@ -78,8 +77,8 @@ J field(const J &j, const std::string &k, J fallback = J{}) {
   auto p = j.get(k);
   return p ? *p : fallback;
 }
-#ifdef CODEX_WITH_GITX
-#include "codex_gitx.inc"
+#ifdef CODEX_WITH_LIBGIT2
+#include "codex_git.inc"
 #endif
 void require(bool good, const std::string &why) {
   if (!good)
@@ -1356,8 +1355,8 @@ struct App {
       return workspace.write(text(request, "path"), value->str(), text(request, "base"));
     }
     if (op == "diff") {
-#ifdef CODEX_WITH_GITX
-      return gitx_review(workspace.root);
+#ifdef CODEX_WITH_LIBGIT2
+      return git_review(workspace.root);
 #else
       auto root = workspace.root.u8string();
       lock.unlock();

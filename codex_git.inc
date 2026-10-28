@@ -1,20 +1,30 @@
-// Optional read-only Gitx experiment. Included inside native_web.
-J gitx_review(const fs::path &root) {
+// Optional read-only libgit2 experiment. Included inside native_web.
+J git_review(const fs::path &root) {
   struct Runtime {
-    Runtime() { if (git_libgit2_init() < 0) throw std::runtime_error("Cannot initialize Gitx"); }
+    Runtime() { if (git_libgit2_init() < 0) throw std::runtime_error("Cannot initialize libgit2"); }
     ~Runtime() { git_libgit2_shutdown(); }
   };
   static Runtime runtime;
-  gitx::GitRepository core(root);
-  std::vector<J> status;
-  for (const auto &item : core.status())
-    status.push_back(obj({{"path", str(item.path)}, {"state", str(item.state)}}));
   auto check = [](int code) {
-    if (code < 0) throw std::runtime_error("Gitx repository operation failed");
+    if (code < 0) throw std::runtime_error("libgit2 repository operation failed");
   };
   git_repository *raw = nullptr;
   check(git_repository_open(&raw, root.u8string().c_str()));
   std::unique_ptr<git_repository, decltype(&git_repository_free)> repo(raw, git_repository_free);
+  git_status_options status_options = GIT_STATUS_OPTIONS_INIT;
+  status_options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS |
+                         GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
+  git_status_list *raw_status = nullptr;
+  check(git_status_list_new(&raw_status, raw, &status_options));
+  std::unique_ptr<git_status_list, decltype(&git_status_list_free)> list(raw_status, git_status_list_free);
+  std::vector<J> status;
+  for (size_t i = 0; i < git_status_list_entrycount(raw_status); ++i) {
+    const auto *entry = git_status_byindex(raw_status, i);
+    const auto *delta = entry->index_to_workdir ? entry->index_to_workdir : entry->head_to_index;
+    const char *path = delta ? delta->new_file.path : nullptr;
+    if (!path && delta) path = delta->old_file.path;
+    if (path) status.push_back(obj({{"path", str(path)}, {"flags", number(entry->status)}}));
+  }
   git_tree *raw_tree = nullptr;
   git_object *raw_head = nullptr;
   std::string head;
@@ -53,5 +63,5 @@ J gitx_review(const fs::path &root) {
   if (!output.truncated) check(printed);
   return obj({{"head", str(head)}, {"diff", str(output.text)}, {"untracked", arr(untracked)},
               {"truncated", boolean(output.truncated)}, {"status", arr(status)},
-              {"backend", str("gitx/libgit2")}});
+              {"backend", str("libgit2")}});
 }
