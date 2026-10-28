@@ -6,6 +6,10 @@
 #include <csignal>
 #include <cwctype>
 #include <regex>
+#ifdef CODEX_WITH_GITX
+#include <gitx/git_repository.hpp>
+#include <git2.h>
+#endif
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -74,6 +78,9 @@ J field(const J &j, const std::string &k, J fallback = J{}) {
   auto p = j.get(k);
   return p ? *p : fallback;
 }
+#ifdef CODEX_WITH_GITX
+#include "codex_gitx.inc"
+#endif
 void require(bool good, const std::string &why) {
   if (!good)
     throw std::runtime_error(why);
@@ -1349,6 +1356,9 @@ struct App {
       return workspace.write(text(request, "path"), value->str(), text(request, "base"));
     }
     if (op == "diff") {
+#ifdef CODEX_WITH_GITX
+      return gitx_review(workspace.root);
+#else
       auto root = workspace.root.u8string();
       lock.unlock();
       std::vector<std::string> git = {"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
@@ -1369,6 +1379,7 @@ struct App {
                   {"diff", str(diff.substr(0, 524288))},
                   {"untracked", arr(names)},
                   {"truncated", boolean(diff.size() > 524288)}});
+#endif
     }
     if (op == "providers") {
       std::vector<J> result = {provider("codex")};

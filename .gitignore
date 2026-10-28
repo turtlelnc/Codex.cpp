@@ -8,5 +8,6 @@
 *.o
 __pycache__/
 /build/
+/build-gitx/
 /codex-cpp.exe
 /codex-self-test.exe
