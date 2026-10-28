@@ -12,6 +12,10 @@ jobs:
       - run: cmake --build build-libgit2 --parallel 4
       - run: node tests/libgit2_trial.cjs build-libgit2/codex-cpp
       - run: node tests/native_smoke.cjs build-libgit2/codex-cpp
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
+      - run: node tests/native_web_test.cjs build-libgit2/codex-cpp
+        env:
+          CODEX_TEST_NO_GIT: 1
   build-and-smoke:
     strategy:
       fail-fast: false
