@@ -7,6 +7,7 @@
 
 可选的 [libgit2 嵌入实验](docs/LIBGIT2_TRIAL.md) 已支持本地网页状态与 Diff，无需运行系统 Git；
 启用该构建后，多人提交、发布和合并也使用 libgit2；普通构建仍保留系统 Git 后端。
+同一构建中的 `apply_patch` 也使用 libgit2，并提供 `git_read` / `git_write` 模型工具，沿用只读限制与写审批。
 
 ## 编译
 

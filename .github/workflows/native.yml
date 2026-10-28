@@ -16,6 +16,7 @@ jobs:
       - run: node tests/native_web_test.cjs build-libgit2/codex-cpp
         env:
           CODEX_TEST_NO_GIT: 1
+      - run: node tests/agent_git_test.cjs build-libgit2/codex-cpp
   build-and-smoke:
     strategy:
       fail-fast: false

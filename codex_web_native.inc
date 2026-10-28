@@ -1886,6 +1886,9 @@ fs::path executable(const char *argv0) {
   return fs::canonical(argv0);
 #endif
 }
+#ifdef CODEX_WITH_LIBGIT2
+#include "codex_agent_git.inc"
+#endif
 #include "codex_web_multi.inc"
 void child_mode(int &argc, char **&argv, std::vector<char *> &storage) {
 #if defined(__linux__)
@@ -2042,3 +2045,7 @@ int main(int argc, char **argv) {
   }
 }
 } // namespace native_web
+
+#ifdef CODEX_WITH_LIBGIT2
+static ToolResult run_libgit_tool(const std::string &tool,const std::string &arguments,const fs::path &root,bool write,SandboxMode mode,const std::function<void()> &tick,bool watch){return native_web::run_agent_tool(tool,arguments,root,write,mode,tick,watch);}
+#endif
