@@ -935,6 +935,9 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_web.inc"
 int main(int argc,char** argv){
   std::vector<char*> native_arguments;try{native_web::child_mode(argc,argv,native_arguments);}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 2;}
+#ifdef CODEX_WITH_LIBGIT2
+  if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
+#endif
   if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
   if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
 #if !defined(_WIN32)

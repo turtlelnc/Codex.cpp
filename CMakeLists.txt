@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(CodexCpp LANGUAGES CXX)
-option(CODEX_WITH_LIBGIT2 "Experimental embedded libgit2 backend for local web diffs" OFF)
+option(CODEX_WITH_LIBGIT2 "Embedded libgit2 backend for local web and project collaboration" OFF)
 find_package(Threads REQUIRED)
 add_executable(codex-cpp codex.cpp)
 target_compile_features(codex-cpp PRIVATE cxx_std_17)

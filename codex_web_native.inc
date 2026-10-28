@@ -84,6 +84,9 @@ void require(bool good, const std::string &why) {
   if (!good)
     throw std::runtime_error(why);
 }
+#ifdef CODEX_WITH_LIBGIT2
+#include "codex_git_server.inc"
+#endif
 std::string entropy() {
   unsigned char bytes[32];
 #if defined(_WIN32)
