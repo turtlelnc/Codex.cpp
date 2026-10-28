@@ -1,0 +1,30 @@
+name: Native web runtime
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build-and-smoke:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: node tests/native_smoke.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+  linux-integration:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
+      - run: g++ -std=c++17 -O1 -pthread codex.cpp -o codex-cpp
+      - run: g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test && ./codex-self-test
+      - run: node tests/native_web_test.cjs ./codex-cpp

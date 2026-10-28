@@ -6,7 +6,7 @@
 const $ = id => document.getElementById(id);
 const newId = () => crypto.randomUUID().replaceAll('-', '');
 const state = {
-  user: null, snap: null, polling: false, signature: '', toolSignature: '',
+  generation: 0, project: 'local', scope: 'shared', user: null, snap: null, polling: false, signature: '', toolSignature: '',
   openTools: new Set(), file: null, panel: 'code', model: '', reasoning: '', permission: 'workspace',
   tree: null, diffSignature: '', fileList: [], expanded: new Set(), provider: null,
 };
@@ -46,13 +46,13 @@ async function http(path, body) {
   };
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401) throw new Error('此界面仅支持本地模式（codex-cpp web）');
+  if (response.status === 401) { $('workspace').hidden = true; $('host-login').hidden = false; throw new Error('请登录服务器工作区'); }
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;
 }
 
 async function rpc(op, values = {}) {
-  return (await http('/api/rpc', {op, project: 'local', ...values})).result;
+  const generation=state.generation;const result=(await http('/api/rpc', {op, project: state.project, scope: state.scope, ...values})).result;if(generation!==state.generation)throw Error('工作区已切换，请重试');return result;
 }
 
 /* ---------- 对话框 ---------- */
@@ -63,6 +63,7 @@ function field(name, label, type = 'text', value = '', options = [], required = 
 
 function showDialog(title, body) {
   $('dialog-title').textContent = title;
+  $('dialog-submit').hidden=false;$('dialog-cancel').hidden=false;
   $('dialog-body').replaceChildren(body);
   $('dialog-error').textContent = '';
   $('dialog-submit').hidden = true;
@@ -75,6 +76,7 @@ function openDialog(title, fields, submit, preview = '') {
   $('dialog-submit').hidden = false;
   $('dialog-cancel').textContent = '取消';
   $('dialog-title').textContent = title;
+  $('dialog-submit').hidden=false;$('dialog-cancel').hidden=false;
   $('dialog-body').replaceChildren();
   $('dialog-error').textContent = '';
   for (const f of fields) {
@@ -302,7 +304,7 @@ function buildChat(snap) {
     if (row.k === 'user') nodes.push(userBubble(row.text));
     else if (row.k === 'assistant') nodes.push(assistantMessage(row.text, false));
     else {
-      const awaiting = !!pending && pending.call_id === row.id && row.output === null;
+      const awaiting = !!pending && (pending.tool_call_id || pending.call_id) === row.id && row.output === null;
       matched ||= awaiting;
       nodes.push(toolCard(row.id, row.name, row.args, row.output, awaiting));
     }
@@ -626,6 +628,14 @@ function setQueueState(text, busy) {
 
 function setSendMode(busy) {
   const b = $('send');
+  if (state.user?.mode === 'server') {
+    b.textContent = '↑'; b.type = 'submit'; b.classList.remove('stop');
+    b.setAttribute('aria-label', busy ? '加入任务队列' : '发送任务');
+    b.title = '发送（Enter）；项目正在执行时加入队列';
+    $('stop-task').hidden = !busy;
+    return;
+  }
+  $('stop-task').hidden = true;
   b.textContent = busy ? '■' : '↑';
   b.classList.toggle('stop', busy);
   b.setAttribute('aria-label', busy ? '停止任务' : '发送任务');
@@ -633,10 +643,11 @@ function setSendMode(busy) {
 }
 
 async function refresh() {
-  if (!state.user || state.polling) return;
+  if ((state.user?.mode === 'server' && !state.project) || !state.user || state.polling) return;
   state.polling = true;
   try {
     const snap = await rpc('snapshot');
+    if (state.user.mode === 'server') { const info = await rpc('project_status'); state.projectInfo = info; const queued=info.jobs.filter(j=>j.status==='queued').length; $('host-jobs').textContent=info.blocked?'项目需要检查后恢复':(queued?`${queued} 个排队任务`:info.busy?'项目处理中':'无排队任务'); }
     state.snap = snap;
     const rows = snap.timeline || [];
     const signature = JSON.stringify([rows.length, rows.length ? rows[rows.length - 1] : null, snap.draft?.length, snap.busy, snap.pending?.call_id, snap.messages?.length, snap.session_id]);
@@ -680,12 +691,12 @@ function pendingSubmission() {
 
 async function submitTask(event) {
   event.preventDefault();
-  if (state.snap?.busy) return;
+  if (state.snap?.busy && state.user?.mode !== 'server') return;
   const text = $('prompt').value;
   if (!text.trim()) return;
   if (tryCommand(text)) return;
   const previous = pendingSubmission();
-  const pending = previous && previous.text === text ? previous : {text, request_id: newId()};
+  const pending = previous && previous.text === text && previous.project===state.project && previous.scope===state.scope && previous.user===state.user.username ? previous : {text, project:state.project,scope:state.scope,user:state.user.username,request_id: newId()};
   sessionStorage.setItem('codex.pending', JSON.stringify(pending));
   $('send').disabled = true;
   try {
@@ -703,10 +714,11 @@ async function submitTask(event) {
 
 $('composer').onsubmit = submitTask;
 $('send').addEventListener('click', async event => {
-  if (!state.snap?.busy) return;
+  if (!state.snap?.busy || state.user?.mode === 'server') return;
   event.preventDefault();
   try { await rpc('stop'); await refresh(); } catch (e) { notice(e.message); }
 });
+onClick('stop-task', async () => { await rpc('stop'); await refresh(); });
 $('prompt').addEventListener('keydown', event => {
   if (event.isComposing || event.keyCode === 229) return;
   if (menu.items.length) {
@@ -870,6 +882,7 @@ function openPopover(kind) {
     box.dataset.view = 'permissions'; box.setAttribute('role', 'menu'); box.setAttribute('aria-label', '执行权限');
     box.append(el('div', '执行权限', 'pop-heading'));
     for (const [mode, title, desc] of PERMISSION_CHOICES) {
+      if (mode === 'full' && state.user?.mode === 'server') continue;
       box.append(popItem(title, desc, mode === state.permission, async () => { closePopover(); await openPermissions(mode); }));
     }
     $('permission-chip').setAttribute('aria-expanded', 'true');
@@ -1029,6 +1042,7 @@ function providerForm(p) {
 
 async function fillProviders() {
   const data = await rpc('providers');
+  const editable=state.user.mode!=='server'||state.scope==='personal'||state.projectInfo?.owner===state.user.username;
   const list = el('div', undefined, 'prov-list');
   const act = (label, fn, cls) => {
     const b = el('button', label, cls); b.type = 'button';
@@ -1047,8 +1061,8 @@ async function fillProviders() {
     else if (p.id !== 'cli') actions.append(act('使用', async () => {
       await rpc('provider_use', {id: p.id}); catalog.models = null; catalog.error = '';
     }, 'primary'));
-    if (p.id === 'codex') actions.append(act('设备登录', async () => { await rpc('login', {request_id: newId()}); $('dialog').close(); notice('已发起设备登录，请查看对话中的登录提示'); }));
-    if (!p.builtin) {
+    if (p.id === 'codex' && editable) actions.append(act('设备登录', async () => { await rpc('login', {request_id: newId()}); $('dialog').close(); notice('已发起设备登录，请查看对话中的登录提示'); }));
+    if (!p.builtin && editable) {
       const edit = el('button', '编辑'); edit.type = 'button';
       edit.onclick = () => { $('dialog').close(); providerForm(p); };
       actions.append(edit, act('删除', async () => { await rpc('provider_delete', {id: p.id}); catalog.models = null; catalog.error = ''; }));
@@ -1058,7 +1072,8 @@ async function fillProviders() {
   }
   const add = el('button', '＋ 添加提供商', 'prov-add'); add.type = 'button';
   add.onclick = () => { $('dialog').close(); providerForm(null); };
-  list.append(add, el('p', '只内置 Codex；其他提供商（任何兼容 OpenAI 的服务）在这里手动添加，密钥只保存在本机的私有目录。', 'prov-note'));
+  if(editable) list.append(add);
+  list.append(el('p', '只内置 Codex；其他兼容服务可手动添加。密钥只写入当前会话所属的私有凭据目录，不提供读取接口。', 'prov-note'));
   showDialog('模型提供商', list);
 }
 
@@ -1118,16 +1133,52 @@ onClick('inspector-toggle', () => setInspector($('inspector-toggle').getAttribut
 async function initialize() {
   state.user = await http('/api/me');
   document.body.dataset.mode = state.user.mode;
+  $('workspace').hidden=false; $('host-login').hidden=true;
+  if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
   const status = await rpc('status');
   $('root-name').textContent = String(status.workspace || '').split('/').filter(Boolean).pop() || '';
   await refresh();
   await loadFiles().catch(e => notice(e.message));
-  loop();
+  if(!state.loopStarted){state.loopStarted=true;loop();}
 }
 
 function loop() {
   setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 400 : 1200);
 }
+
+async function hostProjects(preferred) {
+ const {projects}=await rpc('projects'); $('host-project').replaceChildren(...projects.map(id=>new Option(id,id)));
+ state.project=preferred&&projects.includes(preferred)?preferred:projects.includes(state.project)?state.project:(projects[0]||'');$('host-project').value=state.project;
+}
+async function switchContext(){
+ state.generation++;
+ state.signature='';state.toolSignature='';state.snap=null;state.openTools.clear();state.file=null;editor.path=null;editor.dirty=false;state.expanded.clear();catalog.models=null;catalog.error='';$('tree').replaceChildren();$('projects').replaceChildren();$('messages').replaceChildren();
+ closePopover(); state.diffSignature=''; $('editor').hidden=true; $('file-view').hidden=false; $('editor-text').value='';
+ $('pending-diff').replaceChildren(); $('diff-view').replaceChildren(); $('term').replaceChildren();
+ $('prompt').value=''; $('root-name').textContent=''; state.projectInfo=null;
+ if(state.project){if(state.scope==='personal')await rpc('personal');const status=await rpc('status');$('root-name').textContent=String(status.workspace||'').split(/[\\/]/).filter(Boolean).pop()||'';await refresh();await loadFiles();}
+}
+$('host-login-form').onsubmit=async event=>{event.preventDefault();try{await http('/api/login',{username:$('host-user').value,password:$('host-token').value});$('host-token').value='';await initialize();}catch(error){$('host-login-error').textContent=error.message;}};
+onClick('host-logout',async()=>{await http('/api/logout',{});location.reload();});
+$('host-project').onchange=async()=>{if(editor.dirty&&!confirm('放弃未保存的编辑？')){$('host-project').value=state.project;return;}state.project=$('host-project').value;try{await switchContext();}catch(error){notice(error.message);}};
+$('host-scope').onchange=async()=>{if(editor.dirty&&!confirm('放弃未保存的编辑？')){$('host-scope').value=state.scope;return;}state.scope=$('host-scope').value;try{await switchContext();}catch(error){notice(error.message);}};
+onClick('host-create',()=>openDialog('创建项目',[field('name','项目名称')],async data=>{const result=await rpc('create',data);await hostProjects(result.project);await switchContext();}));
+onClick('host-manage',async()=>{
+ if(!state.project)throw Error('请先选择项目');const info=await rpc('project_status');showDialog('项目协作', document.createDocumentFragment());
+ const body=$('dialog-body');body.append(el('p','创建者：'+info.owner),el('p','成员：'+info.members.join('、')));
+ const action=(label,fn)=>{const button=el('button',label);button.type='button';button.onclick=()=>Promise.resolve().then(fn).catch(error=>{$('dialog-error').textContent=error.message;});body.append(button);};
+ if(info.owner===state.user.username){action('邀请成员',()=>{ $('dialog').close();openDialog('邀请已有账号',[field('username','用户名')],data=>rpc('invite',data));});action('移除成员',()=>{$('dialog').close();openDialog('移除成员',[field('username','用户名')],data=>rpc('remove',data));});}
+ action('查看 Diff',()=>{ $('dialog').close();showInspector('changes');loadDiff();});
+ const enqueue=(op,data={})=>rpc(op,{...data,request_id:newId()});
+ action('发布个人分支',()=>{$('dialog').close();openDialog('发布个人分支',[field('message','提交说明')],data=>enqueue('publish',data));});
+ action('同步共同分支',()=>{$('dialog').close();openDialog('同步共同分支',[],()=>enqueue('sync'),'个人工作区必须干净；冲突会中止并保留目标。');});
+ action('提交共同修改',async()=>{const preview=await rpc('diff',{scope:'shared'});$('dialog').close();openDialog('检查并提交共同修改',[field('message','提交说明')],data=>enqueue('checkpoint',{...data,scope:'shared',fingerprint:preview.fingerprint}),JSON.stringify(preview,null,2));});
+ action('合并成员分支',()=>{$('dialog').close();openDialog('选择成员',[field('username','用户名','select','',info.members)],async data=>{const latest=await rpc('project_status'),source=latest.branches['users/'+data.username];if(!source)throw Error('成员尚未发布分支');return()=>openDialog('确认合并',[],()=>enqueue('merge',{...data,scope:'shared',source,target:latest.head,confirmed:true}),`来源 ${source}\n目标 ${latest.head}\n冲突时中止并保留原修改。`);});});
+ if(info.blocked&&info.owner===state.user.username)action('检查并恢复队列',async()=>{const preview=await rpc('diff',{scope:'shared'});$('dialog').close();openDialog('恢复队列',[],()=>rpc('recover',{fingerprint:preview.fingerprint,confirmed:true}),JSON.stringify(preview,null,2));});
+ for(const entry of (info.audit||[]).slice(-20))body.append(el('pre',`${entry.actor} · ${entry.scope} · ${entry.op} · ${new Date(entry.time*1000).toLocaleString()}`));
+ for(const job of info.jobs.slice(-20))body.append(el('pre',`${job.actor} · ${job.scope} · ${job.op} · ${job.status}\n${JSON.stringify(job.result||{})}`));
+ $('dialog-submit').hidden=true;$('dialog-cancel').hidden=true;
+});
 
 initialize().catch(e => notice(e.message));
 

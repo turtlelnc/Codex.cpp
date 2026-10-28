@@ -10,10 +10,12 @@
 </head>
 <body>
 
+<section id="host-login" hidden><form id="host-login-form"><h1>连接工作区</h1><label>用户名<input id="host-user" autocomplete="username" required></label><label>访问令牌<input id="host-token" type="password" autocomplete="current-password" required></label><button class="primary">登录</button><p id="host-login-error" role="alert"></p></form></section>
 <div id="workspace">
   <button type="button" id="sidebar-backdrop" aria-label="关闭侧栏" tabindex="-1"></button>
   <aside class="sidebar">
     <a class="logo" href="/"><i class="logo-mark"></i>Codex.cpp</a>
+    <section id="host-controls" hidden><label>项目<select id="host-project" aria-label="项目"></select></label><div class="host-actions"><button id="host-create">创建项目</button><button id="host-manage">协作</button></div><label>会话<select id="host-scope" aria-label="会话范围"><option value="shared">共同会话</option><option value="personal">个人会话</option></select></label><p id="host-jobs" role="status"></p><button id="host-logout">退出登录</button></section>
     <button id="new-chat" class="nav-item"><span aria-hidden="true">＋</span> 新会话</button>
     <div class="sidebar-heading"><span>会话</span></div>
     <nav id="projects" aria-label="会话"></nav>
@@ -53,6 +55,7 @@
               <button type="button" id="permission-chip" class="chip" title="执行权限"></button>
               <button type="button" id="model-chip" class="chip" title="切换模型">模型</button>
             </div>
+            <button type="button" id="stop-task" hidden>停止任务</button>
             <button class="primary" id="send" aria-label="发送任务" title="发送（Enter）；运行中点击可停止">↑</button>
           </div>
         </form>
