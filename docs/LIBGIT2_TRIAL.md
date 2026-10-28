@@ -47,6 +47,7 @@ Windows 的 Agent 沙箱仍未实现，依赖该沙箱的多人 worker 会拒绝
 ```sh
 node tests/libgit2_trial.cjs build-libgit2/codex-cpp
 node tests/native_smoke.cjs build-libgit2/codex-cpp
+node tests/agent_git_test.cjs build-libgit2/codex-cpp
 CODEX_TEST_NO_GIT=1 node tests/native_web_test.cjs build-libgit2/codex-cpp
 ```
 
@@ -57,5 +58,41 @@ CODEX_TEST_NO_GIT=1 node tests/native_web_test.cjs build-libgit2/codex-cpp
 测试运行器仍用系统 Git 创建独立断言和模拟外部操作者；它不是协调器的运行依赖。
 Linux 需要可用的 bubblewrap 沙箱与 curl；本地测试不消耗模型额度。
 
-这个开关只替换网页与协作后端。Agent 主动执行 Git 命令、现有 apply_patch 工具等仍可能需要系统 Git，
-尚未将整个 Agent 的 Git 使用都替换成库调用。curl 依赖同样不在本次替换范围内。
+## Agent 补丁与结构化 Git 工具
+
+同一构建中的 apply_patch 直接使用 libgit2，不调用 git apply，也不经过 Shell。
+输入仍是 unified Git diff（不是 *** Begin Patch 格式）。支持普通目录以及已有 Git 仓库中的
+新增、修改、删除、重命名；不修改真实仓库的暂存区。先验证所有路径、再预检查整份补丁，
+不匹配的补丁在实际写入前拒绝；操作系统 I/O 故障或中途取消后仍需检查实际文件，不能盲目重放。
+拒绝目录逃逸、符号链接、硬链接以及 .git/.codex_cpp/.codex-cpp 内部路径，保留既有写审批与只读限制。
+
+模型会收到两个工具及对应的 developer 指令，优先用它们替代 Shell Git：
+
+- git_read：status、diff、log、branches，只读模式可调用，不要求写审批。
+- git_write：init、stage、stage_all、commit、branch、checkout、merge；需要写权限，按当前审批策略确认。
+  所有写操作携带上次观察到的 target HEAD；空仓库使用空字符串。commit 署名为 Codex.cpp。
+  stage 接收显式文件路径，stage_all 才表示暂存全部允许的文件；跳过 Agent 内部状态。
+  branch 只创建不切换；checkout 要求工作区干净；merge 必须提供精确来源 SHA，并保持冲突时目标不变。
+
+例如（未使用的字段仍需给空值，以满足严格的工具 schema）：
+
+```json
+{"operation":"status","reference":"","limit":20}
+```
+
+```json
+{"operation":"stage","reference":"","target":"上次读取的40位HEAD","message":"","paths":["src/main.cpp"]}
+```
+
+这些接口只操作当前工作区及其内部 Git 元数据；不接受命令字符串、任意 Git 参数或外部仓库路径。
+没有开放 push/fetch/reset/clean/rebase/stash/强制覆盖等操作，切换/合并也不能覆盖 Agent 内部状态。
+多人会话中的模型操作工作区 .git 副本，正式发布与共享分支合并仍由协调器完成。
+工作区外置元数据的 linked worktree 不在这两个模型工具的支持范围内。
+
+工具仍在 OS 沙箱子进程中执行；请求经 stdin JSON 传递（小于 900 KB），补丁原文上限 700 KB，
+输出上限 200 KB，执行上限 120 秒，支持中断。Windows 默认沙箱未实现的限制仍然存在。
+真实 Agent 回归使用本地假模型，确认工具 schema、读/写审批、拒绝与只读模式、各 Git 操作及补丁保护；
+运行中的 Agent 使用一执行就失败的 git 替身，测试运行器的 Git 仅用于独立断言与准备恶意历史。
+
+因此，启用此构建后，网页/多人协作、apply_patch 以及上述模型工具都不需要系统 Git。
+模型仍能通过 shell 主动运行用户明确需要的其他 Git 命令，那些命令需要系统 Git；curl 依赖不在本次范围内。

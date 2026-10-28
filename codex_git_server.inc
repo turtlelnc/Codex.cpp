@@ -50,7 +50,8 @@ void create_commit(git_repository *repo, git_tree *tree, const std::string &mess
   check(git_commit_create(&id, repo, ref, raw, raw, nullptr, message.c_str(), tree, parents.size(),
                           parents.empty() ? nullptr : parents.data()));
 }
-int execute(const fs::path &directory, const fs::path &workspace, const std::vector<std::string> &args) {
+int execute(const fs::path &directory, const fs::path &workspace, const std::vector<std::string> &args,
+            const std::function<void(git_tree *)> &validate_tree = {}) {
   require(!args.empty(), "Missing repository operation");
   auto op = args[0];
   if (op == "init") {
@@ -200,6 +201,8 @@ int execute(const fs::path &directory, const fs::path &workspace, const std::vec
     git_tree *tree = nullptr;
     check(git_tree_lookup(&tree, raw, &tree_id));
     Handle<git_tree, git_tree_free> holder(tree, git_tree_free);
+    if (validate_tree)
+      validate_tree(tree);
     create_commit(raw, tree, "Merge " + args[3], {current.get(), other}, nullptr, commit_id);
     auto target = resolve(raw, oid_text(&commit_id));
     // Preserve a recovery marker before the first worktree mutation.
