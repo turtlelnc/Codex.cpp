@@ -1,22 +1,17 @@
 name: Native web runtime
 on: [push, pull_request, workflow_dispatch]
 jobs:
-  gitx-trial:
+  libgit2-trial:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: turtlelnc/Gitx
-          ref: 7221600c914c835e6f8b78942d9a3ab15a4558c3
-          path: gitx-source
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cmake -S . -B build-gitx -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_GITX=ON -DCODEX_GITX_SOURCE_DIR="$PWD/gitx-source"
-      - run: cmake --build build-gitx --parallel 4
-      - run: node tests/gitx_trial.cjs build-gitx/codex-cpp
-      - run: node tests/native_smoke.cjs build-gitx/codex-cpp
+      - run: cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=ON
+      - run: cmake --build build-libgit2 --parallel 4
+      - run: node tests/libgit2_trial.cjs build-libgit2/codex-cpp
+      - run: node tests/native_smoke.cjs build-libgit2/codex-cpp
   build-and-smoke:
     strategy:
       fail-fast: false
