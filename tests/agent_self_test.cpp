@@ -29,8 +29,15 @@ auto rw = router.invoke(wr,troot,p,dummy);check(rw.exit_code == 0 && slurp(troot
 check(router.invoke(escape,troot,p,dummy).exit_code!=0,"workspace file path guard");FunctionCall shell{"shell","c4",R"({"command":"touch denied.txt"})"};
 const auto sandboxed=restricted_shell_command(troot,"true",p.sandbox);auto sandbox_shell=router.invoke(shell,troot,p,dummy);
 check((sandboxed ? sandbox_shell.exit_code==0 && fs::exists(troot/"denied.txt"): sandbox_shell.exit_code==126 && !fs::exists(troot/"denied.txt")), "automatic shell runs only under an OS sandbox");
-if(sandboxed){FunctionCall escape_shell{"shell","c5",R"({"command":"touch ../shell-outside.txt"})"};
-  check(router.invoke(escape_shell,troot,p,dummy).exit_code!=0 && !fs::exists(troot.parent_path()/"shell-outside.txt"),"sandbox rejects writes outside root");
+if(sandboxed){
+  // The sandbox may allow a private shadow at the same pathname. Check the
+  // actual host file: a zero exit status inside that private filesystem is safe.
+  const auto outside=troot.parent_path()/"shell-outside.txt";
+  const bool fixture=write_all(outside,"host sentinel",err);
+  FunctionCall escape_shell{"shell","c5",R"({"command":"printf escaped > ../shell-outside.txt"})"};
+  router.invoke(escape_shell,troot,p,dummy);
+  check(fixture && slurp(outside)=="host sentinel","sandbox preserves host files outside workspace");
+  fs::remove(outside,ec);
 }
 RuntimePolicy plan=p;plan.sandbox=SandboxMode::ReadOnly;check(router.invoke(wr,troot,plan,dummy).exit_code==126,"read-only execution guard");
 if(restricted_shell_command(troot,"true",SandboxMode::ReadOnly)){FunctionCall inspect{"shell","c6",R"({"command":"printf inspection"})"};
