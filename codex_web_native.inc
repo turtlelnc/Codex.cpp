@@ -6,9 +6,7 @@
 #include <csignal>
 #include <cwctype>
 #include <regex>
-#ifdef CODEX_WITH_LIBGIT2
 #include <git2.h>
-#endif
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -77,16 +75,12 @@ J field(const J &j, const std::string &k, J fallback = J{}) {
   auto p = j.get(k);
   return p ? *p : fallback;
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_git.inc"
-#endif
 void require(bool good, const std::string &why) {
   if (!good)
     throw std::runtime_error(why);
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_git_server.inc"
-#endif
 std::string entropy() {
   unsigned char bytes[32];
 #if defined(_WIN32)
@@ -1358,30 +1352,7 @@ struct App {
       return workspace.write(text(request, "path"), value->str(), text(request, "base"));
     }
     if (op == "diff") {
-#ifdef CODEX_WITH_LIBGIT2
       return git_review(workspace.root);
-#else
-      auto root = workspace.root.u8string();
-      lock.unlock();
-      std::vector<std::string> git = {"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                                      "-C",  root};
-      auto invoke = [&](std::vector<std::string> tail) {
-        auto args = git;
-        args.insert(args.end(), tail.begin(), tail.end());
-        return command(args);
-      };
-      auto diff = invoke({"diff", "HEAD", "--no-ext-diff", "--no-textconv"});
-      auto untracked = invoke({"ls-files", "--others", "--exclude-standard", "-z"});
-      std::vector<J> names;
-      std::istringstream stream(untracked);
-      std::string name;
-      while (std::getline(stream, name, '\0'))
-        names.push_back(str(name));
-      return obj({{"head", str(trim(invoke({"rev-parse", "HEAD"})))},
-                  {"diff", str(diff.substr(0, 524288))},
-                  {"untracked", arr(names)},
-                  {"truncated", boolean(diff.size() > 524288)}});
-#endif
     }
     if (op == "providers") {
       std::vector<J> result = {provider("codex")};
@@ -1886,9 +1857,7 @@ fs::path executable(const char *argv0) {
   return fs::canonical(argv0);
 #endif
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_agent_git.inc"
-#endif
 #include "codex_web_multi.inc"
 void child_mode(int &argc, char **&argv, std::vector<char *> &storage) {
 #if defined(__linux__)
@@ -2046,6 +2015,4 @@ int main(int argc, char **argv) {
 }
 } // namespace native_web
 
-#ifdef CODEX_WITH_LIBGIT2
 static ToolResult run_libgit_tool(const std::string &tool,const std::string &arguments,const fs::path &root,bool write,SandboxMode mode,const std::function<void()> &tick,bool watch){return native_web::run_agent_tool(tool,arguments,root,write,mode,tick,watch);}
-#endif

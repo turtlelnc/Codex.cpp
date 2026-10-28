@@ -1,4 +1,4 @@
-// Optional read-only libgit2 experiment. Included inside native_web.
+// Embedded read-only repository operations. Included inside native_web.
 J git_review(const fs::path &root) {
   struct Runtime {
     Runtime() { if (git_libgit2_init() < 0) throw std::runtime_error("Cannot initialize libgit2"); }

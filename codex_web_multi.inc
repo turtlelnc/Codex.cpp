@@ -152,28 +152,9 @@ struct HostedService : Service {
                 bool allow_failure = false, const std::vector<fs::path> &reads = {}) {
     auto application = app(user, id, personal);
     auto repo = repository(user, id, personal);
-#ifdef CODEX_WITH_LIBGIT2
     std::vector<std::string> args = {binary.u8string(), "--native-git-command", repo.u8string(),
                                      application->workspace.root.u8string()};
     args.insert(args.end(), tail.begin(), tail.end());
-#else
-    std::vector<std::string> args = {"git",
-                                     "--git-dir=" + repo.u8string(),
-                                     "--work-tree=" + application->workspace.root.u8string(),
-                                     "-c",
-                                     "core.bare=false",
-                                     "-c",
-                                     "core.hooksPath=/dev/null",
-                                     "-c",
-                                     "core.fsmonitor=false",
-                                     "-c",
-                                     "user.name=Codex.cpp",
-                                     "-c",
-                                     "user.email=codex@localhost"};
-    if (!tail.empty() && tail[0] == "init")
-      args = {"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"};
-    args.insert(args.end(), tail.begin(), tail.end());
-#endif
     ManagedProcess process;
     auto policy = ProcessPolicy::tool(application->workspace.root, true);
     policy.reads = reads;
@@ -285,13 +266,8 @@ struct HostedService : Service {
     auto result = git(user, id, personal, {"merge", "--no-ff", "--no-edit", ref}, true);
     J outcome;
     if (result.code) {
-#ifdef CODEX_WITH_LIBGIT2
       require(result.code == 1, "libgit2 merge failed; inspect workspace before retrying");
       auto paths = result.out;
-#else
-      auto paths = git(user, id, personal, {"diff", "--name-only", "--diff-filter=U"}, true).out;
-      git(user, id, personal, {"merge", "--abort"}, true);
-#endif
       require(!fs::exists(repository(user, id, personal) / "MERGE_HEAD"),
               "Merge abort incomplete; administrator must inspect repository before recovery");
       std::vector<J> files;

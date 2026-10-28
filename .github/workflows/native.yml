@@ -49,7 +49,7 @@ jobs:
             printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
             node -e 'for (const line of require("fs").readFileSync("native-build.log", "utf8").split(/\r?\n/).filter(s => /error:|fatal error|error C[0-9]+/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));'
           fi
-  linux-integration:
+  core-self-test:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -57,14 +57,11 @@ jobs:
         with:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
-      - run: cmake -S . -B build-legacy -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=OFF
-      - run: cmake --build build-legacy --parallel 2
+      - run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-core --target codex-self-test --parallel 2
       - shell: bash
         run: |
-          g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
-          ./codex-self-test 2>&1 | tee native-self-test.log
-      - shell: bash
-        run: node tests/native_web_test.cjs build-legacy/codex-cpp 2>&1 | tee native-integration.log
+          ./build-core/codex-self-test 2>&1 | tee native-self-test.log
       - name: Publish test diagnostics
         if: failure()
         shell: bash

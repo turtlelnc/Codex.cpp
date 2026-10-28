@@ -14,13 +14,14 @@
 // Intentionally omitted: exact official TUI internals, plugins, multi-agent, WebSocket
 // transport, telemetry, remote-control/app-server protocols.
 //
-// Build (macOS/Linux):
-//   clang++ -std=c++17 -O2 -Wall -Wextra -pedantic codex.cpp -o codex-cpp
+// Build (CMake automatically compiles and links libgit2):
+//   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+//   cmake --build build --parallel 2
 //
 // Run:
 //   OPENAI_API_KEY=... ./codex-cpp --root . "fix the failing tests"
 //
-// The only runtime dependency is the system `curl` executable.
+// Model transport uses system curl; restricted execution also needs an OS sandbox.
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -556,11 +557,7 @@ static std::optional<std::string> restricted_shell_command(const fs::path& root,
 }
 class ShellTool final : public ToolRuntime{public: std::string name()const override{return "shell";}bool mutates()const override{return true;}
 bool is_shell()const override{return true;}std::string spec_json()const override{
-#ifdef CODEX_WITH_LIBGIT2
   return one_arg_tool_spec("shell","Run a shell command for search, builds, tests and project commands. Prefer git_read/git_write for repository operations and apply_patch for edits; these work without a system git executable.","command");
-#else
-  return one_arg_tool_spec("shell","Run a shell command from the workspace root. Use for search, build, tests, git, and project commands.","command");
-#endif
 }
 ToolResult run(const std::string& args,const fs::path& root)override{return run_interruptible(args,root,SandboxMode::WorkspaceWrite,{},false); }
 ToolResult run_interruptible(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& on_tick,bool watch_escape){
@@ -569,29 +566,17 @@ ToolResult run_interruptible(const std::string& args,const fs::path& root,Sandbo
   auto r = run_capture_interruptible(*command,200000,on_tick,watch_escape,ProcessPolicy::tool(root,mode==SandboxMode::WorkspaceWrite,mode==SandboxMode::DangerFullAccess));return{r.exit_code,"exit_code=" + std::to_string(r.exit_code)+ "\n" + r.output};
 }
 };
-#ifdef CODEX_WITH_LIBGIT2
 static ToolResult run_libgit_tool(const std::string&,const std::string&,const fs::path&,bool,SandboxMode,const std::function<void()>& = {},bool=false);
-#endif
 class ApplyPatchTool final : public ToolRuntime{public: std::string name()const override{return "apply_patch";}bool mutates()const override{return true;} std::string spec_json()const override{
   return one_arg_tool_spec("apply_patch","Apply a unified git patch to files inside the workspace.","patch");
 }
 ToolResult run(const std::string& args,const fs::path& root)override{return run_with_policy(args,root,SandboxMode::WorkspaceWrite); }
 ToolResult run_with_policy(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick={},bool watch=false){auto patch = json_string_field(args,"patch");
   if(!patch)return{2,"ERROR: missing patch"};
-#ifdef CODEX_WITH_LIBGIT2
   return run_libgit_tool("apply_patch",args,root,true,mode,tick,watch);
-#else
-(void)tick;(void)watch;
-if(mode!=SandboxMode::DangerFullAccess)if(auto risk=external_hardlink_risk(root))return{126,"DENIED: "+*risk}; const fs::path tmp = temp_path_in(root,".codex-cpp-patch");
-  {std::ofstream f(tmp,std::ios::binary);if(!f)return{2,"ERROR: cannot create temp patch"};f << *patch;} auto cmd=restricted_shell_command(root,"git apply --whitespace=nowarn "+shell_quote(tmp.string()),mode);
-  if(!cmd){std::error_code ec;fs::remove(tmp,ec);return{126,"DENIED: OS shell sandbox unavailable"};}auto r = run_capture(*cmd,200000,ProcessPolicy::tool(root,mode==SandboxMode::WorkspaceWrite,mode==SandboxMode::DangerFullAccess));
-  std::error_code ec;fs::remove(tmp,ec);return{r.exit_code,"exit_code=" + std::to_string(r.exit_code)+ "\n" + r.output};
-#endif
 }
 };
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_git_tools.inc"
-#endif
 class ToolRouter{std::map<std::string,ToolRuntime*> by_name_;std::vector<std::unique_ptr<ToolRuntime>> owned_;
 public: template<class T> void add(){auto p = std::make_unique<T>();by_name_[p->name()]= p.get();owned_.push_back(std::move(p)); }
 void add_dynamic(std::unique_ptr<ToolRuntime> p){if(by_name_.count(p->name()))return;by_name_[p->name()]=p.get();owned_.push_back(std::move(p)); }
@@ -623,9 +608,7 @@ ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePol
   session.emit(EventKind::ApprovalDecision,std::string("{\"approved\":")+(ok ? "true}" : "false}"));if(!ok)return{126,"DENIED by user"}; }
   session.emit(EventKind::ToolStarted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\"}");
   ToolResult r = tool->is_shell()? static_cast<ShellTool*>(tool)->run_interruptible(call.arguments,root,policy.sandbox,on_tick,watch_escape)
-#ifdef CODEX_WITH_LIBGIT2
   : (call.name=="git_read"||call.name=="git_write") ? static_cast<GitToolBase*>(tool)->run_with_policy(call.arguments,root,policy.sandbox,on_tick,watch_escape)
-#endif
   : call.name=="apply_patch" ? static_cast<ApplyPatchTool*>(tool)->run_with_policy(call.arguments,root,policy.sandbox,on_tick,watch_escape) : tool->run_with_ui(call.arguments,root,on_tick,watch_escape);
   session.emit(EventKind::ToolCompleted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\",\"exit_code\":" + std::to_string(r.exit_code)+ "}"); return r;
 }
@@ -762,9 +745,7 @@ if(policy.approval == ApprovalPolicy::OnRequest && policy.sandbox != SandboxMode
 }else{
   out << "The client will not request interactive approvals.";
 }
-#ifdef CODEX_WITH_LIBGIT2
 out << "\nUse git_read and git_write for supported repository operations instead of shell Git. Use apply_patch with unified diff for code edits. Git tools only manage the current workspace repository; shared project publication and merge remain coordinator operations. Inspect HEAD via git_read and supply it as target before mutations.\n";
-#endif
 return out.str(); } static std::string render_model_instructions(const ApiClient& api){std::ostringstream out;out << "# Model/runtime context\n";
 out << "Provider: " << api_style_name(api.style)<< "; model: " << api.model << ".\n";
 if(!api.reasoning_effort.empty())out << "Configured reasoning effort: " << api.reasoning_effort << ".\n";if(api.style == ApiStyle::ChatCompletions){
@@ -957,10 +938,8 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_web.inc"
 int main(int argc,char** argv){
   std::vector<char*> native_arguments;try{native_web::child_mode(argc,argv,native_arguments);}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 2;}
-#ifdef CODEX_WITH_LIBGIT2
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
-#endif
   if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
   if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
 #if !defined(_WIN32)
@@ -986,9 +965,7 @@ if(opt.list_sessions){list_sessions(opt.root);return 0;}if(opt.login){ if(opt.pr
 plugins.load();
 Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std::cerr << err << '\n';return 2;}std::string project_memory=load_project_memory(opt.root);ToolRouter router;
 if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p){return p.enabled&&p.manifest.get("ui");}))router.add<PluginUiTool>();router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
-#ifdef CODEX_WITH_LIBGIT2
 router.add<GitReadTool>();router.add<GitWriteTool>();
-#endif
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
 for(const auto& p:plugins.entries)if(p.enabled)if(auto m=p.manifest.get("mcp")){const auto config=p.dir/m->str();std::error_code ec;
@@ -1354,8 +1331,19 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   if(pending_images.size()>=4){say("Maximum four images per turn.",true);continue;}fs::path target=args;if(target.is_relative())target=opt.root/target;
   std::string image_error;auto url=image_data_url(target,image_error);if(!url){say("Cannot attach image: "+image_error,true);continue;}
   pending_images.emplace_back(target.string(),std::move(*url));say("Attached image to the next turn: "+target.string());continue; } if(token == "/diff"){
-  const std::string cmd="cd " + shell_quote(opt.root.string())+ " && git diff --no-ext-diff -- .; printf '\\n-- status --\\n'; git status --short";
-  CommandResult r=run_capture(cmd,120000);say(r.output.empty()?"No git diff.":r.output,r.exit_code!=0);continue; }
+  auto r=run_libgit_tool("git_read",R"({"operation":"diff","reference":"","limit":20})",opt.root,false,opt.policy.sandbox);
+  if(r.exit_code){say(r.output,true);continue;}
+  auto data=parse_json(r.output.substr(r.output.find('\n')+1));
+  std::string output=data&&data->get("diff")?data->get("diff")->str():r.output;
+  if(data&&data->get("truncated")&&data->get("truncated")->value=="true")output+="\n[truncated]\n";
+  auto status=run_libgit_tool("git_read",R"({"operation":"status","reference":"","limit":20})",opt.root,false,opt.policy.sandbox);
+  auto rows=status.exit_code?std::optional<Json>{}:parse_json(status.output.substr(status.output.find('\n')+1));
+  if(rows&&rows->get("entries")&&!rows->get("entries")->items.empty()){
+    output+="\n-- status --\n";for(const auto& row:rows->get("entries")->items)if(row.get("path"))output+=row.get("path")->str()+"\n";
+  }
+  if(rows&&rows->get("truncated")&&rows->get("truncated")->value=="true")output+="\n[status truncated]\n";
+  if(status.exit_code)output+="\n-- status error --\n"+status.output;
+  say(output.empty()?"No git diff.":output,status.exit_code!=0);continue; }
   if(token == "/mouse"){if(!tui){say("/mouse needs the TUI.",true);continue;}const bool on=args=="on"?true:args=="off"?false:!tui->mouse();tui->set_mouse(on);
     say(on?"Mouse capture on: wheel scrolls the transcript. Hold Option (Terminal/iTerm2) or Shift to select text.":"Mouse capture off: select text with the mouse; scroll with ctrl+u / ctrl+d.");continue; }
   if(token == "/copy" &&(args=="code" || args.rfind("code ",0)==0)){if(last_assistant.empty()){say("There is no assistant response to copy.",true);continue;}

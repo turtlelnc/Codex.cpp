@@ -5,7 +5,7 @@
 浏览器就是客户端：本地模式操作本机工作区，服务器模式操作服务器上的工作区。
 保留文件树、编辑器、工具审批、会话记录、两级模型菜单与自定义模型提供商。
 
-CMake 构建默认启用 [内置 Git（libgit2）](docs/LIBGIT2_TRIAL.md)：网页 Diff、多人协作、
+程序始终使用 [内置 Git（libgit2）](docs/LIBGIT2_TRIAL.md)：网页 Diff、多人协作、
 `apply_patch` 和 `git_read` / `git_write` 模型工具均无需系统 Git，沿用只读限制、写审批和系统沙箱。
 
 ## 编译
@@ -23,13 +23,12 @@ Visual Studio 产物通常是 `build/Release/codex-cpp.exe`。
 首次配置会下载固定版本 libgit2 并校验 SHA-256，之后复用缓存；
 离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 指定已取得的依赖源码。
 
-已有构建目录若缓存了旧的关闭选项，需加一次 `-DCODEX_WITH_LIBGIT2=ON`，或换用新构建目录。
-如需保留系统 Git 后端，可显式配置 `-DCODEX_WITH_LIBGIT2=OFF`。
-直接用 `clang++/g++ codex.cpp` 编译的轻量方式也仍然可用，但不包含 libgit2 和模型 Git 工具。
+后端开关和系统 Git 回退实现已移除；旧缓存中的关闭选项也不会再禁用内置 Git。
+不需要任何启用宏或后端选择参数。CMake 会自动编译、链接依赖。
+若手动使用 g++，仍需提供 libgit2 的头文件与链接参数；单独编译 codex.cpp 已不再是完整构建方式。
 
 只启动网页、登录服务、编辑文件不需要其他运行时。模型请求需要系统 `curl`；
-默认构建的上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。
-关闭内置 Git 后，补丁、Diff 和协作分支恢复为依赖系统 Git。
+上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。
 Agent 受限执行仍需要系统沙箱：Linux 使用 `bubblewrap`，macOS 使用 `sandbox-exec`。
 请以普通用户运行，程序拒绝以 root 启动网页服务。
 
@@ -160,10 +159,10 @@ Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本�
 Node.js 仅用作测试运行器，正式运行不需要它：
 
 ```sh
-node tests/native_smoke.cjs ./codex-cpp
-clang++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
-./codex-self-test
-node tests/native_web_test.cjs ./codex-cpp
+node tests/native_smoke.cjs ./build/codex-cpp
+cmake --build build --target codex-self-test --parallel 2
+./build/codex-self-test
+node tests/native_web_test.cjs ./build/codex-cpp
 ```
 
 第一项不依赖 Agent 沙箱；后两项完整测试需要受限进程执行可用，集成测试还需要 `curl` 和 `git`。
