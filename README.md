@@ -5,37 +5,33 @@
 浏览器就是客户端：本地模式操作本机工作区，服务器模式操作服务器上的工作区。
 保留文件树、编辑器、工具审批、会话记录、两级模型菜单与自定义模型提供商。
 
-可选的 [libgit2 嵌入实验](docs/LIBGIT2_TRIAL.md) 已支持本地网页状态与 Diff，无需运行系统 Git；
-启用该构建后，多人提交、发布和合并也使用 libgit2；普通构建仍保留系统 Git 后端。
-同一构建中的 `apply_patch` 也使用 libgit2，并提供 `git_read` / `git_write` 模型工具，沿用只读限制与写审批。
+CMake 构建默认启用 [内置 Git（libgit2）](docs/LIBGIT2_TRIAL.md)：网页 Diff、多人协作、
+`apply_patch` 和 `git_read` / `git_write` 模型工具均无需系统 Git，沿用只读限制、写审批和系统沙箱。
 
 ## 编译
 
-保留所有 `.inc` 源文件，以及二进制旁的 `web/` 静态资源。
-Linux / macOS / Termux 可用支持 C++17 的编译器：
-
-```sh
-clang++ -std=c++17 -O2 -pthread codex.cpp -o codex-cpp
-# 或用 g++ 替代 clang++
-```
-
-也可用 CMake；它会把 `web/` 复制到可执行文件旁：
+需要 CMake、C/C++ 编译器（主程序 C++17），不需要 Python。保留全部 `.inc` 源文件；
+CMake 会把 `web/` 静态资源复制到二进制旁。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel 2
 ```
 
-Windows 可用 Visual Studio 的 C++ 工具链运行以上 CMake 命令，产物通常是
-`build/Release/codex-cpp.exe`。MinGW-w64 的直接编译方式：
+Linux/macOS/Termux 产物通常是 `build/codex-cpp`；Windows 可使用 Visual Studio 或 MinGW，
+Visual Studio 产物通常是 `build/Release/codex-cpp.exe`。
+首次配置会下载固定版本 libgit2 并校验 SHA-256，之后复用缓存；
+离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 指定已取得的依赖源码。
 
-```sh
-g++ -std=c++17 -O2 -pthread codex.cpp -o codex-cpp.exe -static -lws2_32 -lbcrypt -ladvapi32 -lshell32
-```
+已有构建目录若缓存了旧的关闭选项，需加一次 `-DCODEX_WITH_LIBGIT2=ON`，或换用新构建目录。
+如需保留系统 Git 后端，可显式配置 `-DCODEX_WITH_LIBGIT2=OFF`。
+直接用 `clang++/g++ codex.cpp` 编译的轻量方式也仍然可用，但不包含 libgit2 和模型 Git 工具。
 
-只启动网页、登录多人服务、编辑已有文件，不需要其他运行时。
-模型网络请求需要系统 `curl`，Diff 和协作分支需要 `git`；Agent 的受限进程执行还需要可用的系统沙箱。
-Linux 使用 `bubblewrap`（`bwrap`），macOS 使用 `sandbox-exec`。请以普通用户运行，程序拒绝以 root 启动网页服务。
+只启动网页、登录服务、编辑文件不需要其他运行时。模型请求需要系统 `curl`；
+默认构建的上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。
+关闭内置 Git 后，补丁、Diff 和协作分支恢复为依赖系统 Git。
+Agent 受限执行仍需要系统沙箱：Linux 使用 `bubblewrap`，macOS 使用 `sandbox-exec`。
+请以普通用户运行，程序拒绝以 root 启动网页服务。
 
 ### 平台验证范围
 

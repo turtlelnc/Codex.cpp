@@ -1,13 +1,13 @@
 # libgit2 直接嵌入：本地网页与多人协作
 
-Codex.cpp 直接静态链接 libgit2，不使用 Gitx 或 C++20。启用后，本地网页 Diff/状态，
+CMake 默认启用内置 Git，直接静态链接 libgit2，不使用 Gitx 或 C++20。本地网页 Diff/状态，
 以及多人服务的仓库初始化、暂存、提交、本地对象传输、分支枚举、发布、同步与合并都不调用系统 Git。
-关闭构建开关时仍使用已有的系统 Git 后端。
+可显式设置 `-DCODEX_WITH_LIBGIT2=OFF` 使用系统 Git 后端。旧构建缓存若为 OFF，需加一次 `-DCODEX_WITH_LIBGIT2=ON` 或更换构建目录。
 
 ## 构建
 
 ```sh
-cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=ON
+cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-libgit2 --parallel 4
 ./build-libgit2/codex-cpp web --root /path/to/repository
 ```

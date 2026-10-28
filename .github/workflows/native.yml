@@ -1,14 +1,14 @@
 name: Native web runtime
 on: [push, pull_request, workflow_dispatch]
 jobs:
-  libgit2-trial:
+  embedded-git:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=ON
+      - run: cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build-libgit2 --parallel 4
       - run: node tests/libgit2_trial.cjs build-libgit2/codex-cpp
       - run: node tests/native_smoke.cjs build-libgit2/codex-cpp
@@ -35,6 +35,10 @@ jobs:
         run: node tests/native_smoke.cjs build/codex-cpp
       - if: runner.os == 'Windows'
         run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+      - if: runner.os != 'Windows'
+        run: node tests/libgit2_trial.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/libgit2_trial.cjs build/Release/codex-cpp.exe
       - name: Publish build diagnostics
         if: failure()
         shell: bash
@@ -53,13 +57,14 @@ jobs:
         with:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
-      - run: g++ -std=c++17 -O1 -pthread codex.cpp -o codex-cpp
+      - run: cmake -S . -B build-legacy -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=OFF
+      - run: cmake --build build-legacy --parallel 2
       - shell: bash
         run: |
           g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
           ./codex-self-test 2>&1 | tee native-self-test.log
       - shell: bash
-        run: node tests/native_web_test.cjs ./codex-cpp 2>&1 | tee native-integration.log
+        run: node tests/native_web_test.cjs build-legacy/codex-cpp 2>&1 | tee native-integration.log
       - name: Publish test diagnostics
         if: failure()
         shell: bash
