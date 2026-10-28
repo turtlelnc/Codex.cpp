@@ -349,7 +349,7 @@ struct Workspace {
     int fd = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     require(fd >= 0, "Cannot open workspace");
     std::vector<std::string> parts;
-    for (auto &p : relative)
+    for (const auto &p : relative)
       parts.push_back(p.u8string());
     for (size_t i = 0; i < parts.size(); ++i) {
       if (parts[i] == ".." || parts[i] == "." || parts[i].empty()) {
@@ -373,7 +373,7 @@ struct Workspace {
     require(!relative.empty() && !relative.is_absolute() && !relative.has_root_name() &&
                 (internal || !blocked(relative)),
             "Workspace path denied");
-    for (auto &part : relative)
+    for (const auto &part : relative)
       require(part != "..", "Workspace path denied");
     HANDLE folder = CreateFileW(
         root.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -455,7 +455,7 @@ struct Workspace {
     int parent = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     require(parent >= 0, "Cannot inspect workspace");
     std::vector<std::string> parts;
-    for (auto &part : relative)
+    for (const auto &part : relative)
       parts.push_back(part.u8string());
     for (size_t i = 0; i + 1 < parts.size(); ++i) {
       int next = ::openat(parent, parts[i].c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -989,8 +989,14 @@ struct App {
     auto file = workspace.root / ".codex_cpp/sessions" / (sid + ".items.jsonl");
     auto stamp = fs::last_write_time(file, cache_error);
     if (!cache_error) {
-      cache_key = sid + std::to_string(stamp.time_since_epoch().count()) +
-                  std::to_string(fs::file_size(file, cache_error));
+      // libc++ may use a 128-bit filesystem clock representation. Split the
+      // duration before formatting, preserving subsecond precision without
+      // overflowing nanoseconds for clocks with an older epoch (e.g. Windows).
+      auto elapsed = stamp.time_since_epoch();
+      auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed);
+      auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed - seconds);
+      cache_key = sid + ":" + std::to_string(seconds.count()) + ":" + std::to_string(nanos.count()) +
+                  ":" + std::to_string(fs::file_size(file, cache_error));
       if (!cache_error && cache_key == journal_key)
         return journal_cache;
     }

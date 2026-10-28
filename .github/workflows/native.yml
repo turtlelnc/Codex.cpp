@@ -3,6 +3,7 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   build-and-smoke:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -12,11 +13,22 @@ jobs:
         with:
           node-version: 22
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build --config Release --parallel 2
+      - shell: bash
+        run: cmake --build build --config Release --parallel 2 2>&1 | tee native-build.log
       - if: runner.os != 'Windows'
         run: node tests/native_smoke.cjs build/codex-cpp
       - if: runner.os == 'Windows'
         run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+      - name: Publish build diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f native-build.log ]; then
+            printf '### Build diagnostics\n\n```text\n' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 120 native-build.log >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+            node -e 'for (const line of require("fs").readFileSync("native-build.log", "utf8").split(/\r?\n/).filter(s => /error:|fatal error|error C[0-9]+/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));'
+          fi
   linux-integration:
     runs-on: ubuntu-22.04
     steps:
@@ -26,5 +38,21 @@ jobs:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
       - run: g++ -std=c++17 -O1 -pthread codex.cpp -o codex-cpp
-      - run: g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test && ./codex-self-test
-      - run: node tests/native_web_test.cjs ./codex-cpp
+      - shell: bash
+        run: |
+          g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
+          ./codex-self-test 2>&1 | tee native-self-test.log
+      - shell: bash
+        run: node tests/native_web_test.cjs ./codex-cpp 2>&1 | tee native-integration.log
+      - name: Publish test diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          for log in native-self-test.log native-integration.log; do
+            if [ -f "$log" ]; then
+              printf '### %s\n\n```text\n' "$log" >> "$GITHUB_STEP_SUMMARY"
+              tail -n 120 "$log" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+              node -e 'for (const line of require("fs").readFileSync(process.argv[1], "utf8").split(/\r?\n/).filter(s => /^FAIL\b|Error:|AssertionError/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));' "$log"
+            fi
+          done
