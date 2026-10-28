@@ -80,6 +80,25 @@ Windows/Android 设备也可以直接用浏览器连接已部署的 Linux 服务
 
 ## 多人服务器
 
+### 从 WebUI 配置
+
+运行 `./codex-cpp web --root /path/to/project` 后，点击顶部“团队”。
+在“本机服务”中保存 HTTPS 对外地址与本机后端端口，在“账号”中登记成员并保存仅显示一次的访问令牌，
+再启动团队服务。页面提供反向代理配置示例；仍需自行配置 HTTPS 代理。
+成员打开该 HTTPS 地址，使用用户名和令牌登录即可。
+
+此入口使用 `<CODEX_CPP_HOME>/team-server` 保存团队数据（默认 `~/.codex-cpp/team-server`），
+与当前本地项目分开。它仅管理自己启动的服务，不接管单独运行的 `serve` 进程。
+关闭浏览器标签页不会停止服务；退出本地 Codex.cpp 进程会停止其托管的团队服务。
+新增、重置或撤销账号需要先停止团队服务；重置与撤销不会删除项目文件。
+当前平台缺少工作区沙箱时，页面会提示限制，团队开发仍要求可用的沙箱。
+
+登录团队服务器后，“团队”面板提供成员、共同模型、分支和活动四个页面。
+项目创建者可邀请已登记账号、移除成员及配置共同模型凭据；所有成员拥有相同开发和审批权限。
+个人模型凭据仍在个人工作区配置。
+
+### 从命令行配置
+
 先创建账户。以下命令会各输出一次随机访问令牌，请私下保存；登录时填写用户名与该令牌。
 服务只保存令牌的 SHA-256 摘要，不使用用户自选密码。
 
@@ -163,6 +182,7 @@ node tests/native_smoke.cjs ./build/codex-cpp
 cmake --build build --target codex-self-test --parallel 2
 ./build/codex-self-test
 node tests/native_web_test.cjs ./build/codex-cpp
+node tests/team_service_test.cjs ./build/codex-cpp
 ```
 
 第一项不依赖 Agent 沙箱；后两项完整测试需要受限进程执行可用，集成测试还需要 `curl` 和 `git`。

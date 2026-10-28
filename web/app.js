@@ -1134,11 +1134,12 @@ async function initialize() {
   state.user = await http('/api/me');
   document.body.dataset.mode = state.user.mode;
   $('workspace').hidden=false; $('host-login').hidden=true;
-  if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
+  if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
   const status = await rpc('status');
   $('root-name').textContent = String(status.workspace || '').split('/').filter(Boolean).pop() || '';
   await refresh();
   await loadFiles().catch(e => notice(e.message));
+  $('team-button').disabled=false;
   if(!state.loopStarted){state.loopStarted=true;loop();}
 }
 
@@ -1162,23 +1163,101 @@ $('host-login-form').onsubmit=async event=>{event.preventDefault();try{await htt
 onClick('host-logout',async()=>{await http('/api/logout',{});location.reload();});
 $('host-project').onchange=async()=>{if(editor.dirty&&!confirm('放弃未保存的编辑？')){$('host-project').value=state.project;return;}state.project=$('host-project').value;try{await switchContext();}catch(error){notice(error.message);}};
 $('host-scope').onchange=async()=>{if(editor.dirty&&!confirm('放弃未保存的编辑？')){$('host-scope').value=state.scope;return;}state.scope=$('host-scope').value;try{await switchContext();}catch(error){notice(error.message);}};
-onClick('host-create',()=>openDialog('创建项目',[field('name','项目名称')],async data=>{const result=await rpc('create',data);await hostProjects(result.project);await switchContext();}));
-onClick('host-manage',async()=>{
- if(!state.project)throw Error('请先选择项目');const info=await rpc('project_status');showDialog('项目协作', document.createDocumentFragment());
- const body=$('dialog-body');body.append(el('p','创建者：'+info.owner),el('p','成员：'+info.members.join('、')));
- const action=(label,fn)=>{const button=el('button',label);button.type='button';button.onclick=()=>Promise.resolve().then(fn).catch(error=>{$('dialog-error').textContent=error.message;});body.append(button);};
- if(info.owner===state.user.username){action('邀请成员',()=>{ $('dialog').close();openDialog('邀请已有账号',[field('username','用户名')],data=>rpc('invite',data));});action('移除成员',()=>{$('dialog').close();openDialog('移除成员',[field('username','用户名')],data=>rpc('remove',data));});}
- action('查看 Diff',()=>{ $('dialog').close();showInspector('changes');loadDiff();});
+onClick('host-create',openTeamProjectCreate);
+onClick('host-manage', () => openTeam('members'));
+
+
+/* ---------- 团队设置 ---------- */
+let teamTicket=0,teamTimer=null,teamDraft=null;
+function closeTeam(){if($('team-dialog').open)$('team-dialog').close();}
+function teamAction(label,fn,primary=false){const b=el('button',label,primary?'primary':'');b.type='button';b.onclick=async()=>{b.disabled=true;try{await fn();}catch(e){$('team-error').textContent=e.message;}finally{if(b.isConnected&&!b.hasAttribute('data-stopped-only')&&!b.hasAttribute('data-running-only'))b.disabled=false;}};return b;}
+function teamNote(text){return el('p',text,'team-note');}
+function teamRow(title,subtitle){const row=el('div',undefined,'team-row'),content=el('div');content.append(el('strong',title));if(subtitle)content.append(el('small',subtitle));row.append(content);return row;}
+function teamInput(form,label,name,value,type='text'){const group=el('label',label),input=el('input');input.name=name;input.type=type;input.value=value;input.required=true;group.append(input);form.append(group);return input;}
+function secureOrigin(value){const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('请填写不含路径或账号的 HTTPS 地址');return url.origin;}
+function openTeamProjectCreate(){closeTeam();openDialog('创建项目',[field('name','项目名称')],async data=>{const result=await rpc('create',data);state.scope='shared';$('host-scope').value='shared';await hostProjects(result.project);await switchContext();return()=>openTeam('members').catch(e=>notice(e.message));});}
+function showTeamToken(result){$('team-token-title').textContent='保存 '+result.username+' 的访问令牌';$('team-token').value=result.token;$('team-token').type='password';$('team-token-show').setAttribute('aria-pressed','false');$('team-token-show').textContent='显示令牌';$('team-token-feedback').textContent='';$('team-token-dialog').showModal();}
+onClick('team-token-show',()=>{const input=$('team-token');const show=input.type==='password';input.type=show?'text':'password';$('team-token-show').setAttribute('aria-pressed',String(show));$('team-token-show').textContent=show?'隐藏令牌':'显示令牌';});
+onClick('team-token-copy',async()=>{try{await navigator.clipboard.writeText($('team-token').value);$('team-token-feedback').textContent='已复制';}catch{$('team-token').type='text';$('team-token').select();$('team-token-feedback').textContent='请手动复制选中的令牌';}});
+onClick('team-token-close',()=>{$('team-token-dialog').close();});
+$('team-token-dialog').addEventListener('close',()=>{$('team-token').value='';$('team-token').type='password';openTeam('accounts').catch(e=>notice(e.message));});
+onClick('team-close',closeTeam);
+$('team-dialog').addEventListener('close',()=>{teamTicket++;clearTimeout(teamTimer);teamTimer=null;});
+onClick('team-button',()=>openTeam());
+async function openTeam(selected,keyboard=false){
+ const ticket=++teamTicket;clearTimeout(teamTimer);$('team-error').textContent='';
+ const local=state.user?.mode==='local';const tabs=local?[['service','本机服务'],['accounts','账号'],['remote','连接远程']]:[['members','成员'],['models','共同模型'],['branches','分支'],['activity','活动']];
+ selected=tabs.some(x=>x[0]===selected)?selected:tabs[0][0];
+ $('team-title').textContent='团队设置';$('team-subtitle').textContent=local?'在本机管理团队服务，或连接已有服务器':state.project?'项目：'+state.project:'先创建项目，或请创建者邀请你';
+ $('team-tabs').replaceChildren();for(const [id,label] of tabs){const button=el('button',label);button.type='button';button.id='team-tab-'+id;button.setAttribute('role','tab');button.setAttribute('aria-selected',String(id===selected));button.setAttribute('aria-controls','team-body');button.tabIndex=id===selected?0:-1;button.onclick=()=>openTeam(id,true).catch(e=>notice(e.message));button.onkeydown=event=>{const i=tabs.findIndex(t=>t[0]===id);let next;if(event.key==='ArrowRight')next=(i+1)%tabs.length;else if(event.key==='ArrowLeft')next=(i+tabs.length-1)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;else return;event.preventDefault();openTeam(tabs[next][0],true).catch(e=>notice(e.message));};$('team-tabs').append(button);}
+ $('team-body').setAttribute('aria-labelledby','team-tab-'+selected);$('team-body').replaceChildren(el('p','正在加载…'));
+ if(!$('team-dialog').open)$('team-dialog').showModal();if(keyboard)$('team-tab-'+selected).focus();
+ try {if(local){const data=await rpc('team_get');if(ticket!==teamTicket)return;renderLocalTeam(selected,data,ticket);}else {if(!state.project){$('team-body').replaceChildren(teamNote('创建项目后即可管理成员、共同模型和分支。'),teamAction('创建项目',openTeamProjectCreate,true));return;}const info=await rpc('project_status');if(ticket!==teamTicket)return;state.projectInfo=info;await renderHostedTeam(selected,info,ticket);}}catch(e){if(ticket===teamTicket){$('team-body').replaceChildren();$('team-error').textContent=e.message;}}
+}
+function renderLocalTeam(tab,data,ticket){
+ const body=$('team-body');body.replaceChildren();let busy=false,current=data;
+ const status=el('p',undefined,'team-note');status.id='team-server-state';
+ const paint=next=>{current=next;status.textContent=next.stopping?'停止中…':next.running?'团队服务运行中':'团队服务已停止';for(const control of body.querySelectorAll('[data-stopped-only]'))control.disabled=next.running||busy;for(const control of body.querySelectorAll('[data-running-only]'))control.disabled=!next.running||next.stopping||busy;if(next.error)$('team-error').textContent=next.error;};
+ const act=async fn=>{busy=true;paint(current);try{const result=await fn();if(ticket!==teamTicket)return;paint(result);}finally{busy=false;if(ticket===teamTicket)paint(current);}};
+ const stopped=b=>{b.dataset.stoppedOnly='';return b;};
+ body.append(status);
+ if(!data.sandbox_available)body.append(teamNote('当前系统沙箱不可用，Agent 与协作仓库任务会被拒绝执行；服务配置和账号管理仍可使用。'));
+ if(tab==='service'){
+  const form=el('form');const origin=teamInput(form,'团队 HTTPS 地址','origin',teamDraft?.origin??data.origin,'url');origin.placeholder='https://codex.example.com';
+  const port=teamInput(form,'本机监听端口','port',teamDraft?.port??String(data.port),'number');port.min='1';port.max='65535';
+  for(const input of [origin,port]){input.dataset.stoppedOnly='';input.oninput=()=>{teamDraft={origin:origin.value,port:port.value};};}
+  const feedback=el('p',undefined,'team-note');feedback.setAttribute('role','status');
+  const save=async()=>{if(!form.reportValidity())throw Error('请填写有效地址和端口');const result=await rpc('team_save',{origin:secureOrigin(origin.value),port:Number(port.value)});origin.value=result.origin;port.value=String(result.port);teamDraft=null;return result;};
+  const saveButton=stopped(el('button','保存配置'));saveButton.type='submit';
+  form.onsubmit=async event=>{event.preventDefault();try{await act(save);feedback.textContent='配置已保存';$('team-error').textContent='';}catch(e){$('team-error').textContent=e.message;}};
+  const start=stopped(teamAction('启动团队服务',()=>act(async()=>{await save();return rpc('team_start');}),true));
+  const stop=teamAction('停止团队服务',()=>{closeTeam();openDialog('停止团队服务',[],async()=>{await rpc('team_stop',{confirmed:true});return()=>openTeam('service').catch(e=>notice(e.message));},'正在执行的团队任务会被中断，文件和排队任务仍会保留。');});stop.dataset.runningOnly='';
+  const actions=el('div',undefined,'team-actions');actions.append(saveButton,start,stop);form.append(actions,feedback);body.append(form);
+  body.append(teamNote('首次部署需要将上面的 HTTPS 地址反向代理到本机端口。服务只监听本机；关闭本地程序也会停止由它启动的团队服务。'));
+  const details=el('details');details.append(el('summary','部署与数据位置'),el('pre',`${data.origin||'https://codex.example.com'} {\n    reverse_proxy 127.0.0.1:${data.port}\n}\n\n数据目录：${data.state_dir}`));body.append(details);
+  if(data.origin)body.append(teamAction('打开团队网页',()=>window.open(secureOrigin(current.origin),'_blank','noopener,noreferrer')));
+ } else if(tab==='accounts'){
+  body.append(teamNote('先停止本机托管的团队服务，再登记或重置登录账号；项目成员仍由项目创建者管理。'));
+  body.append(stopped(teamAction('登记账号',()=>{closeTeam();openDialog('登记团队账号',[field('username','用户名')],async fields=>{const result=await rpc('team_account',fields);return()=>showTeamToken(result);});},true)));
+  if(!data.users.length)body.append(teamNote('还没有登录账号。登记至少一个账号后即可启动服务。'));
+  for(const name of data.users){const row=teamRow(name,'访问令牌不会在这里回显');row.append(stopped(teamAction('重置令牌',()=>{closeTeam();openDialog('重置 '+name+' 的访问令牌',[],async()=>{const result=await rpc('team_account',{username:name,confirmed:true});return()=>showTeamToken(result);},'旧令牌将失效。服务重启后，该用户需要用新令牌重新登录。');})),stopped(teamAction('停用账号',()=>{closeTeam();openDialog('停用 '+name,[],async()=>{await rpc('team_revoke',{username:name,confirmed:true});return()=>openTeam('accounts').catch(e=>notice(e.message));},'账号将无法登录，不删除项目文件。同名账号重新登记后会恢复原有的成员关系。');})));body.append(row);}
+ } else {
+  const form=el('form'),url=teamInput(form,'服务器 HTTPS 地址','server',data.origin,'url');url.placeholder='https://codex.example.com';const button=el('button','打开服务器登录页','primary');button.type='submit';form.append(button);form.onsubmit=event=>{event.preventDefault();try{window.open(secureOrigin(url.value),'_blank','noopener,noreferrer');}catch(e){$('team-error').textContent=e.message;}};body.append(form,teamNote('账号和访问令牌在服务器登录页填写，不会发送给当前本地服务。'));
+ }
+ paint(data);
+ if(tab!=='remote'){const poll=async()=>{try{const next=await rpc('team_get');if(ticket!==teamTicket)return;paint(next);}catch(e){if(ticket===teamTicket)$('team-error').textContent=e.message;}if(ticket===teamTicket&&$('team-dialog').open)teamTimer=setTimeout(poll,1000);};teamTimer=setTimeout(poll,1000);}
+}
+async function sharedProviderSettings(){if(editor.dirty&&!confirm('切换到共同会话会丢弃未保存的编辑，是否继续？'))return;closeTeam();state.scope='shared';$('host-scope').value='shared';await switchContext();await fillProviders();}
+async function renderHostedTeam(tab,info,ticket){
+ const body=$('team-body');body.replaceChildren();const owner=info.owner===state.user.username;
+ const reopen=()=>openTeam(tab).catch(e=>notice(e.message));
  const enqueue=(op,data={})=>rpc(op,{...data,request_id:newId()});
- action('发布个人分支',()=>{$('dialog').close();openDialog('发布个人分支',[field('message','提交说明')],data=>enqueue('publish',data));});
- action('同步共同分支',()=>{$('dialog').close();openDialog('同步共同分支',[],()=>enqueue('sync'),'个人工作区必须干净；冲突会中止并保留目标。');});
- action('提交共同修改',async()=>{const preview=await rpc('diff',{scope:'shared'});$('dialog').close();openDialog('检查并提交共同修改',[field('message','提交说明')],data=>enqueue('checkpoint',{...data,scope:'shared',fingerprint:preview.fingerprint}),JSON.stringify(preview,null,2));});
- action('合并成员分支',()=>{$('dialog').close();openDialog('选择成员',[field('username','用户名','select','',info.members)],async data=>{const latest=await rpc('project_status'),source=latest.branches['users/'+data.username];if(!source)throw Error('成员尚未发布分支');return()=>openDialog('确认合并',[],()=>enqueue('merge',{...data,scope:'shared',source,target:latest.head,confirmed:true}),`来源 ${source}\n目标 ${latest.head}\n冲突时中止并保留原修改。`);});});
- if(info.blocked&&info.owner===state.user.username)action('检查并恢复队列',async()=>{const preview=await rpc('diff',{scope:'shared'});$('dialog').close();openDialog('恢复队列',[],()=>rpc('recover',{fingerprint:preview.fingerprint,confirmed:true}),JSON.stringify(preview,null,2));});
- for(const entry of (info.audit||[]).slice(-20))body.append(el('pre',`${entry.actor} · ${entry.scope} · ${entry.op} · ${new Date(entry.time*1000).toLocaleString()}`));
- for(const job of info.jobs.slice(-20))body.append(el('pre',`${job.actor} · ${job.scope} · ${job.op} · ${job.status}\n${JSON.stringify(job.result||{})}`));
- $('dialog-submit').hidden=true;$('dialog-cancel').hidden=true;
-});
+ if(tab==='members'){
+  body.append(teamNote('创建者管理成员和共同凭据；所有成员的开发与审批权限相同。'));
+  if(owner)body.append(teamAction('邀请成员',async()=>{const {users}=await rpc('member_candidates');if(ticket!==teamTicket)return;if(!users.length){$('team-error').textContent='没有可邀请的账号，请先在服务器本机的团队设置中登记账号。';return;}closeTeam();openDialog('邀请项目成员',[field('username','用户名')],async fields=>{await rpc('invite',fields);return reopen;});const input=$('dialog-body').querySelector('[name=username]'),list=el('datalist');list.id='team-candidates';for(const name of users)list.append(new Option(name,name));input.setAttribute('list',list.id);$('dialog-body').append(list);},true));
+  for(const member of info.members){const row=teamRow(member,member===info.owner?'项目创建者':'项目成员');if(owner&&member!==info.owner)row.append(teamAction('移除成员',()=>{closeTeam();openDialog('移除 '+member,[],async()=>{await rpc('remove',{username:member});return reopen;},'此成员将失去项目访问权限，排队任务会被取消，个人文件仍保留。');}));body.append(row);}
+  body.append(teamAction('创建另一个项目',openTeamProjectCreate));
+ } else if(tab==='models'){
+  const data=await rpc('providers',{scope:'shared'});if(ticket!==teamTicket)return;
+  body.append(teamNote(owner?'共同会话使用这里的项目凭据；个人会话仍使用每位成员自己的凭据。':'共同凭据由项目创建者配置；你可以使用，但无法读取或修改密钥。'));
+  for(const provider of data.providers)body.append(teamRow(provider.name,(provider.id===data.active?'正在使用 · ':'')+(provider.has_key?'密钥已配置':provider.id==='codex'?'订阅登录':'未配置密钥')));
+  body.append(teamAction(owner?'配置共同模型':'选择共同模型',sharedProviderSettings,true));
+ } else if(tab==='branches'){
+  body.append(teamNote('个人与共同工作区各自独立。先发布个人分支，再明确合并到共同分支。'));
+  body.append(teamAction('查看 Diff',()=>{closeTeam();showInspector('changes');return loadDiff();}));
+  const actions=el('div',undefined,'team-actions');
+  actions.append(teamAction('发布个人分支',()=>{closeTeam();openDialog('发布个人分支',[field('message','提交说明')],fields=>enqueue('publish',fields));}),teamAction('同步共同分支',()=>{closeTeam();openDialog('同步共同分支',[],()=>enqueue('sync'),'个人工作区必须干净；冲突时保留原目标。');}),teamAction('提交共同修改',async()=>{const preview=await rpc('diff',{scope:'shared'});closeTeam();openDialog('检查并提交共同修改',[field('message','提交说明')],fields=>enqueue('checkpoint',{...fields,scope:'shared',fingerprint:preview.fingerprint}),JSON.stringify(preview,null,2));}),teamAction('合并成员分支',()=>{closeTeam();openDialog('选择成员',[field('username','用户名','select','',info.members)],async fields=>{const latest=await rpc('project_status'),source=latest.branches['users/'+fields.username];if(!source)throw Error('成员尚未发布分支');return()=>openDialog('确认合并',[],()=>enqueue('merge',{...fields,scope:'shared',source,target:latest.head,confirmed:true}),`来源 ${source}\n目标 ${latest.head}\n冲突时保留原目标。`);});}));body.append(actions);
+  for(const [name,sha] of Object.entries(info.branches))body.append(teamRow(name,sha));
+ } else {
+  if(info.blocked){body.append(teamNote('任务中断后需要检查文件再恢复队列。'));if(owner)body.append(teamAction('检查并恢复队列',async()=>{const preview=await rpc('diff',{scope:'shared'});closeTeam();openDialog('恢复队列',[],()=>rpc('recover',{fingerprint:preview.fingerprint,confirmed:true}),JSON.stringify(preview,null,2));}));}
+  const labels={queued:'排队中',running:'执行中',completed:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已取消'};
+  body.append(el('h3','最近任务'));if(!info.jobs.length)body.append(teamNote('还没有任务'));
+  for(const job of info.jobs.slice(-20).reverse()){const row=teamRow(job.actor+' · '+job.op,(labels[job.status]||job.status)+(job.scope==='personal'?' · 个人会话':' · 共同会话'));if(job.result?.error)row.firstChild.append(el('small',job.result.error));body.append(row);}
+  body.append(el('h3','操作记录'));if(!info.audit?.length)body.append(teamNote('还没有操作记录'));
+  const operations={invite:'邀请成员',remove:'移除成员',approve:'审批操作',provider_save:'配置提供商',provider_use:'切换提供商',model:'切换模型',reasoning:'调整推理强度',recover:'恢复队列',stop:'停止任务'};
+  for(const entry of (info.audit||[]).slice(-20).reverse())body.append(teamRow(entry.actor+' · '+(operations[entry.op]||entry.op),new Date(entry.time*1000).toLocaleString()));
+ }
+}
 
 initialize().catch(e => notice(e.message));
 

@@ -453,6 +453,13 @@ J HostedService::dispatch(const std::string &user, const J &request) {
   auto &info = project(user, id);
   bool owner = text(info, "owner") == user, personal = text(request, "scope") == "personal";
   require(identifier(id), "Invalid project");
+  if(op=="member_candidates") {
+    require(owner,"Only the creator can view invitation candidates");
+    std::vector<J> names;
+    for(const auto &item:database.fields["users"].fields)
+      if(!member(item.first,info) && names.size()<1000)names.push_back(str(item.first));
+    return obj({{"users",arr(names)}});
+  }
   if (op == "invite" || op == "remove") {
     require(owner, "Only the creator can manage members");
     auto target = text(request, "username");

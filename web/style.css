@@ -375,3 +375,31 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 #host-controls select { width: 100%; }
 .host-actions { display:flex; gap: 6px; }
 #host-jobs { font-size: 12px; }
+
+/* Team settings reuse the workspace palette and native modal focus handling. */
+#team-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow: auto; }
+#team-title { margin: 0; }
+#team-subtitle { margin: 6px 0 18px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+#team-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; overflow-x: auto; }
+#team-tabs button { flex-shrink: 0; border: 0; border-radius: 0; background: transparent; padding: 10px 14px; border-bottom: 2px solid transparent; color: var(--muted); }
+#team-tabs button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); }
+#team-body { min-height: 180px; outline: none; }
+#team-body h3 { margin: 0 0 10px; font-size: 15px; }
+#team-body label { display: block; margin: 14px 0; }
+#team-body label input { margin-top: 6px; width: 100%; }
+.team-row { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.team-row > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.team-row small { display: block; color: var(--muted); margin-top: 4px; }
+.team-row button { flex-shrink: 0; }
+.team-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.team-note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.team-badge { font-size: 12px; color: var(--muted); margin-left: 8px; }
+#team-error { color: var(--danger); }
+#team-token-dialog { width: min(520px, calc(100vw - 24px)); }
+#team-token { width: 100%; margin-top: 8px; font-family: ui-monospace, monospace; }
+#team-token-dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+#team-body pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width: 520px) { #team-dialog { padding: 18px; } .team-row { flex-wrap: wrap; gap: 8px; } .team-row > :first-child { flex-basis: 100%; } }
+#team-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+#team-close { min-width: 44px; min-height: 44px; }
+#team-token-title { overflow-wrap: anywhere; }

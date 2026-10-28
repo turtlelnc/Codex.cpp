@@ -1638,8 +1638,9 @@ struct Service {
         local->child->terminate();
     }
   }
+  std::string cookie_name() const {return hosted()?"codex_session":"codex_local_session_"+std::to_string(port);}
   std::string cookie(const std::string &token) {
-    return "codex_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" +
+    return cookie_name()+"=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" +
            (origin.rfind("https://", 0) == 0 ? std::string("; Secure") : "");
   }
   std::pair<std::string, WebSession> authenticate(const Request &req) {
@@ -1649,8 +1650,9 @@ struct Service {
     std::string part, token;
     while (std::getline(stream, part, ';')) {
       part = trim(part);
-      if (part.rfind("codex_session=", 0) == 0)
-        token = part.substr(14);
+      auto prefix=cookie_name()+"=";
+      if (part.rfind(prefix, 0) == 0)
+        token = part.substr(prefix.size());
     }
     auto found = sessions.find(token);
     if (found != sessions.end() && found->second.expires > std::time(nullptr))
@@ -1746,7 +1748,7 @@ struct Service {
         std::lock_guard<std::recursive_mutex> lock(mutex);
         sessions.erase(authenticated.first);
         response(fd, 200, obj({{"ok", boolean(true)}}),
-                 "codex_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+                 cookie_name()+"=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
         return;
       }
       require(req.path == "/api/rpc", "Unknown route");
@@ -1859,6 +1861,7 @@ fs::path executable(const char *argv0) {
 }
 #include "codex_agent_git.inc"
 #include "codex_web_multi.inc"
+#include "codex_web_team.inc"
 void child_mode(int &argc, char **&argv, std::vector<char *> &storage) {
 #if defined(__linux__)
   if (argc > 2 && std::string(argv[1]) == "--native-child") {
@@ -1983,7 +1986,7 @@ int main(int argc, char **argv) {
       service = std::move(hosted);
     } else {
       require(host == "127.0.0.1", "Local mode only binds loopback");
-      service = std::make_unique<Service>();
+      service = std::make_unique<LocalService>();
       service->home = home;
       service->local = std::make_unique<App>(opt.root, self, home, opt, explicit_options);
     }

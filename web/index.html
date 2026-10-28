@@ -35,6 +35,7 @@
       </div>
       <div class="header-actions">
         <span id="queue-state" class="status-pill" data-busy="false">就绪</span>
+        <button id="team-button" disabled>团队</button>
         <button id="settings-button" title="模型提供商">提供商</button>
         <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-pressed="true" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
       </div>
@@ -130,5 +131,17 @@
   </form>
 </dialog>
 
+<dialog id="team-dialog" aria-labelledby="team-title">
+  <div class="dialog-heading"><div><h2 id="team-title">团队设置</h2><p id="team-subtitle"></p></div><button type="button" id="team-close" aria-label="关闭团队设置">×</button></div>
+  <div id="team-tabs" role="tablist" aria-label="团队设置"></div>
+  <div id="team-body" role="tabpanel" tabindex="0"></div>
+  <p id="team-error" role="alert"></p>
+</dialog>
+<dialog id="team-token-dialog" aria-labelledby="team-token-title">
+  <h2 id="team-token-title">保存访问令牌</h2><p>令牌只显示这一次，请保存到密码管理器。其他人可用它登录此账号。</p>
+  <label>访问令牌<input id="team-token" type="password" readonly autocomplete="off" spellcheck="false"></label>
+  <div class="actions"><button id="team-token-show" type="button" aria-pressed="false">显示令牌</button><button id="team-token-copy" type="button">复制令牌</button><button id="team-token-close" type="button" class="primary">已保存，关闭</button></div>
+  <p id="team-token-feedback" role="status"></p>
+</dialog>
 </body>
 </html>
