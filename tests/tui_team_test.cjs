@@ -17,7 +17,11 @@ async function listening(port){return new Promise(r=>{const c=net.connect(port,'
  stage='one-time token body';await wait(()=>/[a-f0-9]{64}/.test(output));const token=output.match(/[a-f0-9]{64}/)[0];
  await send('1','Team settings');stage='first service start';await send('3');await wait(()=>listening(port));
  await send('4','Active tasks will be interrupted');await send('2');stage='service stop';await wait(async()=>!await listening(port));
- await send('3');stage='service restart';await wait(()=>listening(port));await send('6');await send('/quit\r');stage='TUI exit';await wait(()=>child.exitCode!==null);stage='child cleanup';await wait(async()=>!await listening(port));
+ await send('3');stage='service restart';await wait(()=>listening(port));await send('6');
+ // A menu briefly restores canonical termios before the composer enters raw mode.
+ // Wait for a rendered slash popup before Enter, otherwise ICRNL can turn the
+ // injected CR into LF (the composer's insert-newline key) during that transition.
+ await send('/','/provider');await send('quit\r');stage='TUI exit';await wait(()=>child.exitCode!==null);stage='child cleanup';await wait(async()=>!await listening(port));
  function audit(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,entry.name);if(entry.isDirectory())audit(p);else if(/\.jsonl$|history/.test(p))assert(!fs.readFileSync(p,'utf8').includes(token),'token leaked to persisted session');}}
  audit(temp);console.log('PASS real TUI team workflow: configure, account/token, start/stop, parent exit and no token in session history');
  }finally{if(child&&child.exitCode===null){process.kill(-child.pid,'SIGTERM');await new Promise(r=>child.once('exit',r));}fs.rmSync(temp,{recursive:true,force:true});}
