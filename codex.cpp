@@ -21,7 +21,7 @@
 // Run:
 //   OPENAI_API_KEY=... ./codex-cpp --root . "fix the failing tests"
 //
-// Model transport uses system curl; restricted execution also needs an OS sandbox.
+// Model transport uses embedded libcurl; restricted execution also needs an OS sandbox.
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -241,18 +241,7 @@ return out; } static std::optional<std::string> base64url_decode(std::string s){
 return out; } static std::optional<Json> jwt_claims(const std::string& token){auto a=token.find('.'),b=token.find('.',a==std::string::npos?a:a+1);
 if(a==std::string::npos||b==std::string::npos)return{};auto decoded=base64url_decode(token.substr(a+1,b-a-1)); return decoded?parse_json(*decoded):std::nullopt; }
 static std::string account_from_jwt(const std::string& token){auto j=jwt_claims(token);if(!j)return{};auto nested=j->get("https://api.openai.com/auth"); auto id=at(nested,"chatgpt_account_id");return id?id->str():""; }
-struct WebReply{long status=0;std::string body,error;};static WebReply web_post(const std::string& url,const std::string& body, const std::string& content_type,const std::vector<std::string>& headers={},bool get=false){
-WebReply result;fs::path req=temp_path("codex-auth-req"),out=temp_path("codex-auth-out"),hdr=temp_path("codex-auth-hdr");{
-  std::ofstream f(req,std::ios::binary);if(!f){result.error="cannot create request";return result;}f<<body;
-  std::ofstream h(hdr,std::ios::binary);if(!h){result.error="cannot create header";return result;}h<<"Content-Type: "<<content_type<<"\n"; for(const auto& line:headers)h<<line<<"\n";
-}
-#if !defined(_WIN32)
-fs::permissions(req,fs::perms::owner_read|fs::perms::owner_write,fs::perm_options::replace); fs::permissions(hdr,fs::perms::owner_read|fs::perms::owner_write,fs::perm_options::replace);
-#endif
-const std::string cmd="curl -sS --connect-timeout 15 --max-time 300 --max-redirs 0 -o "+
-  shell_quote(out.string())+" -w '%{http_code}' -H "+shell_quote("@"+hdr.string())+ (get?" --max-time 30":" --data-binary @"+shell_quote(req.string()))+" "+shell_quote(url);
-auto r=run_capture(cmd,2000,ProcessPolicy::network());result.body=slurp(out,8'000'000);if(r.exit_code!=0)result.error="curl failed: "+r.output; else{try{result.status=std::stol(trim(r.output));}catch(...){result.error="invalid HTTP status";}}
-std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(hdr,ec);return result; }
+#include "codex_http.inc"
 struct OwnAuth{std::string access,refresh,id,account;long long expires=0;};static bool save_auth(const OwnAuth& a,std::string& err){
 fs::path p=own_auth_path();std::error_code ec;fs::create_directories(p.parent_path(),ec);if(ec){err="cannot create credential directory";return false;}
 #if !defined(_WIN32)
@@ -936,7 +925,9 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 }
 #include "codex_remote.inc"
 #include "codex_web.inc"
+#include "codex_team_tui.inc"
 int main(int argc,char** argv){
+  if(argc==2&&std::string(argv[1])=="--licenses"){std::cout<<codex_resource("licenses");return 0;}
   std::vector<char*> native_arguments;try{native_web::child_mode(argc,argv,native_arguments);}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 2;}
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
@@ -980,6 +971,7 @@ bool use_tui = false;if(interactive && !opt.json){const bool vt = enable_and_det
   std::cerr << "[ui] TUI requested but this terminal has no usable VT support; falling back to plain mode.\n"; } use_tui =(opt.ui_mode == UiMode::Tui && vt)||(opt.ui_mode == UiMode::Auto && vt);
 }
 std::optional<TuiRenderer> tui;
+std::unique_ptr<TeamConsole> team_console;
 #if !defined(_WIN32)
 if(use_tui || opt.wait_quota){struct sigaction action{};action.sa_handler=request_tui_interrupt;sigemptyset(&action.sa_mask);
   action.sa_flags=0;// wake blocking terminal reads for orderly cleanup
@@ -1194,6 +1186,11 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     if(content.size()>16384){say("Memory.md is limited to 16 KiB; edit it to remove stale notes",true);continue;}
     WriteFileTool writer;const auto result=writer.run("{\"path\":\"Memory.md\",\"content\":\""+json_escape(content)+"\"}",opt.root);
     if(result.exit_code==0)project_memory=content;say(result.output,result.exit_code!=0);continue;
+  }
+  if(token == "/team"){
+    if(!tui){say("Team settings require TUI mode. Use --ui tui, or codex-cpp web and the Team button.");continue;}
+    if(!team_console)team_console=std::make_unique<TeamConsole>(argv[0]);
+    team_console->open(*tui);continue;
   }
   if(token == "/provider"){
     std::string selected=args;

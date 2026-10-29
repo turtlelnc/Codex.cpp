@@ -1,0 +1,85 @@
+name: Single-file release
+on:
+  push:
+    tags: ['v*']
+    branches: ['feat/tui-team-single-file-release']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, platform: windows-x86, cmake_arch: Win32, binary: build-release/Release/codex-cpp.exe, ext: .exe}
+          - {os: windows-2022, platform: windows-x64, cmake_arch: x64, binary: build-release/Release/codex-cpp.exe, ext: .exe}
+          - {os: windows-11-arm, platform: windows-arm64, cmake_arch: ARM64, binary: build-release/Release/codex-cpp.exe, ext: .exe}
+          - {os: macos-15-intel, platform: macos-x64, cmake_arch: x86_64, binary: build-release/codex-cpp, ext: ''}
+          - {os: macos-15, platform: macos-arm64, cmake_arch: arm64, binary: build-release/codex-cpp, ext: ''}
+          - {os: ubuntu-22.04, platform: linux-x64, binary: build-release/codex-cpp, ext: ''}
+          - {os: ubuntu-24.04-arm, platform: linux-arm64, binary: build-release/codex-cpp, ext: ''}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build Windows (static CRT and system TLS)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S . -B build-release -A ${{ matrix.cmake_arch }}
+          cmake --build build-release --config Release --target codex-cpp --parallel 2
+      - name: Build macOS (static TLS with system certificate trust)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          cmake --build build-release --target codex-cpp --parallel 2
+          strip build-release/codex-cpp
+          codesign --force --sign - build-release/codex-cpp
+      - name: Build Linux (static musl, TLS and embedded sandbox)
+        if: runner.os == 'Linux'
+        run: docker run --rm -v "$PWD:/src" -w /src alpine:3.22 sh scripts/build-linux-release.sh
+      - name: Verify standalone executable
+        shell: bash
+        run: |
+          node tests/standalone_test.cjs '${{ matrix.binary }}'
+          node tests/runtime_dependencies.cjs '${{ matrix.binary }}'
+          CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}'
+      - name: Verify Linux embedded sandbox and team workflow
+        if: runner.os == 'Linux'
+        run: node tests/team_service_test.cjs '${{ matrix.binary }}'
+      - name: Prepare download
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp '${{ matrix.binary }}' 'dist/codex-cpp-${{ matrix.platform }}${{ matrix.ext }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cpp-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Explain failures
+        if: failure()
+        shell: bash
+        run: echo '::error::Single-file build or standalone verification failed on ${{ matrix.platform }}. Release publication is blocked until every architecture passes.'
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: binaries
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish verified binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          test "$(find . -maxdepth 1 -type f -name 'codex-cpp-*' | wc -l)" -eq 7
+          sha256sum codex-cpp-* > SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Codex.cpp $GITHUB_REF_NAME" --notes-file ../docs/RELEASE_NOTES.md --verify-tag codex-cpp-* SHA256SUMS.txt

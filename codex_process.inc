@@ -1,3 +1,4 @@
+#include "codex_resources.h"
 // The only OS process launcher. Child policy is chosen by trusted host code, never RPC.
 enum class ProcessRole{Probe,Helper,Tool,Extension,Frontend,Network,Clipboard};
 struct ProcessPolicy{
@@ -14,6 +15,20 @@ struct ExecutionContext{
   ~ExecutionContext(){std::error_code ec;if(!private_dir.empty())fs::remove_all(private_dir,ec);}
 };
 static ExecutionContext execution;
+static fs::path bubblewrap_binary(){
+#if defined(__linux__)
+  static const fs::path binary=[]()->fs::path{
+    auto bytes=codex_resource("bwrap");if(bytes.empty())return "/usr/bin/bwrap";
+    if(execution.private_dir.empty())execution.initialize(fs::current_path());
+    auto path=execution.private_dir/"bwrap";
+    std::ofstream out(path,std::ios::binary);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));out.close();
+    if(!out)throw std::runtime_error("Cannot extract embedded sandbox helper");
+    fs::permissions(path,fs::perms::owner_read|fs::perms::owner_exec,fs::perm_options::replace);return path;
+  }();return binary;
+#else
+  return {};
+#endif
+}
 static bool sandbox_available();
 static std::string sandbox_failure;
 static fs::path process_executable(const std::string& name){std::error_code ec;if(name.find_first_of("/\\")!=std::string::npos){auto p=fs::canonical(name,ec);return ec?fs::path():p;}
@@ -90,8 +105,8 @@ public:
       if(policy.role==ProcessRole::Clipboard)profile+="(allow mach-lookup (global-name \"com.apple.pasteboard.1\"))";
       command.insert(command.begin(),{"/usr/bin/sandbox-exec","-p",profile});}
 #elif defined(__linux__)
-    if(!unsafe){if(!fs::exists("/usr/bin/bwrap")){error="bubblewrap missing";return false;}
-      std::vector<std::string> wrapped={"/usr/bin/bwrap","--unshare-all","--die-with-parent","--new-session","--cap-drop","ALL","--proc","/proc","--dev","/dev","--tmpfs","/tmp"};
+    if(!unsafe){auto helper=bubblewrap_binary();if(!fs::exists(helper)){error="bubblewrap missing";return false;}
+      std::vector<std::string> wrapped={helper.string(),"--unshare-all","--die-with-parent","--new-session","--cap-drop","ALL","--proc","/proc","--dev","/dev","--tmpfs","/tmp"};
       if(policy.role==ProcessRole::Network)wrapped.push_back("--share-net");
       for(const auto& path:reads)if(fs::exists(path,ec)){wrapped.insert(wrapped.end(),{"--ro-bind",path.string(),path.string()});}
       for(const auto& path:writes)wrapped.insert(wrapped.end(),{"--bind",path.string(),path.string()});

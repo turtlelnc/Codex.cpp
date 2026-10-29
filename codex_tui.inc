@@ -38,7 +38,7 @@ winsize ws{};if(ioctl(STDOUT_FILENO,TIOCGWINSZ,&ws)== 0 && ws.ws_row > 10)return
 #endif
 return 32; } struct SlashCommandDef{const char* name;const char* description; }; static const std::vector<SlashCommandDef>& slash_commands(){static const std::vector<SlashCommandDef> kCommands =[]{std::vector<SlashCommandDef> result={
   {"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
-  {"/auth","show ChatGPT login status"},
+  {"/auth","show ChatGPT login status"},{"/team","configure team service, accounts and connection"},
   {"/permissions","choose what Codex is allowed to do"},
   {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},
   {"/review","review my current changes and find issues"},
@@ -156,6 +156,31 @@ int choose(const std::string& title,const std::vector<std::string>& options,size
 #endif
   watch_resize(false);overlay_active_=false;overlay_options_.clear();overlay_body_.clear();render();return result;
 }
+std::optional<std::string> form_input(const std::string& title,std::string value={}){
+  overlay_active_=true;overlay_title_=sanitize_text(title);overlay_choice_=0;
+  overlay_body_="Enter to save · Esc to cancel";
+#if !defined(_WIN32)
+  termios oldt{};bool raw_ok=tcgetattr(STDIN_FILENO,&oldt)==0;
+  if(raw_ok){termios raw=oldt;raw.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag&=static_cast<tcflag_t>(~(IXON|ICRNL));tcsetattr(STDIN_FILENO,TCSANOW,&raw);}
+#endif
+  std::optional<std::string> result;watch_resize(true);
+  for(;;){overlay_options_={sanitize_text(value)+"▏"};render();int k=read_key();
+#if !defined(_WIN32)
+    if(tui_interrupt_requested)break;
+#endif
+    if(k<0||k==27||k==3)break;
+    if(k=='\r'||k=='\n'){result=value;break;}
+    if(k==127||k==8){if(!value.empty())value.erase(prev_utf8_boundary(value,value.size()));}
+    else if(k==KEY_PASTE){auto text=pasted_text_;pasted_text_.clear();if(text.find_first_of("\r\n")==std::string::npos&&value.size()+text.size()<=2048)value+=text;}
+    else if(k==KEY_TEXT){if(value.size()+key_text_.size()<=2048)value+=key_text_;}
+    else if(k>=32&&k<127&&value.size()<2048)value+=char(k);
+  }
+#if !defined(_WIN32)
+  if(raw_ok)tcsetattr(STDIN_FILENO,TCSANOW,&oldt);
+#endif
+  watch_resize(false);overlay_active_=false;overlay_options_.clear();overlay_body_.clear();render();return result;
+}
+int settings_menu(const std::string& title,const std::string& body,const std::vector<std::string>& options){overlay_body_=sanitize_text(body);return choose(title,options);}
 bool approval(const std::string& text){overlay_body_=sanitize_text(text);const int choice=choose("Would you like to run this command?",{"Yes, proceed","No, cancel"},0); overlay_body_.clear();return choice==0;
 }
 void render(const std::string& footer = ""){status_ = footer; if(!footer.empty()&&(footer.find("working")!= std::string::npos || footer.find("running")!= std::string::npos)){

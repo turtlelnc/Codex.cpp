@@ -130,7 +130,8 @@ struct LocalService : Service {
       args.insert(args.end(), {"--native-child", std::to_string(::getpid())});
 #endif
       args.insert(args.end(), {"serve", "--state-dir", team_home().u8string(), "--origin", origin, "--port",
-                               std::to_string(next), "--web-dir", web.u8string()});
+                               std::to_string(next)});
+      if(!web.empty())args.insert(args.end(), {"--web-dir", web.u8string()});
       auto candidate = std::make_unique<Child>();
       candidate->start(args);
       team = std::move(candidate);

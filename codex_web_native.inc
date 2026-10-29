@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <regex>
 #include <git2.h>
+#include "codex_resources.h"
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1687,7 +1688,7 @@ struct Service {
         auto mime = req.path == "/"         ? "text/html; charset=utf-8"
                     : req.path == "/app.js" ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
-        reply(fd, 200, read_bytes(web / name), mime);
+        reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;
       }
       auto authenticated = authenticate(req);
@@ -1902,7 +1903,7 @@ int main(int argc, char **argv) {
     std::string operation = argc > 1 ? argv[1] : "web", host = "127.0.0.1", origin, add_user, revoke_user;
     int port = 8765;
     auto self = executable(argv[0]);
-    fs::path home = own_auth_path().parent_path(), state, assets = self.parent_path() / "web";
+    fs::path home = own_auth_path().parent_path(), state, assets;
     std::vector<std::string> arguments = {argv[0]};
     bool explicit_options = false;
     for (int i = 2; i < argc; ++i) {
@@ -1911,7 +1912,7 @@ int main(int argc, char **argv) {
         std::cout << "Native web: codex-cpp web [--root DIR] [--port 8765] [provider options]\nHosted web: "
                      "codex-cpp serve --state-dir DIR --origin https://host [--host 127.0.0.1]\nAccounts: "
                      "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. Keep web/ "
-                     "beside the binary.\n";
+                     "is embedded; --web-dir DIR overrides it.\n";
         return 0;
       }
       if (arg == "--port" || arg == "--host" || arg == "--origin" || arg == "--state-dir" ||
@@ -2006,9 +2007,8 @@ int main(int argc, char **argv) {
                 service->authority.find_first_of("/@?#\r\n\t ") == std::string::npos,
             "Use an origin without path or credentials");
     service->origin = origin;
-    require(fs::is_regular_file(assets / "index.html") && fs::is_regular_file(assets / "app.js") &&
-                fs::is_regular_file(assets / "style.css"),
-            "Missing web/ assets beside executable");
+    require(assets.empty() || (fs::is_regular_file(assets / "index.html") && fs::is_regular_file(assets / "app.js") &&
+                fs::is_regular_file(assets / "style.css")), "Incomplete --web-dir assets");
     service->listen();
     return 0;
   } catch (const std::exception &e) {
