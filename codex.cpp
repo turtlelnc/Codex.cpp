@@ -925,6 +925,7 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 }
 #include "codex_remote.inc"
 #include "codex_web.inc"
+#include "codex_team_client.inc"
 #include "codex_team_tui.inc"
 int main(int argc,char** argv){
   if(argc==2&&std::string(argv[1])=="--licenses"){std::cout<<codex_resource("licenses");return 0;}

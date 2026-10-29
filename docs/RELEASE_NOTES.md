@@ -1,5 +1,17 @@
-TUI `/team` now configures the native team server, accounts and access tokens.
-It shares settings with WebUI, and stops its own server when the TUI exits.
+TUI `/team` now includes native team-server setup and a complete HTTPS team client.
+Use "Team projects (HTTPS)" to sign in, create projects, manage members,
+configure shared/personal models, publish/sync/commit/merge branches with exact
+SHA confirmation, inspect tasks/audit and recover interrupted queues after review.
+"Agent tasks on server" queues shared/personal tasks, displays conversations,
+approves operations and stops tasks without opening WebUI. Any project member
+can approve shared work; the server records the actual actor. Creator-only
+membership and shared-credential rules are enforced by the same hosted API.
+
+Credentials are masked and never saved on the TUI client; session cookies stay
+in process memory. HTTPS certificate checks remain enabled. Normal chat outside
+the team menu still uses the local workspace; team actions use server workspaces.
+Local team-service settings remain shared with WebUI, and the TUI stops its own
+managed service when it exits.
 
 Download the executable for your OS/CPU. Windows x86 means 32-bit; x64 and
 ARM64 are separate downloads. macOS includes Intel and Apple Silicon builds.

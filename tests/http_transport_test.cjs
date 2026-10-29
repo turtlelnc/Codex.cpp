@@ -1,6 +1,8 @@
 const http=require('http'),{spawn}=require('child_process'),path=require('path'),assert=require('assert/strict');
 let redirected=0;const server=http.createServer((req,res)=>{
- if(req.url==='/redirect'){res.writeHead(302,{Location:'/redirected'});res.end();}
+ if(req.url==='/headers'){res.setHeader('Set-Cookie','codex_session=fixture; Secure; HttpOnly');res.end('headers');}
+ else if(req.url==='/large-headers'){res.setHeader('X-Oversized','x'.repeat(66000));res.end();}
+ else if(req.url==='/redirect'){res.writeHead(302,{Location:'/redirected'});res.end();}
  else if(req.url==='/redirected'){redirected++;res.end('unexpected');}
  else if(req.url==='/stream'){res.writeHead(200,{'Content-Type':'text/event-stream'});res.write('data: one\n\n');const t=setTimeout(()=>{res.write('data: two\n\n');res.end('data: done\n\n');},1300);res.on('close',()=>clearTimeout(t));}
  else if(req.url==='/slow'){const t=setTimeout(()=>res.end('late'),10000);res.on('close',()=>clearTimeout(t));}

@@ -156,7 +156,7 @@ int choose(const std::string& title,const std::vector<std::string>& options,size
 #endif
   watch_resize(false);overlay_active_=false;overlay_options_.clear();overlay_body_.clear();render();return result;
 }
-std::optional<std::string> form_input(const std::string& title,std::string value={}){
+std::optional<std::string> form_input(const std::string& title,std::string value={},bool secret=false){
   overlay_active_=true;overlay_title_=sanitize_text(title);overlay_choice_=0;
   overlay_body_="Enter to save · Esc to cancel";
 #if !defined(_WIN32)
@@ -164,7 +164,7 @@ std::optional<std::string> form_input(const std::string& title,std::string value
   if(raw_ok){termios raw=oldt;raw.c_lflag&=static_cast<tcflag_t>(~(ICANON|ECHO));raw.c_iflag&=static_cast<tcflag_t>(~(IXON|ICRNL));tcsetattr(STDIN_FILENO,TCSANOW,&raw);}
 #endif
   std::optional<std::string> result;watch_resize(true);
-  for(;;){overlay_options_={sanitize_text(value)+"▏"};render();int k=read_key();
+  for(;;){overlay_options_={(secret?std::string(value.size(),'*'):sanitize_text(value))+"▏"};render();int k=read_key();
 #if !defined(_WIN32)
     if(tui_interrupt_requested)break;
 #endif

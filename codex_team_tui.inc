@@ -1,6 +1,8 @@
+#include "codex_team_remote_tui.inc"
 // Shares the same native manager, persistence and stopped-only rules as WebUI.
 struct TeamConsole {
   native_web::LocalService service;
+  RemoteTeamConsole remote;
   explicit TeamConsole(const char* argv0){
     service.home=own_auth_path().parent_path();service.binary=native_web::executable(argv0);
     native_web::private_dir(service.home);
@@ -16,7 +18,7 @@ struct TeamConsole {
       body+="\nData: "+text(status,"state_dir")+"\nAccounts:";
       for(const auto& user:field(status,"users",arr()).items)body+=" "+user.str();
       body+="\n"+text(status,"error");
-      int choice=ui.settings_menu("Team settings",body,{"Configure HTTPS address and port","Manage accounts","Start team service","Stop team service","Connection and deployment","Back"});
+      int choice=ui.settings_menu("Team settings",body,{"Configure HTTPS address and port","Manage accounts","Start team service","Stop team service","Team projects (HTTPS)","Back","Connection and deployment"});
       if(choice<0||choice==5)return;
       if(choice==0){
         auto origin=ui.form_input("Team HTTPS address",text(status,"origin"));if(!origin)continue;
@@ -50,10 +52,11 @@ struct TeamConsole {
         while(service.team_running()&&std::chrono::steady_clock::now()<until)std::this_thread::sleep_for(std::chrono::milliseconds(20));
         ui.render();
       }}
+      else if(choice==4){remote.open(ui,text(status,"origin"));}
       else {auto origin=text(status,"origin");ui.settings_menu("Team connection and deployment",
         "Open "+origin+" in a browser; sign in with username and access token.\n"
         "Configure an HTTPS reverse proxy to 127.0.0.1:"+json_dump(field(status,"port"))+".\n"
-        "Project members and shared models are managed in the team's WebUI.\n"
+        "Use Team projects (HTTPS) here to manage members, models, branches and activity.\n"
         "Closing this TUI stops the team service it started.\n"
         "This console and the local WebUI use the same configuration; stop the other instance before changes.",{"Back"});}
     }catch(const std::exception& e){ui.settings_menu("Team settings error",e.what(),{"Back"});}}

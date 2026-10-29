@@ -1,6 +1,7 @@
 // Trusted host-side HTTP transport. Model tools cannot invoke arbitrary host requests.
 #include <curl/curl.h>
-struct WebReply { long status=0; std::string body,error; };
+#include <cctype>
+struct WebReply { long status=0; std::string body,error; std::map<std::string,std::string> headers; };
 static WebReply native_http(const std::string& url,const std::string& body,
     const std::vector<std::string>& headers,bool get=false,
     const std::function<void(const char*,size_t)>& on_bytes={},
@@ -18,6 +19,20 @@ static WebReply native_http(const std::string& url,const std::string& body,
   curl_easy_setopt(easy,CURLOPT_TIMEOUT,get?30L:300L);
   curl_easy_setopt(easy,CURLOPT_NOSIGNAL,1L);
   curl_easy_setopt(easy,CURLOPT_HTTPHEADER,list);
+  struct HeaderSink { WebReply& reply;size_t bytes=0; } header_sink{reply};
+  auto header_write=+[](char* data,size_t size,size_t count,void* opaque)->size_t{
+    auto& s=*static_cast<HeaderSink*>(opaque);const size_t n=size*count;
+    try {
+      if(n>65536-s.bytes){s.reply.error="HTTP headers exceeded 64 KB";return 0;}s.bytes+=n;
+      std::string line(data,n);
+      if(line.rfind("HTTP/",0)==0)s.reply.headers.clear();
+      else {auto colon=line.find(':');if(colon!=std::string::npos){auto key=line.substr(0,colon);
+        for(char& c:key)c=char(std::tolower(static_cast<unsigned char>(c)));
+        s.reply.headers[key]=trim(line.substr(colon+1));}}
+      return n;
+    }catch(...){s.reply.error="HTTP header callback failed";return 0;}
+  };
+  curl_easy_setopt(easy,CURLOPT_HEADERFUNCTION,header_write);curl_easy_setopt(easy,CURLOPT_HEADERDATA,&header_sink);
   if(!get){curl_easy_setopt(easy,CURLOPT_POSTFIELDS,body.data());curl_easy_setopt(easy,CURLOPT_POSTFIELDSIZE_LARGE,static_cast<curl_off_t>(body.size()));}
   // Keep system TLS validation and the user's explicit CA/proxy configuration.
   auto ca=getenv_or("CURL_CA_BUNDLE",getenv_or("SSL_CERT_FILE"));
