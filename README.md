@@ -11,7 +11,8 @@
 ## 编译
 
 需要 CMake、C/C++ 编译器（主程序 C++17），不需要 Python。保留全部 `.inc` 源文件；
-CMake 会把 `web/` 静态资源复制到二进制旁。
+CMake 将网页资源直接编入程序；`web/` 目录仅在开发和覆盖页面时使用。
+Linux/macOS 构建另需 OpenSSL 开发包及静态库；Windows 使用系统 Schannel。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -20,16 +21,17 @@ cmake --build build --config Release --parallel 2
 
 Linux/macOS/Termux 产物通常是 `build/codex-cpp`；Windows 可使用 Visual Studio 或 MinGW，
 Visual Studio 产物通常是 `build/Release/codex-cpp.exe`。
-首次配置会下载固定版本 libgit2 并校验 SHA-256，之后复用缓存；
+首次配置会下载固定版本 libgit2、libcurl 并校验 SHA-256，之后复用缓存；
 离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 指定已取得的依赖源码。
 
 后端开关和系统 Git 回退实现已移除；旧缓存中的关闭选项也不会再禁用内置 Git。
 不需要任何启用宏或后端选择参数。CMake 会自动编译、链接依赖。
 若手动使用 g++，仍需提供 libgit2 的头文件与链接参数；单独编译 codex.cpp 已不再是完整构建方式。
 
-只启动网页、登录服务、编辑文件不需要其他运行时。模型请求需要系统 `curl`；
+网页、登录、编辑文件和模型请求不需要其他语言运行时或系统 `curl`；
 上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。
 Agent 受限执行仍需要系统沙箱：Linux 使用 `bubblewrap`，macOS 使用 `sandbox-exec`。
+Linux Release 将 bubblewrap 一起嵌入单文件，但仍需内核允许用户命名空间。
 请以普通用户运行，程序拒绝以 root 启动网页服务。
 
 ### 平台验证范围
@@ -37,12 +39,32 @@ Agent 受限执行仍需要系统沙箱：Linux 使用 `bubblewrap`，macOS 使�
 | 平台 | 当前状态 |
 | --- | --- |
 | Linux | 已验证本地网页、真实 Agent 子进程、审批、多人队列、分支冲突与重启恢复 |
-| Windows | 原生服务已通过 MinGW-w64 交叉编译；尚未实机验证。原 Agent 的 AppContainer 沙箱未实现，依赖它的模型请求和协作 Git 操作会拒绝执行 |
+| Windows | 提供 x86、x64、ARM64 单文件构建与运行测试；AppContainer 沙箱未实现，受限 Shell、沙箱 Git 和团队开发操作仍会拒绝执行；模型 HTTP 请求不再依赖沙箱 |
 | macOS | 提供原生实现和 CI 构建配置，尚未实机验证；Agent 依赖系统提供可用的 `sandbox-exec` |
 | Android / Termux | 不依赖 Python，尚未实机验证；Agent 运行取决于设备内核和应用权限是否允许所需的 Linux 沙箱 |
 
 跨平台编译成功不等于完成所有平台的 Agent 沙箱。受限模式缺少沙箱时拒绝执行，不会自动放宽权限。
 Windows/Android 设备也可以直接用浏览器连接已部署的 Linux 服务器，不需要在客户端安装这些工具。
+
+### 单文件下载
+
+[GitHub Releases](https://github.com/turtlelnc/Codex.cpp/releases) 的发布流程涵盖 Windows x86（32 位）、
+x64、ARM64，macOS Intel / Apple Silicon，以及 Linux x64 / ARM64。
+每个平台先验证把可执行文件独立复制到空目录、清空子进程 PATH 后的模型与网页功能，
+并检查动态库依赖；全部成功才发布七个文件与 `SHA256SUMS.txt`。
+Windows 静态链接 CRT，macOS 静态链接 OpenSSL 并使用系统证书信任，Linux 使用静态 musl/OpenSSL。
+无需额外 DLL、网页目录、Python、Node、Git 或 curl 可执行文件。
+运行 `--licenses` 可查看内嵌许可证；平台限制和可选工具依赖见 [发行说明](docs/RELEASE_NOTES.md)。
+
+## TUI 团队设置
+
+在终端运行 `./codex-cpp --ui tui`，输入 `/team` 打开菜单。
+可配置 HTTPS 对外地址和本机端口，登记账号、重置令牌、撤销账号，并启动或停止团队服务。
+令牌只在临时面板显示一次，不写入会话或输入历史。
+账号操作必须先停服，撤销账号保留项目文件；退出 TUI 会停止由它启动的服务。
+配置与 WebUI 的“团队”入口共用，数据默认在 `~/.codex-cpp/team-server`。
+两处均只管理自己启动的进程，不能接管另一实例；切换管理入口前请先停服。
+成员打开配置的 HTTPS 地址登录后，在网页中管理项目成员和共同模型；HTTPS 代理需单独部署。
 
 ## 本地网页
 

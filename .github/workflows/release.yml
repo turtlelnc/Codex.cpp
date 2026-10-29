@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           tail -n 100 release-build.log >> "$GITHUB_STEP_SUMMARY"
-          node -e 'const fs=require("fs");for(const line of fs.readFileSync("release-build.log","utf8").split(/\r?\n/).filter(s=>/error:|Error:|error C[0-9]|error LNK|not found|cannot find|undefined reference|AssertionError|FAILED|fatal|not supported|Unable to find|ERROR/i.test(s)).slice(-15))console.log("::error::"+line.replaceAll("%","%25"));'
+          node -e 'const fs=require("fs");const lines=fs.readFileSync("release-build.log","utf8").split(/\r?\n/);for(const line of lines.filter(s=>/error:|CMake Error|ERROR:|error C[0-9]|error LNK|cannot find|undefined reference|AssertionError|fatal error/i.test(s)).slice(-15).concat(lines.filter(s=>s.trim()).slice(-25)))console.log("::error::"+line.replaceAll("%","%25"));'
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: binaries
