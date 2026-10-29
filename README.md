@@ -234,3 +234,5 @@ node tests/team_service_test.cjs ./build/codex-cpp
 第一项不依赖 Agent 沙箱；后两项完整测试需要受限进程执行可用，集成测试还需要 `curl` 和 `git`。
 测试使用本地假模型服务，不消耗模型额度。浏览器回归脚本另需 Playwright、Chromium 和 OpenSSL。
 GitHub Actions 配置包含 Linux/macOS/Windows 构建与基础冒烟测试，以及 Linux 集成测试。
+
+WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量说明](docs/WEBUI_QUALITY.md)。

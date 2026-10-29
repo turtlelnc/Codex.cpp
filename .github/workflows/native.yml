@@ -85,3 +85,17 @@ jobs:
               node -e 'for (const line of require("fs").readFileSync(process.argv[1], "utf8").split(/\r?\n/).filter(s => /^FAIL\b|Error:|AssertionError/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));' "$log"
             fi
           done
+  webui-browser-regressions:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/webui-tests" playwright@1.62.1
+          "$RUNNER_TEMP/webui-tests/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run WebUI race, layout and rendering regressions
+        run: NODE_PATH="$RUNNER_TEMP/webui-tests/node_modules" node tests/webui_quality_test.cjs
