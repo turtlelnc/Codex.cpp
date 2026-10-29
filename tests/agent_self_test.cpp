@@ -5,6 +5,10 @@
 
 static bool self_test(const fs::path& root){int failed = 0;std::error_code root_ec;fs::create_directories(root,root_ec);
 auto check =[&](bool ok,const char* what){std::cout <<(ok ? "PASS " : "FAIL ")<< what << '\n';if(!ok)++failed; };
+check(native_web::visible_user_message("# Available skills\nexample\n\n<environment_context>\nmetadata\n</environment_context>\n\n你好")=="你好","WebUI hides injected context");
+check(native_web::visible_user_message("<environment_context>\nmetadata\n</environment_context>\n\n<current_goal>goal</current_goal>\n\nhello")=="hello","WebUI hides injected goal");
+check(native_web::visible_user_message("Workspace root: /tmp\nSandbox policy: read-only\nUser task:\nhello")=="hello","WebUI legacy user text");
+check(native_web::visible_user_message("hello\n\nUser task:\nkeep this")=="hello\n\nUser task:\nkeep this","WebUI preserves literal task markers");
 const std::string sample = R"({"id":"resp_123","output":[{"type":"function_call","call_id":"call_7","name":"read_file","arguments":"{\"path\":\"a.txt\"}"}]})";
 std::string parse_err;auto parsed_response=parse_api_response(sample,false,parse_err); check(parsed_response && parsed_response->calls.size()==1 && parsed_response->calls[0].name=="read_file" &&
   parsed_response->calls[0].call_id=="call_7" && json_string_field(parsed_response->calls[0].arguments,"path")==std::optional<std::string>("a.txt"),"Responses function_call parser");

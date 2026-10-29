@@ -888,6 +888,31 @@ std::string command(std::vector<std::string> args, int timeout = 30,
   require(child.status == 0, "Command failed; inspect workspace and configuration");
   return out;
 }
+// Project stored model context into user-facing text without changing model input.
+static std::string visible_user_message(const std::string &value) {
+  const std::string environment_end = "</environment_context>";
+  const bool contextual = value.rfind("# Available skills\n", 0) == 0 ||
+                          value.rfind("<environment_context>\n", 0) == 0;
+  if (contextual) {
+    auto end = value.find(environment_end);
+    if (end != std::string::npos) {
+      end += environment_end.size();
+      if (value.compare(end, std::string("\n\n<current_goal>").size(), "\n\n<current_goal>") == 0) {
+        auto goal_end = value.find("</current_goal>", end + std::string("\n\n<current_goal>").size());
+        if (goal_end == std::string::npos) return value;
+        end = goal_end + std::string("</current_goal>").size();
+      }
+      if (value.compare(end, 2, "\n\n") == 0) return value.substr(end + 2);
+    }
+  }
+  // Older sessions used the workspace/sandbox text wrapper.
+  if (value.rfind("Workspace root:", 0) == 0) {
+    const std::string marker = "\nUser task:\n";
+    auto task = value.find(marker);
+    if (task != std::string::npos) return value.substr(task + marker.size());
+  }
+  return value;
+}
 struct App {
   Workspace workspace;
   fs::path binary, home, auth_home, state_path, registry_path;
@@ -1058,9 +1083,7 @@ struct App {
         else
           for (auto &p : content.items)
             value += text(p, "text");
-        auto pos = value.rfind("\n\nUser task:\n");
-        if (role == "user" && pos != std::string::npos)
-          value = value.substr(pos + 13);
+        if (role == "user") value = visible_user_message(value);
         if (!value.empty())
           rows.push_back(obj({{"k", str(role)}, {"text", str(value)}}));
       } else if (kind == "function_call") {
@@ -1116,9 +1139,7 @@ struct App {
               if (content.kind == J::Array)
                 for (auto &part : content.items)
                   value += text(part, "text");
-              auto task = value.rfind("\n\nUser task:\n");
-              if (task != std::string::npos)
-                value = value.substr(task + 13);
+              value = visible_user_message(value);
               title = value.substr(0, value.find('\n')).substr(0, 72);
               if (!title.empty())
                 title_cache[id] = title;
