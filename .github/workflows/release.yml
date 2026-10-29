@@ -58,6 +58,7 @@ jobs:
           node tests/team_service_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           node tests/tui_team_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           node tests/team_remote_tui_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+          node tests/review_regressions.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Prepare download
         shell: bash
         run: |

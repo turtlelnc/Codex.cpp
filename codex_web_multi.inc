@@ -290,6 +290,7 @@ struct HostedService : Service {
       workers[id].join();
     active_projects.insert(id);
     workers[id] = std::thread([this, id]() {
+      try {
       while (true) {
         J task;
         size_t index = 0;
@@ -394,6 +395,11 @@ struct HostedService : Service {
       }
       std::lock_guard<std::recursive_mutex> lock(mutex);
       active_projects.erase(id);
+      } catch(const std::exception& error) {
+        std::cerr<<"Team worker failed; stopping service: "<<error.what()<<'\n';
+        begin_shutdown();
+        stopping_service=true;
+      }
     });
   }
   void audit(const std::string &user, const std::string &id, const J &request) {

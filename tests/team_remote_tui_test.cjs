@@ -31,6 +31,7 @@ class Client {
  await owner.send('2','Shared models');await owner.send('2','Provider name');await owner.send('Fixture\r','Provider API base URL');await owner.send('\x7f'.repeat(100)+'http://127.0.0.1:'+model.address().port+'\r','Provider API');await owner.send('1','Model IDs');await owner.send('fixture-model\r','API key');
  const key='private-tui-fixture-key';await owner.send(key+'\r','Project: demo');assert(!owner.output.includes(key),'API key must never be echoed');
  await owner.send('2','Shared models');await owner.send('2','Provider: Fixture');await owner.send('2','Choose model');await owner.send('1','Project: demo');assert.equal((await api.rpc('snapshot')).model,'fixture-model');assert(!JSON.stringify(await api.rpc('providers')).includes(key));
+ const activeBefore=(await api.rpc('providers')).active;await owner.send('2','Shared models');await owner.send('1','Provider: Codex');await owner.send('2','Choose model');await owner.send('\x1b','Project: demo');assert.equal((await api.rpc('providers')).active,activeBefore,'cancel must preserve active provider');
  await owner.send('7','Server Agent workspace');await owner.send('1','Server Agent');await owner.send('1','Task for server Agent');await owner.send('Write a file on the server\r','Task queued');await owner.send('3','Project: demo');
  stage='pending server approval';await wait(async()=>(await api.rpc('snapshot')).pending?.call_id);
  const member=new Terminal('member');await member.login(origin,'bob',tokens.bob);await member.send('1','Project: demo');

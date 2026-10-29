@@ -78,12 +78,11 @@ struct RemoteTeamConsole {
     if(action<0||action==static_cast<int>(actions.size()-1))return;
     if(action==0){rpc("provider_use",obj({{"id",str(id)}}),personal);}
     else if(action==1){
-      rpc("provider_use",obj({{"id",str(id)}}),personal);
       std::vector<std::string> choices;for(const auto& model:field(provider,"models",arr()).items)choices.push_back(model.str());
-      if(choices.empty()){auto result=rpc("models",obj(),personal);for(const auto& model:field(result,"models",arr()).items)choices.push_back(text(model,"id"));}
+      if(choices.empty()&&id==text(catalog,"active")){auto result=rpc("models",obj(),personal);for(const auto& model:field(result,"models",arr()).items)choices.push_back(text(model,"id"));}
       choices.push_back("Enter model ID");int index=ui.choose("Choose model",choices);if(index<0)return;
       std::optional<std::string> model;if(index==static_cast<int>(choices.size()-1))model=ui.form_input("Model ID");else model=choices[static_cast<size_t>(index)];
-      if(model)rpc("model",obj({{"model",str(*model)}}),personal);
+      if(model){rpc("provider_use",obj({{"id",str(id)}}),personal);rpc("model",obj({{"model",str(*model)}}),personal);}
     }else if(action==2){auto effort=ui.form_input("Reasoning effort (blank uses default)");if(effort){rpc("provider_use",obj({{"id",str(id)}}),personal);rpc("reasoning",obj({{"effort",str(*effort)}}),personal);}}
     else if(flag(provider,"builtin")){rpc("provider_use",obj({{"id",str(id)}}),personal);enqueue(ui,"login",obj(),personal);}
     else if(action==3){save_provider(ui,provider,personal);}

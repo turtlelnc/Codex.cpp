@@ -22,6 +22,7 @@ jobs:
       - run: node tests/tui_team_test.cjs build-libgit2/codex-cpp
       - run: node tests/team_remote_tui_test.cjs build-libgit2/codex-cpp
       - run: node tests/direct_team_test.cjs build-libgit2/codex-cpp
+      - run: node tests/review_regressions.cjs build-libgit2/codex-cpp
   build-and-smoke:
     strategy:
       fail-fast: false

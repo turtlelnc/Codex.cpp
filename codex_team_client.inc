@@ -21,7 +21,7 @@ struct TeamConnection {
     auto set_cookie=response.headers.find("set-cookie");
     if(set_cookie!=response.headers.end()){
       auto value=set_cookie->second.substr(0,set_cookie->second.find(';'));
-      require(value.rfind("codex_session=",0)==0,"Unexpected team session cookie");cookie=value;
+      require(value.rfind("codex_session_",0)==0||value.rfind("codex_session=",0)==0,"Unexpected team session cookie");cookie=value;
     }
     return *parsed;
   }

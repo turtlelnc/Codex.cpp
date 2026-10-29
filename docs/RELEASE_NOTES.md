@@ -1,3 +1,9 @@
+Reliability fixes: HTTP requests have a total read deadline and stop promptly
+during shutdown. Background task storage failures stop the service cleanly
+instead of aborting the process. Windows state replacement checks write/flush/
+close success before replacing the previous file. Hosted login cookies are
+scoped by server port. Cancelling model selection in TUI preserves the provider.
+
 Team hosting now supports direct IP/port access without a public HTTPS address,
 domain, certificate or reverse proxy. In TUI or WebUI, set the listen IP/port and
 leave the optional access URL blank. Connect using `http://SERVER-IP:PORT`.

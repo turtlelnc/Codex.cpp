@@ -321,9 +321,13 @@ void atomic_save(const fs::path &path, const J &value) {
   temporary += "." + entropy();
   auto data = json_dump(value);
 #if defined(_WIN32)
+  struct RemovePartial {fs::path path;~RemovePartial(){std::error_code ignored;fs::remove(path,ignored);}} remove_partial{temporary};
   std::ofstream stream(temporary, std::ios::binary);
   stream << data;
+  stream.flush();
+  require(bool(stream),"Cannot write state file");
   stream.close();
+  require(bool(stream),"Cannot close state file");
   protect(temporary);
   require(MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) !=
               0,
@@ -341,7 +345,7 @@ void atomic_save(const fs::path &path, const J &value) {
     }
     offset += static_cast<size_t>(n);
   }
-  ::fsync(fd);
+  if(::fsync(fd)!=0){::close(fd);fs::remove(temporary);throw std::runtime_error("Cannot sync state file");}
   ::close(fd);
   require(::rename(temporary.c_str(), path.c_str()) == 0, "Cannot replace state");
   int directory = ::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -1572,7 +1576,20 @@ void reply(Socket fd, int code, const std::string &body,
 void response(Socket fd, int code, const J &data, const std::string &cookie = "") {
   reply(fd, code, json_dump(data), "application/json; charset=utf-8", cookie);
 }
+static std::atomic<bool> stopping_service{false};
 Request request(Socket fd) {
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+  auto bounded_receive=[&](char* bytes,size_t size){
+    for(;;){
+      require(!stopping_service,"Service is stopping");
+      require(std::chrono::steady_clock::now()<deadline,"HTTP request deadline exceeded");
+      fd_set readers;FD_ZERO(&readers);FD_SET(fd,&readers);timeval tick{0,100000};
+      const int ready=::select(static_cast<int>(fd)+1,&readers,nullptr,nullptr,&tick);
+      if(ready>0)break;
+      require(ready>=0,"Cannot wait for HTTP request");
+    }
+    return ::recv(fd,bytes,static_cast<int>(size),0);
+  };
 #if defined(_WIN32)
   DWORD timeout = 10000;
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char *>(&timeout), sizeof timeout);
@@ -1586,7 +1603,7 @@ Request request(Socket fd) {
   char buffer[8192];
   size_t end;
   while ((end = data.find("\r\n\r\n")) == std::string::npos) {
-    auto n = ::recv(fd, buffer, sizeof buffer, 0);
+    auto n = bounded_receive(buffer, sizeof buffer);
     require(n > 0, "Incomplete HTTP request");
     data.append(buffer, static_cast<size_t>(n));
     require(data.size() <= 65536, "HTTP headers too large");
@@ -1618,7 +1635,7 @@ Request request(Socket fd) {
   require(length <= 2 * 1024 * 1024, "HTTP body too large");
   result.body = data.substr(end + 4);
   while (result.body.size() < length) {
-    auto n = ::recv(fd, buffer, sizeof buffer, 0);
+    auto n = bounded_receive(buffer, sizeof buffer);
     require(n > 0, "Incomplete HTTP body");
     result.body.append(buffer, static_cast<size_t>(n));
   }
@@ -1632,7 +1649,7 @@ struct WebSession {
   std::string user, csrf;
   std::time_t expires = 0;
 };
-static std::atomic<bool> stopping_service{false};
+
 static_assert(std::atomic<bool>::is_always_lock_free, "Signal flag must be lock-free");
 void stop_service(int) {
   stopping_service = 1;
@@ -1668,7 +1685,7 @@ struct Service {
         local->child->terminate();
     }
   }
-  std::string cookie_name() const {return hosted()?"codex_session":"codex_local_session_"+std::to_string(port);}
+  std::string cookie_name() const {return (hosted()?"codex_session_":"codex_local_session_")+std::to_string(port);}
   std::string cookie(const std::string &token) {
     return cookie_name()+"=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" +
            (origin.rfind("https://", 0) == 0 ? std::string("; Secure") : "");
