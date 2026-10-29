@@ -33,6 +33,7 @@ jobs:
           cmake --build build-release --config Release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
       - name: Build macOS (static TLS with system certificate trust)
         if: runner.os == 'macOS'
+        shell: bash
         run: |
           cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee release-build.log
           cmake --build build-release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
@@ -40,6 +41,7 @@ jobs:
           codesign --force --sign - build-release/codex-cpp
       - name: Build Linux (static musl, TLS and embedded sandbox)
         if: runner.os == 'Linux'
+        shell: bash
         run: docker run --rm -v "$PWD:/src" -w /src alpine:3.22 sh scripts/build-linux-release.sh 2>&1 | tee release-build.log
       - name: Verify standalone executable
         shell: bash
@@ -49,6 +51,7 @@ jobs:
           CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Verify Linux embedded sandbox and team workflow
         if: runner.os == 'Linux'
+        shell: bash
         run: |
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
           node tests/team_service_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
