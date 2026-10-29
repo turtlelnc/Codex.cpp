@@ -61,7 +61,8 @@ jobs:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
       - run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build-core --target codex-self-test --parallel 2
+      - run: cmake --build build-core --target codex-self-test codex-transport-test --parallel 2
+      - run: node tests/http_transport_test.cjs build-core/codex-transport-test
       - shell: bash
         run: |
           ./build-core/codex-self-test 2>&1 | tee native-self-test.log
