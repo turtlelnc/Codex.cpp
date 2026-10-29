@@ -1,0 +1,57 @@
+name: Apple Silicon WebUI preview
+on:
+  push:
+    branches: ['fix/webui-quality']
+    paths: ['.github/workflows/macos-arm64-preview.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apple-silicon:
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compile native Apple Silicon single executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          cmake --build build-preview --target codex-cpp --parallel 3
+          strip build-preview/codex-cpp
+          codesign --force --sign - build-preview/codex-cpp
+      - name: Verify native execution and embedded WebUI
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/standalone_test.cjs build-preview/codex-cpp
+          node tests/runtime_dependencies.cjs build-preview/codex-cpp
+          CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs build-preview/codex-cpp
+          node tests/direct_team_test.cjs build-preview/codex-cpp
+      - name: Package executable with permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build-preview/codex-cpp dist/codex-cpp-macos-arm64
+          node scripts/package-posix-release.cjs dist macos-arm64
+          printf 'Apple Silicon WebUI test build\n\nSource commit: %s\nBranch: %s\nmacOS 12 or newer. Extract the ZIP, then run:\n\n    ./codex-cpp-macos-arm64 web --root /path/to/project\n\nThe single executable embeds the WebUI and uses no third-party shared libraries. Ad-hoc signed; not Apple-notarized.\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" > dist/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cpp-macos-arm64-webui-preview
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish separate preview download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_tag="webui-preview-${GITHUB_SHA:0:7}"
+          gh release create "$preview_tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title "Apple Silicon WebUI preview (${GITHUB_SHA:0:7})" --notes-file dist/BUILD.txt dist/codex-cpp-macos-arm64.zip dist/DOWNLOADS_SHA256SUMS.txt dist/BUILD.txt
