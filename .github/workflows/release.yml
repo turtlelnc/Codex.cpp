@@ -62,6 +62,13 @@ jobs:
         run: |
           mkdir -p dist
           cp '${{ matrix.binary }}' 'dist/codex-cpp-${{ matrix.platform }}${{ matrix.ext }}'
+      - name: Verify POSIX archive on its native platform
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir packaging-check
+          cp '${{ matrix.binary }}' 'packaging-check/codex-cpp-${{ matrix.platform }}'
+          node scripts/package-posix-release.cjs packaging-check '${{ matrix.platform }}'
       - uses: actions/upload-artifact@v4
         with:
           name: codex-cpp-${{ matrix.platform }}
@@ -89,7 +96,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          node scripts/package-posix-release.cjs dist
           cd dist
-          test "$(find . -maxdepth 1 -type f -name 'codex-cpp-*' | wc -l)" -eq 7
+          test "$(find . -maxdepth 1 -type f -name 'codex-cpp-*' | wc -l)" -eq 11
           sha256sum codex-cpp-* > SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Codex.cpp $GITHUB_REF_NAME" --notes-file ../docs/RELEASE_NOTES.md --verify-tag codex-cpp-* SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Codex.cpp $GITHUB_REF_NAME" --notes-file ../docs/RELEASE_NOTES.md --verify-tag codex-cpp-* SHA256SUMS.txt DOWNLOADS_SHA256SUMS.txt

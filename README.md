@@ -54,6 +54,9 @@ x64、ARM64，macOS Intel / Apple Silicon，以及 Linux x64 / ARM64。
 并检查动态库依赖；全部成功才发布七个文件与 `SHA256SUMS.txt`。
 Windows 静态链接 CRT，macOS 静态链接 OpenSSL 并使用系统证书信任，Linux 使用静态 musl/OpenSSL。
 无需额外 DLL、网页目录、Python、Node、Git 或 curl 可执行文件。
+macOS 建议下载 `.zip`，Linux 建议下载 `.tar.gz`；解压后仍是一个文件，并保留执行权限。
+浏览器直接下载裸文件时通常会丢失执行权限，Finder 可能将其当作文本文件。
+此时在终端对实际文件运行 `chmod +x 文件名`，再用 `./文件名` 启动。
 运行 `--licenses` 可查看内嵌许可证；平台限制和可选工具依赖见 [发行说明](docs/RELEASE_NOTES.md)。
 
 ## TUI 团队设置

@@ -15,7 +15,10 @@ managed service when it exits.
 
 Download the executable for your OS/CPU. Windows x86 means 32-bit; x64 and
 ARM64 are separate downloads. macOS includes Intel and Apple Silicon builds.
-Linux includes x64 and ARM64 builds. On macOS/Linux, run `chmod +x codex-cpp-*`.
+Linux includes x64 and ARM64 builds. On macOS, download the `.zip`; on Linux,
+download the `.tar.gz`. Each archive contains exactly one executable and preserves
+its executable permission. Bare downloads may lose this permission: run
+`chmod +x codex-cpp-<platform>` before launching those from Terminal.
 Use `./codex-cpp-<platform> web --root /path/to/project` or start the TUI directly.
 
 WebUI, libgit2 and libcurl are embedded; Windows uses static CRT and system TLS,
