@@ -1,5 +1,16 @@
-TUI `/team` now includes native team-server setup and a complete HTTPS team client.
-Use "Team projects (HTTPS)" to sign in, create projects, manage members,
+Team hosting now supports direct IP/port access without a public HTTPS address,
+domain, certificate or reverse proxy. In TUI or WebUI, set the listen IP/port and
+leave the optional access URL blank. Connect using `http://SERVER-IP:PORT`.
+CLI example: `codex-cpp serve --state-dir ./team-data --host 0.0.0.0 --port 8766`.
+`0.0.0.0` listens on all IPv4 interfaces; `127.0.0.1` limits access to this machine.
+An optional `--origin` pins a DNS or reverse-proxy URL. Existing HTTPS proxy
+configurations remain compatible and retain loopback binding by default.
+HTTP traffic is unencrypted; HTTPS proxying remains available when needed.
+Authentication, same-origin/CSRF checks and direct-mode IP/port Host validation
+remain enforced; HTTPS cookies retain Secure, HTTP cookies omit Secure.
+
+TUI `/team` includes native team-server setup and an HTTP/HTTPS team client.
+Use "Team projects (HTTP/HTTPS)" to sign in, create projects, manage members,
 configure shared/personal models, publish/sync/commit/merge branches with exact
 SHA confirmation, inspect tasks/audit and recover interrupted queues after review.
 "Agent tasks on server" queues shared/personal tasks, displays conversations,

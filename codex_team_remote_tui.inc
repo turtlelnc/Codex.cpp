@@ -142,7 +142,7 @@ struct RemoteTeamConsole {
   }
   void open(TuiRenderer& ui,const std::string& default_origin){using namespace native_web;
     if(!connection.connected()){
-      auto url=ui.form_input("Team server HTTPS address",connection.origin.empty()?default_origin:connection.origin);if(!url)return;
+      auto url=ui.form_input("Team server URL (HTTP or HTTPS)",connection.origin.empty()?default_origin:connection.origin);if(!url)return;
       auto user=ui.form_input("Team username");if(!user)return;
       auto token=ui.form_input("Team access token",{},true);if(!token)return;
       struct Wipe {std::string& value;~Wipe(){std::fill(value.begin(),value.end(),'\0');}} wipe{*token};

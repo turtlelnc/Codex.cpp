@@ -14,17 +14,18 @@ struct TeamConsole {
   void open(TuiRenderer& ui){using namespace native_web;
     for(;;){try{
       auto status=rpc("team_get");std::string body=flag(status,"running")?"Team service running":"Team service stopped";
-      body+="\nHTTPS: "+text(status,"origin","not configured")+"\nPort: "+json_dump(field(status,"port"));
+      body+="\nListen: "+text(status,"host")+":"+json_dump(field(status,"port"))+"\nAccess: "+text(status,"url");
       body+="\nData: "+text(status,"state_dir")+"\nAccounts:";
       for(const auto& user:field(status,"users",arr()).items)body+=" "+user.str();
       body+="\n"+text(status,"error");
-      int choice=ui.settings_menu("Team settings",body,{"Configure HTTPS address and port","Manage accounts","Start team service","Stop team service","Team projects (HTTPS)","Back","Connection and deployment"});
+      int choice=ui.settings_menu("Team settings",body,{"Configure listen address and port","Manage accounts","Start team service","Stop team service","Team projects (HTTP/HTTPS)","Back","Connection and deployment"});
       if(choice<0||choice==5)return;
       if(choice==0){
-        auto origin=ui.form_input("Team HTTPS address",text(status,"origin"));if(!origin)continue;
-        auto port=ui.form_input("Loopback backend port",json_dump(field(status,"port")));if(!port)continue;
+        auto origin=ui.form_input("Access URL (optional; blank uses direct IP)",text(status,"origin"));if(!origin)continue;
+        auto host=ui.form_input("Listen IPv4 address",text(status,"host"));if(!host)continue;
+        auto port=ui.form_input("Listen port",json_dump(field(status,"port")));if(!port)continue;
         require(!port->empty()&&port->size()<=5&&std::all_of(port->begin(),port->end(),[](unsigned char c){return std::isdigit(c);}),"Port must be an integer");
-        rpc("team_save",obj({{"origin",str(*origin)},{"port",number(std::stoi(*port))}}));
+        rpc("team_save",obj({{"origin",str(*origin)},{"host",str(*host)},{"port",number(std::stoi(*port))}}));
       }else if(choice==1){
         service.stopped_only();std::vector<std::string> names;
         for(const auto& user:field(status,"users",arr()).items)names.push_back(user.str());
@@ -52,11 +53,12 @@ struct TeamConsole {
         while(service.team_running()&&std::chrono::steady_clock::now()<until)std::this_thread::sleep_for(std::chrono::milliseconds(20));
         ui.render();
       }}
-      else if(choice==4){remote.open(ui,text(status,"origin"));}
-      else {auto origin=text(status,"origin");ui.settings_menu("Team connection and deployment",
-        "Open "+origin+" in a browser; sign in with username and access token.\n"
-        "Configure an HTTPS reverse proxy to 127.0.0.1:"+json_dump(field(status,"port"))+".\n"
-        "Use Team projects (HTTPS) here to manage members, models, branches and activity.\n"
+      else if(choice==4){remote.open(ui,text(status,"url"));}
+      else {ui.settings_menu("Team connection and deployment",
+        "Connect to http://SERVER-IP:"+json_dump(field(status,"port"))+"; sign in with username and access token.\n"
+        "0.0.0.0 listens on all IPv4 interfaces; 127.0.0.1 allows local connections only.\n"
+        "Access URL is optional. Set it for a fixed DNS name or HTTPS reverse proxy. HTTP traffic is not encrypted.\n"
+        "Use Team projects (HTTP/HTTPS) here to manage members, models, branches and activity.\n"
         "Closing this TUI stops the team service it started.\n"
         "This console and the local WebUI use the same configuration; stop the other instance before changes.",{"Back"});}
     }catch(const std::exception& e){ui.settings_menu("Team settings error",e.what(),{"Back"});}}

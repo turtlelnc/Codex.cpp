@@ -10,8 +10,8 @@ int main(int argc,char** argv){
   auto headers=native_http(base+"/headers","",{},true);
   check(headers.error.empty()&&headers.headers["set-cookie"]=="codex_session=fixture; Secure; HttpOnly","session cookie header captured case insensitively");
   check(native_http(base+"/large-headers","",{},true).error=="HTTP headers exceeded 64 KB","bounded response headers");
-  bool invalid_origin=false;try{TeamConnection::validate_origin("http://127.0.0.1");}catch(...){invalid_origin=true;}
-  check(invalid_origin&&TeamConnection::validate_origin("https://team.example.com/")=="https://team.example.com","team connections require a clean HTTPS origin");
+  bool invalid_origin=false;try{TeamConnection::validate_origin("ftp://127.0.0.1");}catch(...){invalid_origin=true;}
+  check(invalid_origin&&TeamConnection::validate_origin("https://team.example.com/")=="https://team.example.com"&&TeamConnection::validate_origin("http://127.0.0.1:8766")=="http://127.0.0.1:8766","team connections accept clean HTTP and HTTPS origins");
   auto bad=native_http(base,"",{"X-Test: x\r\nInjected: value"},true);
   check(!bad.error.empty()&&bad.status==0,"header injection rejected");
   check(!native_http("file:///etc/passwd","",{},true).error.empty(),"non HTTP protocols rejected");

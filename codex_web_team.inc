@@ -10,6 +10,7 @@ struct LocalService : Service {
   J settings() {
     return read_json(home / "team-service.json");
   }
+  std::string listen_host(const J& config){return text(config,"host",text(config,"origin").empty()?"0.0.0.0":"127.0.0.1");}
   bool team_running() {
     if (team && team_stopping && std::chrono::steady_clock::now() - stop_at > std::chrono::seconds(15)) {
       team->terminate();
@@ -39,6 +40,8 @@ struct LocalService : Service {
                 {"sandbox_available", boolean(sandbox_available())},
                 {"stopping", boolean(team_stopping)},
                 {"origin", str(text(config, "origin"))},
+                {"host",str(listen_host(config))},
+                {"url",str(text(config,"origin").empty()?"http://"+(listen_host(config)=="0.0.0.0"?std::string("127.0.0.1"):listen_host(config))+":"+json_dump(field(config,"port",number(8766))):text(config,"origin"))},
                 {"port", field(config, "port", number(8766))},
                 {"users", arr(users)},
                 {"state_dir", str(team_home().u8string())},
@@ -77,11 +80,9 @@ struct LocalService : Service {
     if (op == "team_save") {
       stopped_only();
       auto origin = text(request, "origin");
-      while (!origin.empty() && origin.back() == '/')
-        origin.pop_back();
-      require(origin.rfind("https://", 0) == 0 && origin.size() <= 2048 && origin.size() > 8 &&
-                  origin.substr(8).find_first_of("/@?#\r\n\t ") == std::string::npos,
-              "请填写不含路径、账号或查询参数的 HTTPS 地址。");
+      if(!origin.empty())origin=browser_origin(origin);
+      auto host=text(request,"host",origin.empty()?"0.0.0.0":"127.0.0.1");
+      require(ipv4_address(host),"监听地址必须是 IPv4 地址，例如 0.0.0.0 或 127.0.0.1。");
       auto value = field(request, "port");
       require(value.kind == J::Other && value.value.size() <= 5 && !value.value.empty() &&
                   std::all_of(value.value.begin(), value.value.end(),
@@ -89,7 +90,7 @@ struct LocalService : Service {
               "端口必须是整数。");
       int next = std::stoi(value.value);
       require(next >= 1 && next <= 65535 && next != port, "团队端口必须有效，且不能与本地网页端口相同。");
-      atomic_save(home / "team-service.json", obj({{"origin", str(origin)}, {"port", number(next)}}));
+      atomic_save(home / "team-service.json", obj({{"origin", str(origin)}, {"host",str(host)}, {"port", number(next)}}));
       team_error.clear();
       return team_status();
     }
@@ -119,9 +120,8 @@ struct LocalService : Service {
       stopped_only();
       auto config = settings();
       auto origin = text(config, "origin");
-      require(!origin.empty(), "请先保存团队服务地址和端口。");
       require(!enrolled().empty(), "请先登记至少一个登录账号。");
-      auto value = field(config, "port");
+      auto value = field(config, "port",number(8766));
       require(value.kind == J::Other, "端口配置损坏，请重新保存。");
       int next = std::stoi(value.value);
       require(next >= 1 && next <= 65535 && next != port, "端口无效，请重新保存配置。");
@@ -129,8 +129,9 @@ struct LocalService : Service {
 #if defined(__linux__)
       args.insert(args.end(), {"--native-child", std::to_string(::getpid())});
 #endif
-      args.insert(args.end(), {"serve", "--state-dir", team_home().u8string(), "--origin", origin, "--port",
+      args.insert(args.end(), {"serve", "--state-dir", team_home().u8string(), "--host",listen_host(config), "--port",
                                std::to_string(next)});
+      if(!origin.empty())args.insert(args.end(),{"--origin",origin});
       if(!web.empty())args.insert(args.end(), {"--web-dir", web.u8string()});
       auto candidate = std::make_unique<Child>();
       candidate->start(args);

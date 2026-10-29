@@ -778,7 +778,7 @@ Usage:
   codex-cpp [options] [prompt...]
   codex-cpp -i [options]
   codex-cpp web [--root DIR] [--port PORT] [provider options]
-  codex-cpp serve --origin https://codex.example.com [--port PORT]
+  codex-cpp serve --state-dir DIR [--host IP] [--port PORT] [--origin URL]
   codex-cpp connect USER@HOST [--project NAME] [--port PORT] [--check | --login]
 
 Provider/API options:

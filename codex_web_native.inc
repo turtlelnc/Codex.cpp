@@ -34,6 +34,34 @@ extern char **environ;
 #endif
 namespace native_web {
 using J = Json;
+void require(bool condition,const std::string& message);
+// Shared normalization for optional browser origins and TUI server URLs.
+std::string browser_origin(std::string value) {
+  while(!value.empty()&&value.back()=='/')value.pop_back();
+  require(value.size()<=2048&&value.find_first_of("@?#\\") == std::string::npos&&
+    std::none_of(value.begin(),value.end(),[](unsigned char c){return c<=32||c==127;}),"Use an HTTP(S) origin without path or credentials");
+  auto separator=value.find("://");
+  require(separator!=std::string::npos&&value.find('/',separator+3)==std::string::npos,"Use an HTTP(S) origin without a path");
+  std::unique_ptr<CURLU,decltype(&curl_url_cleanup)> url(curl_url(),curl_url_cleanup);
+  require(url&&curl_url_set(url.get(),CURLUPART_URL,value.c_str(),0)==CURLUE_OK,"Invalid server URL");
+  auto part=[&](CURLUPart key){char* bytes=nullptr;if(curl_url_get(url.get(),key,&bytes,0)!=CURLUE_OK)return std::string{};
+    std::string result(bytes);curl_free(bytes);return result;};
+  auto scheme=part(CURLUPART_SCHEME),name=part(CURLUPART_HOST),port=part(CURLUPART_PORT);
+  require((scheme=="http"||scheme=="https")&&!name.empty(),"Use an HTTP or HTTPS origin");
+  require(port.empty()||std::stoi(port)>0,"URL port must be 1..65535");
+  for(char& c:name)c=char(std::tolower(static_cast<unsigned char>(c)));
+  if((scheme=="http"&&port=="80")||(scheme=="https"&&port=="443"))port.clear();
+  return scheme+"://"+name+(port.empty()?"":":"+port);
+}
+bool ipv4_address(const std::string& address) {
+  std::istringstream input(address);std::string octet;int count=0;
+  while(std::getline(input,octet,'.')){
+    if(octet.empty()||octet.size()>3||(octet.size()>1&&octet.front()=='0')||
+      !std::all_of(octet.begin(),octet.end(),[](unsigned char c){return std::isdigit(c);})||std::stoi(octet)>255)return false;
+    ++count;
+  }
+  return count==4&&!address.empty()&&address.back()!='.';
+}
 J obj(std::initializer_list<std::pair<const std::string, J>> fields = {}) {
   J j;
   j.kind = J::Object;
@@ -1613,6 +1641,7 @@ struct Service {
   fs::path binary, web, home;
   std::string origin, host = "127.0.0.1", authority;
   int port = 8765;
+  bool direct_access = false;
   std::unique_ptr<App> local;
   std::recursive_mutex mutex;
   std::map<std::string, WebSession> sessions;
@@ -1677,9 +1706,18 @@ struct Service {
   void handle(Socket fd) {
     try {
       auto req = request(fd);
-      require(req.headers["host"] == authority, "Host refused");
+      auto allowed_origin=origin;
+      if(direct_access){
+        auto incoming=req.headers["host"];auto colon=incoming.rfind(':');
+        auto address=colon==std::string::npos?incoming:incoming.substr(0,colon);
+        auto incoming_port=colon==std::string::npos?"80":incoming.substr(colon+1);
+        require(incoming_port==std::to_string(port),"Host port refused");
+        bool local_name=address=="localhost"&&(host=="0.0.0.0"||host.rfind("127.",0)==0);
+        require(local_name||(ipv4_address(address)&&(host=="0.0.0.0"||address==host)),"Direct mode requires a listener IP; configure --origin for DNS names");
+        allowed_origin=browser_origin("http://"+incoming);
+      }else require(req.headers["host"] == authority, "Host refused");
       if (req.headers.count("origin"))
-        require(req.headers["origin"] == origin, "Origin refused");
+        require(req.headers["origin"] == allowed_origin, "Origin refused");
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
@@ -1805,6 +1843,7 @@ struct Service {
     ::signal(SIGTERM, stop_service);
     std::cout << "Codex.cpp native " << mode() << " web: " << origin << "\nNo Python runtime required.\n"
               << std::flush;
+    if(hosted())std::cout<<"Listening on "<<host<<":"<<port<<(direct_access?" (direct HTTP; connect using the server IP)":" (configured access origin)")<<"\n"<<std::flush;
     while (!stopping_service) {
       fd_set waiting;
       FD_ZERO(&waiting);
@@ -1900,7 +1939,7 @@ int main(int argc, char **argv) {
     argv = native_pointers.data();
 #endif
     std::string override_root;
-    std::string operation = argc > 1 ? argv[1] : "web", host = "127.0.0.1", origin, add_user, revoke_user;
+    std::string operation = argc > 1 ? argv[1] : "web", host, origin, add_user, revoke_user;
     int port = 8765;
     auto self = executable(argv[0]);
     fs::path home = own_auth_path().parent_path(), state, assets;
@@ -1910,7 +1949,7 @@ int main(int argc, char **argv) {
       std::string arg = argv[i];
       if (arg == "--help" || arg == "-h") {
         std::cout << "Native web: codex-cpp web [--root DIR] [--port 8765] [provider options]\nHosted web: "
-                     "codex-cpp serve --state-dir DIR --origin https://host [--host 127.0.0.1]\nAccounts: "
+                     "codex-cpp serve --state-dir DIR [--host 0.0.0.0] [--port 8765] [--origin URL]\nAccounts: "
                      "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. WebUI "
                      "is embedded; --web-dir DIR overrides it.\n";
         return 0;
@@ -1965,7 +2004,8 @@ int main(int argc, char **argv) {
     ::signal(SIGPIPE, SIG_IGN);
 #endif
     require(port >= 1 && port <= 65535, "Port must be 1..65535");
-    require(host == "127.0.0.1", "Bind loopback and use an HTTPS reverse proxy for remote access");
+    if(host.empty())host=operation=="serve"&&origin.empty()?"0.0.0.0":"127.0.0.1";
+    require(ipv4_address(host),"Use a numeric IPv4 listen address");
     std::unique_ptr<Service> service;
     if (operation == "serve") {
       require(!explicit_options, "Configure hosted providers per project or personal context in the page");
@@ -1982,8 +2022,7 @@ int main(int argc, char **argv) {
         std::cout << "Account revoked\n";
         return 0;
       }
-      require(origin.rfind("https://", 0) == 0,
-              "Hosted mode requires an HTTPS browser origin and reverse proxy");
+      hosted->direct_access=origin.empty();
       service = std::move(hosted);
     } else {
       require(host == "127.0.0.1", "Local mode only binds loopback");
@@ -1996,10 +2035,8 @@ int main(int argc, char **argv) {
     service->web = assets;
     service->host = host;
     service->port = port;
-    if (origin.empty())
-      origin = "http://" + host + ":" + std::to_string(port);
-    while (!origin.empty() && origin.back() == '/')
-      origin.pop_back();
+    if (origin.empty())origin = "http://"+(host=="0.0.0.0"?std::string("127.0.0.1"):host)+":"+std::to_string(port);
+    origin=browser_origin(origin);
     auto start = origin.find("://");
     require(start != std::string::npos, "Invalid browser origin");
     service->authority = origin.substr(start + 3);

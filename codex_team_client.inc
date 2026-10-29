@@ -1,14 +1,11 @@
-// HTTPS client for the existing hosted API. No account tokens or session cookies
+// HTTP/HTTPS client for the existing hosted API. No account tokens or session cookies
 // are persisted, and project permissions remain enforced by HostedService.
 struct TeamConnection {
   std::string origin,cookie,csrf,username;
   bool connected()const{return !cookie.empty()&&!csrf.empty();}
   void clear(){std::fill(cookie.begin(),cookie.end(),'\0');cookie.clear();csrf.clear();username.clear();}
   static std::string validate_origin(std::string value){
-    while(!value.empty()&&value.back()=='/')value.pop_back();
-    native_web::require(value.rfind("https://",0)==0&&value.size()>8&&value.size()<=2048&&
-      value.substr(8).find_first_of("/@?#\r\n\t ")==std::string::npos,"Use an HTTPS origin without path or credentials");
-    return value;
+    return native_web::browser_origin(value);
   }
   native_web::J request(const std::string& path,const native_web::J& body=native_web::obj(),bool get=false){
     using namespace native_web;

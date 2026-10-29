@@ -11,7 +11,7 @@ async function listening(port){return new Promise(r=>{const c=net.connect(port,'
  child=spawn('script',['-q','-e','-c',quote(binary)+' --root '+quote(temp)+' --ui tui','/dev/null'],{detached:true,env:{...process.env,TERM:'xterm-256color',COLUMNS:'120',LINES:'40',CODEX_CPP_HOME:path.join(temp,'home')}});
  child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
  async function send(keys,title){const mark=output.length;child.stdin.write(keys);if(title){stage=title;await wait(()=>output.slice(mark).includes(title));}}
- await wait(()=>output.includes('Codex'));await send('/team\r','Team settings');await send('1','Team HTTPS address');await send('https://team.example.com\r','Loopback backend port');await send('\x7f'.repeat(10)+port+'\r');
+ await wait(()=>output.includes('Codex'));await send('/team\r','Team settings');await send('1','Access URL (optional');await send('https://team.example.com\r','Listen IPv4 address');await send('\x7f'.repeat(40)+'127.0.0.1\r','Listen port');await send('\x7f'.repeat(10)+port+'\r');
  const config=path.join(temp,'home','team-service.json');await wait(()=>fs.existsSync(config));assert.equal(JSON.parse(fs.readFileSync(config,'utf8')).port,port);
  await send('2','Team accounts');await send('1','New username');await send('alice\r','Save access token for alice');
  stage='one-time token body';await wait(()=>/[a-f0-9]{64}/.test(output));const token=output.match(/[a-f0-9]{64}/)[0];

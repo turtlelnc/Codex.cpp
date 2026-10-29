@@ -11,7 +11,7 @@ class Terminal {
   this.child.stdout.on('data',b=>this.output+=b);this.child.stderr.on('data',b=>this.output+=b);terminals.push(this);
  }
  async send(keys,title){const mark=this.output.length;this.child.stdin.write(keys);if(title){stage=title;await wait(()=>this.output.slice(mark).includes(title));}return this.output.slice(mark);}
- async login(origin,user,token){stage='terminal startup';await wait(()=>this.output.includes('Codex'));await this.send('/team\r','Team settings');await this.send('5','Team server HTTPS address');await this.send(origin+'\r','Team username');await this.send(user+'\r','Team access token');await this.send(token+'\r','Team projects');assert(!this.output.includes(token),'token must never be echoed');}
+ async login(origin,user,token){stage='terminal startup';await wait(()=>this.output.includes('Codex'));await this.send('/team\r','Team settings');await this.send('5','Team server URL');await this.send('\x7f'.repeat(100)+origin+'\r','Team username');await this.send(user+'\r','Team access token');await this.send(token+'\r','Team projects');assert(!this.output.includes(token),'token must never be echoed');}
  async quit(){await this.send('6');await this.send('/','/provider');await this.send('quit\r');stage='terminal exit';await wait(()=>this.child.exitCode!==null);}
 }
 class Client {

@@ -62,12 +62,14 @@ macOS 建议下载 `.zip`，Linux 建议下载 `.tar.gz`；解压后仍是一个
 ## TUI 团队设置
 
 在终端运行 `./codex-cpp --ui tui`，输入 `/team` 打开菜单。
-可配置 HTTPS 对外地址和本机端口，登记账号、重置令牌、撤销账号，并启动或停止团队服务。
+可配置监听 IPv4 地址和端口，登记账号、重置令牌、撤销账号，并启动或停止团队服务。
+访问地址可以留空，直接用 `http://服务器IP:端口` 连接，不需要域名、证书或反向代理。
+`0.0.0.0` 监听所有 IPv4 接口，`127.0.0.1` 只允许本机连接。
 令牌只在临时面板显示一次，不写入会话或输入历史。
 账号操作必须先停服，撤销账号保留项目文件；退出 TUI 会停止由它启动的服务。
 配置与 WebUI 的“团队”入口共用，数据默认在 `~/.codex-cpp/team-server`。
 两处均只管理自己启动的进程，不能接管另一实例；切换管理入口前请先停服。
-选择“Team projects (HTTPS)”可直接在 TUI 登录本机或远程团队服务器，无需打开浏览器。
+选择“Team projects (HTTP/HTTPS)”可直接在 TUI 登录本机或远程团队服务器，无需打开浏览器。
 支持创建项目、邀请和移除成员、共同及个人模型配置、模型选择、分支发布与同步、
 审阅共同修改并提交、确认精确 SHA 后合并、查看任务和操作审计、检查文件后恢复中断队列。
 共同凭据仍只允许创建者配置；成员可以使用，无法查看密钥。
@@ -76,7 +78,7 @@ macOS 建议下载 `.zip`，Linux 建议下载 `.tar.gz`；解压后仍是一个
 其他成员也可以审批共同任务，服务器记录实际操作人。这里的任务始终操作服务器工作区；
 退出团队菜单后的普通聊天仍使用当前本地工作区。
 访问令牌和 API 密钥输入会被遮罩，登录 Cookie 只存在进程内存中，退出登录会撤销会话。
-HTTPS 证书照常校验，不提供跳过验证的开关；HTTPS 代理仍需单独部署。
+HTTP 不加密传输内容；需要加密时可选用 HTTPS 代理。HTTPS 证书照常校验，不提供跳过验证的开关。
 
 ## 本地网页
 
@@ -117,9 +119,9 @@ HTTPS 证书照常校验，不提供跳过验证的开关；HTTPS 代理仍需�
 ### 从 WebUI 配置
 
 运行 `./codex-cpp web --root /path/to/project` 后，点击顶部“团队”。
-在“本机服务”中保存 HTTPS 对外地址与本机后端端口，在“账号”中登记成员并保存仅显示一次的访问令牌，
-再启动团队服务。页面提供反向代理配置示例；仍需自行配置 HTTPS 代理。
-成员打开该 HTTPS 地址，使用用户名和令牌登录即可。
+在“本机服务”中设置监听 IP 与端口，访问地址留空；在“账号”中登记成员并保存仅显示一次的访问令牌，
+再启动团队服务。成员直接打开 `http://服务器IP:端口`，使用用户名和令牌登录即可。
+如需固定域名或 HTTPS 代理，再填写对应的访问地址；页面提供可选代理示例。
 
 此入口使用 `<CODEX_CPP_HOME>/team-server` 保存团队数据（默认 `~/.codex-cpp/team-server`），
 与当前本地项目分开。它仅管理自己启动的服务，不接管单独运行的 `serve` 进程。
@@ -139,23 +141,33 @@ HTTPS 证书照常校验，不提供跳过验证的开关；HTTPS 代理仍需�
 ```sh
 ./codex-cpp serve --state-dir /srv/codex-data --add-user alice
 ./codex-cpp serve --state-dir /srv/codex-data --add-user bob
-./codex-cpp serve --state-dir /srv/codex-data --origin https://codex.example.com --port 8765
+./codex-cpp serve --state-dir /srv/codex-data --host 0.0.0.0 --port 8766
 ```
 
 `/srv/codex-data` 须由运行服务的普通用户拥有且可写；也可以选择用户自己的目录。
 新增、重置或撤销账户前必须停止服务，状态目录有独占写锁。对已有用户名再次 `--add-user` 会重置其令牌；
 `--revoke-user bob` 撤销账户。账户管理命令不需要 `--origin`。
 
-服务只监听 `127.0.0.1`，在 HTTPS 反向代理后部署。以 Caddy 为例：
+不填写 `--origin` 时，服务默认监听 `0.0.0.0`，通过 `http://服务器IP:端口` 直接访问。
+直接连接模式接受监听 IP（以及本机的 `localhost`），校验请求端口、同源 Origin 和 CSRF；
+使用自定义 DNS 名称时，可填写可选的 `--origin http://名称:端口` 并设置相应的监听地址。
+
+HTTPS 反向代理是可选部署方式。已有 HTTPS 配置保持兼容，填写 `--origin` 且未指定 `--host` 时仍默认只监听本机：
+
+```sh
+./codex-cpp serve --state-dir /srv/codex-data --host 127.0.0.1 --port 8766 --origin https://codex.example.com
+```
+
+以 Caddy 为例：
 
 ```caddyfile
 codex.example.com {
-    reverse_proxy 127.0.0.1:8765
+    reverse_proxy 127.0.0.1:8766
 }
 ```
 
 代理应保留浏览器的 Host、Origin，外部地址必须与 `--origin` 完全一致，包括非默认端口。
-登录 Cookie 使用 Secure、HttpOnly、SameSite=Strict，8 小时过期；重启需重新登录。
+登录 Cookie 使用 HttpOnly、SameSite=Strict，HTTPS 模式额外使用 Secure，8 小时过期；重启需重新登录。
 不需要 Docker，之后可按部署需求增加容器。
 
 ### 协作方式

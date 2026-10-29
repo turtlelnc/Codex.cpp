@@ -1174,7 +1174,7 @@ function teamAction(label,fn,primary=false){const b=el('button',label,primary?'p
 function teamNote(text){return el('p',text,'team-note');}
 function teamRow(title,subtitle){const row=el('div',undefined,'team-row'),content=el('div');content.append(el('strong',title));if(subtitle)content.append(el('small',subtitle));row.append(content);return row;}
 function teamInput(form,label,name,value,type='text'){const group=el('label',label),input=el('input');input.name=name;input.type=type;input.value=value;input.required=true;group.append(input);form.append(group);return input;}
-function secureOrigin(value){const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('请填写不含路径或账号的 HTTPS 地址');return url.origin;}
+function serverOrigin(value){const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('请填写不含路径或账号的 HTTP/HTTPS 地址');return url.origin;}
 function openTeamProjectCreate(){closeTeam();openDialog('创建项目',[field('name','项目名称')],async data=>{const result=await rpc('create',data);state.scope='shared';$('host-scope').value='shared';await hostProjects(result.project);await switchContext();return()=>openTeam('members').catch(e=>notice(e.message));});}
 function showTeamToken(result){$('team-token-title').textContent='保存 '+result.username+' 的访问令牌';$('team-token').value=result.token;$('team-token').type='password';$('team-token-show').setAttribute('aria-pressed','false');$('team-token-show').textContent='显示令牌';$('team-token-feedback').textContent='';$('team-token-dialog').showModal();}
 onClick('team-token-show',()=>{const input=$('team-token');const show=input.type==='password';input.type=show?'text':'password';$('team-token-show').setAttribute('aria-pressed',String(show));$('team-token-show').textContent=show?'隐藏令牌':'显示令牌';});
@@ -1203,26 +1203,26 @@ function renderLocalTeam(tab,data,ticket){
  body.append(status);
  if(!data.sandbox_available)body.append(teamNote('当前系统沙箱不可用，Agent 与协作仓库任务会被拒绝执行；服务配置和账号管理仍可使用。'));
  if(tab==='service'){
-  const form=el('form');const origin=teamInput(form,'团队 HTTPS 地址','origin',teamDraft?.origin??data.origin,'url');origin.placeholder='https://codex.example.com';
+  const form=el('form');const host=teamInput(form,'监听 IPv4 地址','host',teamDraft?.host??data.host);host.placeholder='0.0.0.0';const origin=teamInput(form,'访问地址（可选）','origin',teamDraft?.origin??data.origin,'url');origin.required=false;origin.placeholder='留空即可通过 IP 和端口直接连接';
   const port=teamInput(form,'本机监听端口','port',teamDraft?.port??String(data.port),'number');port.min='1';port.max='65535';
-  for(const input of [origin,port]){input.dataset.stoppedOnly='';input.oninput=()=>{teamDraft={origin:origin.value,port:port.value};};}
+  for(const input of [host,origin,port]){input.dataset.stoppedOnly='';input.oninput=()=>{teamDraft={host:host.value,origin:origin.value,port:port.value};};}
   const feedback=el('p',undefined,'team-note');feedback.setAttribute('role','status');
-  const save=async()=>{if(!form.reportValidity())throw Error('请填写有效地址和端口');const result=await rpc('team_save',{origin:secureOrigin(origin.value),port:Number(port.value)});origin.value=result.origin;port.value=String(result.port);teamDraft=null;return result;};
+  const save=async()=>{if(!form.reportValidity())throw Error('请填写有效地址和端口');const result=await rpc('team_save',{host:host.value,origin:origin.value.trim()?serverOrigin(origin.value.trim()):'',port:Number(port.value)});origin.value=result.origin;port.value=String(result.port);teamDraft=null;return result;};
   const saveButton=stopped(el('button','保存配置'));saveButton.type='submit';
   form.onsubmit=async event=>{event.preventDefault();try{await act(save);feedback.textContent='配置已保存';$('team-error').textContent='';}catch(e){$('team-error').textContent=e.message;}};
   const start=stopped(teamAction('启动团队服务',()=>act(async()=>{await save();return rpc('team_start');}),true));
   const stop=teamAction('停止团队服务',()=>{closeTeam();openDialog('停止团队服务',[],async()=>{await rpc('team_stop',{confirmed:true});return()=>openTeam('service').catch(e=>notice(e.message));},'正在执行的团队任务会被中断，文件和排队任务仍会保留。');});stop.dataset.runningOnly='';
   const actions=el('div',undefined,'team-actions');actions.append(saveButton,start,stop);form.append(actions,feedback);body.append(form);
-  body.append(teamNote('首次部署需要将上面的 HTTPS 地址反向代理到本机端口。服务只监听本机；关闭本地程序也会停止由它启动的团队服务。'));
-  const details=el('details');details.append(el('summary','部署与数据位置'),el('pre',`${data.origin||'https://codex.example.com'} {\n    reverse_proxy 127.0.0.1:${data.port}\n}\n\n数据目录：${data.state_dir}`));body.append(details);
-  if(data.origin)body.append(teamAction('打开团队网页',()=>window.open(secureOrigin(current.origin),'_blank','noopener,noreferrer')));
+  body.append(teamNote('0.0.0.0 允许其他设备通过服务器 IP 和端口连接；127.0.0.1 只允许本机连接。访问地址可以留空，HTTPS 代理按需配置。HTTP 不加密传输内容。关闭本地程序也会停止它启动的团队服务。'));
+  const details=el('details');details.append(el('summary','部署与数据位置'),el('pre',`直接连接：http://服务器IP:${data.port}\n本机访问：${data.url}\n\n可选 HTTPS 代理示例：\ncodex.example.com {\n    reverse_proxy 127.0.0.1:${data.port}\n}\n\n数据目录：${data.state_dir}`));body.append(details);
+  if(data.url)body.append(teamAction('打开团队网页',()=>window.open(serverOrigin(current.url),'_blank','noopener,noreferrer')));
  } else if(tab==='accounts'){
   body.append(teamNote('先停止本机托管的团队服务，再登记或重置登录账号；项目成员仍由项目创建者管理。'));
   body.append(stopped(teamAction('登记账号',()=>{closeTeam();openDialog('登记团队账号',[field('username','用户名')],async fields=>{const result=await rpc('team_account',fields);return()=>showTeamToken(result);});},true)));
   if(!data.users.length)body.append(teamNote('还没有登录账号。登记至少一个账号后即可启动服务。'));
   for(const name of data.users){const row=teamRow(name,'访问令牌不会在这里回显');row.append(stopped(teamAction('重置令牌',()=>{closeTeam();openDialog('重置 '+name+' 的访问令牌',[],async()=>{const result=await rpc('team_account',{username:name,confirmed:true});return()=>showTeamToken(result);},'旧令牌将失效。服务重启后，该用户需要用新令牌重新登录。');})),stopped(teamAction('停用账号',()=>{closeTeam();openDialog('停用 '+name,[],async()=>{await rpc('team_revoke',{username:name,confirmed:true});return()=>openTeam('accounts').catch(e=>notice(e.message));},'账号将无法登录，不删除项目文件。同名账号重新登记后会恢复原有的成员关系。');})));body.append(row);}
  } else {
-  const form=el('form'),url=teamInput(form,'服务器 HTTPS 地址','server',data.origin,'url');url.placeholder='https://codex.example.com';const button=el('button','打开服务器登录页','primary');button.type='submit';form.append(button);form.onsubmit=event=>{event.preventDefault();try{window.open(secureOrigin(url.value),'_blank','noopener,noreferrer');}catch(e){$('team-error').textContent=e.message;}};body.append(form,teamNote('账号和访问令牌在服务器登录页填写，不会发送给当前本地服务。'));
+  const form=el('form'),url=teamInput(form,'服务器 HTTP/HTTPS 地址','server',data.url,'url');url.placeholder='http://192.168.1.10:8766';const button=el('button','打开服务器登录页','primary');button.type='submit';form.append(button);form.onsubmit=event=>{event.preventDefault();try{window.open(serverOrigin(url.value),'_blank','noopener,noreferrer');}catch(e){$('team-error').textContent=e.message;}};body.append(form,teamNote('账号和访问令牌在服务器登录页填写，不会发送给当前本地服务。'));
  }
  paint(data);
  if(tab!=='remote'){const poll=async()=>{try{const next=await rpc('team_get');if(ticket!==teamTicket)return;paint(next);}catch(e){if(ticket===teamTicket)$('team-error').textContent=e.message;}if(ticket===teamTicket&&$('team-dialog').open)teamTimer=setTimeout(poll,1000);};teamTimer=setTimeout(poll,1000);}
