@@ -14,7 +14,13 @@ set(BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(USE_SSH OFF CACHE STRING "" FORCE)
 set(USE_HTTPS OFF CACHE STRING "" FORCE)
-set(USE_BUNDLED_ZLIB ON CACHE STRING "" FORCE)
+if(APPLE)
+  # The OS supplies zlib. libgit2 1.8's bundled zlib misdetects modern Apple SDKs
+  # as classic Mac OS and defines fdopen before the system stdio declaration.
+  set(USE_BUNDLED_ZLIB OFF CACHE STRING "" FORCE)
+else()
+  set(USE_BUNDLED_ZLIB ON CACHE STRING "" FORCE)
+endif()
 FetchContent_Declare(codex_libgit2
   URL https://codeload.github.com/libgit2/libgit2/tar.gz/refs/tags/v1.8.4
   URL_HASH SHA256=49d0fc50ab931816f6bfc1ac68f8d74b760450eebdb5374e803ee36550f26774)
