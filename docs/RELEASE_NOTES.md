@@ -1,3 +1,13 @@
+WebUI reliability update: preserve edits made during file saves, reject stale
+file/project/session responses, reuse historical message DOM, and fix sidebar
+collapse layout across desktop and mobile widths. Add connection recovery,
+conversation drafts, a jump-to-latest button, and keyboard tool-card controls.
+
+ChatGPT device login now shows its address and device code in a dedicated dialog,
+with login status instead of a misleading model-thinking indicator. Stored user
+messages and session titles hide injected skill/environment context while keeping
+actual user text. These changes retain the existing theme and native C++17 runtime.
+
 Reliability fixes: HTTP requests have a total read deadline and stop promptly
 during shutdown. Background task storage failures stop the service cleanly
 instead of aborting the process. Windows state replacement checks write/flush/
