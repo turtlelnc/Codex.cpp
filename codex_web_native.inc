@@ -1911,7 +1911,7 @@ int main(int argc, char **argv) {
       if (arg == "--help" || arg == "-h") {
         std::cout << "Native web: codex-cpp web [--root DIR] [--port 8765] [provider options]\nHosted web: "
                      "codex-cpp serve --state-dir DIR --origin https://host [--host 127.0.0.1]\nAccounts: "
-                     "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. Keep web/ "
+                     "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. WebUI "
                      "is embedded; --web-dir DIR overrides it.\n";
         return 0;
       }
