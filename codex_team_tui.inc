@@ -44,7 +44,12 @@ struct TeamConsole {
           std::fill(token.begin(),token.end(),'\0');
         }
       }else if(choice==2){rpc("team_start");}
-      else if(choice==3){if(ui.choose("Stop team service? Active tasks will be interrupted",{"Cancel","Stop"})==1)rpc("team_stop",obj({{"confirmed",boolean(true)}}));}
+      else if(choice==3){if(ui.choose("Stop team service? Active tasks will be interrupted",{"Cancel","Stop"})==1){
+        rpc("team_stop",obj({{"confirmed",boolean(true)}}));ui.render("stopping team service...");
+        auto until=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while(service.team_running()&&std::chrono::steady_clock::now()<until)std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        ui.render();
+      }}
       else {auto origin=text(status,"origin");ui.settings_menu("Team connection and deployment",
         "Open "+origin+" in a browser; sign in with username and access token.\n"
         "Configure an HTTPS reverse proxy to 127.0.0.1:"+json_dump(field(status,"port"))+".\n"

@@ -49,7 +49,10 @@ jobs:
           CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Verify Linux embedded sandbox and team workflow
         if: runner.os == 'Linux'
-        run: node tests/team_service_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+        run: |
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          node tests/team_service_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+          node tests/tui_team_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Prepare download
         shell: bash
         run: |
