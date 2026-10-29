@@ -409,3 +409,7 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 #team-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 #team-close { min-width: 44px; min-height: 44px; }
 #team-token-title { overflow-wrap: anywhere; }
+
+#device-login-dialog { width: min(520px, calc(100vw - 28px)); overflow-wrap: anywhere; }
+#device-login-code { display: block; width: 100%; margin: 8px 0; font: 22px var(--mono); letter-spacing: .12em; }
+#device-login-details { white-space: pre-wrap; max-height: 180px; overflow: auto; }

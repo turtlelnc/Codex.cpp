@@ -318,6 +318,9 @@ function assistantMessage(text, live) {
 
 const messageCache = new Map();
 const composerDrafts = new Map();
+function loginRunning(snap) {
+  return snap.busy && ((deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) || (snap.events || []).some(event => event.type === 'login.notice'));
+}
 function buildChat(snap) {
   const used = new Set();
   const cached = (key, value, create) => {
@@ -376,6 +379,7 @@ function buildChat(snap) {
     );
   if (snap.busy && snap.draft)
     nodes.push(cached('draft', snap.draft, () => assistantMessage(snap.draft, true)));
+  else if (loginRunning(snap)) nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
   else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
     nodes.push(cached('thinking', true, () => el('div', '思考中…', 'message thinking')));
   for (const key of messageCache.keys()) if (!used.has(key)) messageCache.delete(key);
@@ -790,6 +794,7 @@ async function refresh() {
     }
     if (generation !== state.generation) return;
     state.snap = snap;
+    renderDeviceLogin(snap);
     const composerKey = JSON.stringify([state.project, state.scope, snap.session_id]);
     if (!state.composerKey) $('prompt').value = composerDrafts.get(composerKey) || $('prompt').value;
     state.composerKey = composerKey;
@@ -836,6 +841,8 @@ async function refresh() {
     setQueueState(
       interrupted
         ? '需要检查后恢复'
+        : loginRunning(snap)
+          ? '等待设备登录'
         : snap.pending
           ? '等待批准'
           : snap.busy
@@ -862,6 +869,7 @@ async function refresh() {
     setConnection('已连接', true);
   } catch (e) {
     if (generation !== state.generation) return;
+    if (deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) $('device-login-status').textContent = '连接中断，正在尝试恢复登录状态…';
     state.connectionError = e.message;
     setConnection('连接中断', false);
     setQueueState('连接中断', false);
@@ -1143,10 +1151,7 @@ const COMMANDS = [
   {name: '/new', desc: '开始新会话', run: newChat},
   {name: '/sessions', desc: '切换本地会话', run: openSessions},
   {name: '/provider', desc: '模型提供商与密钥', run: () => openSettings()},
-  {name: '/login', desc: 'ChatGPT 设备登录', run: async () => {
-    await rpc('login', {request_id: newId()});
-    notice('已发起设备登录，请查看对话中的登录提示');
-  }},
+  {name: '/login', desc: 'ChatGPT 设备登录', run: startDeviceLogin},
   {name: '/status', desc: '显示当前配置', run: () => openDialog('当前状态', [], () => {}, statusText())},
   {name: '/diff', desc: '查看当前修改', run: () => showInspector('changes')},
   {name: '/files', desc: '查看代码面板', run: () => showInspector('code')},
@@ -1226,6 +1231,69 @@ $('prompt').addEventListener('input', () => {
 });
 $('prompt').addEventListener('blur', closeMenu);
 
+/* ---------- 设备登录（独立认证进程，不调用模型） ---------- */
+let deviceLogin = null;
+async function startDeviceLogin() {
+  if (deviceLogin && deviceLogin.generation === state.generation && !deviceLogin.finished) {
+    if (!$('device-login-dialog').open) $('device-login-dialog').showModal();
+    return;
+  }
+  const login = deviceLogin = {generation: state.generation, starting: true, finished: false};
+  $('device-login-code').value = '';
+  $('device-login-copy').disabled = true;
+  $('device-login-stop').disabled = true;
+  $('device-login-status').textContent = '正在获取设备码…';
+  $('device-login-details').textContent = '';
+  $('device-login-details').hidden = true;
+  if ($('dialog').open) $('dialog').close();
+  $('device-login-dialog').showModal();
+  try {
+    await rpc('login', {request_id: newId()});
+    if (deviceLogin !== login || login.generation !== state.generation) return;
+    login.starting = false;
+    $('device-login-stop').disabled = false;
+    await refresh();
+  } catch (error) {
+    if (deviceLogin !== login || login.generation !== state.generation) return;
+    login.finished = true;
+    $('device-login-status').textContent = '无法发起登录：' + error.message;
+    $('device-login-stop').disabled = true;
+  }
+}
+function renderDeviceLogin(snap) {
+  if (!deviceLogin || deviceLogin.generation !== state.generation || deviceLogin.starting || deviceLogin.finished) return;
+  const lines = (snap.events || []).filter(e => e.type === 'login.notice').map(e => e.payload?.text || '');
+  const text = lines.join('\n');
+  const code = text.match(/and enter:\s*([^\s]+)/)?.[1];
+  if (code) {
+    $('device-login-code').value = code;
+    $('device-login-copy').disabled = false;
+    $('device-login-status').textContent = '打开上面的地址并输入设备码，正在等待你完成授权…';
+  }
+  if (/^Signed in\.$/m.test(text) || (!snap.busy && (lines.length || snap.error))) {
+    deviceLogin.finished = true;
+    const success = /^Signed in\.$/m.test(text);
+    $('device-login-status').textContent = success ? '登录成功，可以关闭此窗口并使用 Codex。' : '登录未完成：' + (snap.error || '请重新发起登录');
+    $('device-login-stop').disabled = true;
+    $('device-login-copy').disabled = true;
+    if (!success) {
+      $('device-login-details').textContent = text;
+      $('device-login-details').hidden = !text;
+    }
+  }
+}
+onClick('device-login-close', () => $('device-login-dialog').close());
+onClick('device-login-copy', async () => {
+  try { await navigator.clipboard.writeText($('device-login-code').value); }
+  catch { $('device-login-code').focus(); $('device-login-code').select(); }
+});
+onClick('device-login-stop', async () => {
+  if (!deviceLogin || deviceLogin.finished || deviceLogin.generation !== state.generation) return;
+  $('device-login-stop').disabled = true;
+  try { await rpc('stop'); await refresh(); }
+  catch (error) { $('device-login-status').textContent = error.message; $('device-login-stop').disabled = false; }
+});
+
 /* ---------- 设置与会话 ---------- */
 
 function providerForm(p) {
@@ -1263,7 +1331,7 @@ async function fillProviders() {
     else if (p.id !== 'cli') actions.append(act('使用', async () => {
       await rpc('provider_use', {id: p.id}); catalog.models = null; catalog.error = '';
     }, 'primary'));
-    if (p.id === 'codex' && editable) actions.append(act('设备登录', async () => { await rpc('login', {request_id: newId()}); $('dialog').close(); notice('已发起设备登录，请查看对话中的登录提示'); }));
+    if (p.id === 'codex' && editable) actions.append(act('设备登录', startDeviceLogin));
     if (!p.builtin && editable) {
       const edit = el('button', '编辑'); edit.type = 'button';
       edit.onclick = () => { $('dialog').close(); providerForm(p); };
@@ -1362,6 +1430,8 @@ async function hostProjects(preferred) {
  state.project=preferred&&projects.includes(preferred)?preferred:projects.includes(state.project)?state.project:(projects[0]||'');$('host-project').value=state.project;
 }
 function resetContext(clearRoot = false) {
+  deviceLogin = null;
+  if ($('device-login-dialog').open) $('device-login-dialog').close();
   if (state.composerKey) composerDrafts.set(state.composerKey, $('prompt').value);
   state.composerKey = null;
   state.generation++;
