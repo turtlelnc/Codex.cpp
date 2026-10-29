@@ -10,7 +10,7 @@ const state = {
   openTools: new Set(), file: null, panel: 'code', model: '', reasoning: '', permission: 'workspace',
   tree: null, diffSignature: '', fileList: [], expanded: new Set(), provider: null,
 };
-const editor = {path: null, version: '', crlf: false, editable: true, dirty: false, conflict: false, lines: 0, saving: false};
+const editor = {revision: 0, loadTicket: 0, baseline: '', path: null, version: '', crlf: false, editable: true, dirty: false, conflict: false, lines: 0, saving: false};
 
 // 所有非可信文本（模型输出、文件、Diff）只经 textContent 写入。
 function el(tag, text, cls) {
@@ -20,7 +20,9 @@ function el(tag, text, cls) {
   return node;
 }
 
+const STALE = '忽略过期请求';
 function notice(message) {
+  if (message === STALE) return;
   $('notice').textContent = message;
   $('notice').hidden = !message;
 }
@@ -28,6 +30,7 @@ function notice(message) {
 function setConnection(label, ok) {
   $('connection').textContent = label;
   $('connection').dataset.state = ok ? 'ok' : 'error';
+  $('retry-connection').hidden=ok;
 }
 
 function onClick(id, fn) {
@@ -39,20 +42,31 @@ function onClick(id, fn) {
 /* ---------- 网络 ---------- */
 
 async function http(path, body) {
+  const generation = state.generation;
   const options = body === undefined ? {} : {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-CSRF-Token': state.user?.csrf || ''},
     body: JSON.stringify(body),
   };
-  const response = await fetch(path, options);
-  const data = await response.json().catch(() => ({}));
+  const controller = new AbortController();
+  options.signal = controller.signal;
+  const timeout = setTimeout(() => controller.abort(), 35000);
+  let response, data;
+  try {
+    response = await fetch(path, options);
+    data = await response.json();
+  } catch (error) {
+    if (generation !== state.generation) throw Error(STALE);
+    throw error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;
+  } finally { clearTimeout(timeout); }
+  if (generation !== state.generation) throw Error(STALE);
   if (response.status === 401) { $('workspace').hidden = true; $('host-login').hidden = false; throw new Error('请登录服务器工作区'); }
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;
 }
 
 async function rpc(op, values = {}) {
-  const generation=state.generation;const result=(await http('/api/rpc', {op, project: state.project, scope: state.scope, ...values})).result;if(generation!==state.generation)throw Error('工作区已切换，请重试');return result;
+  const generation=state.generation;const result=(await http('/api/rpc', {op, project: state.project, scope: state.scope, ...values})).result;if(generation!==state.generation)throw Error(STALE);return result;
 }
 
 /* ---------- 对话框 ---------- */
@@ -227,11 +241,13 @@ function toolDetail(name, rawArgs) {
 const exitFailed = output => /^exit_code=(?!0\b)\d+/.test(output || '');
 
 async function decide(allow) {
+  if(state.deciding)return;state.deciding=true;
   for (const b of document.querySelectorAll('[data-decide]')) b.disabled = true;
   try {
     await rpc('approve', {approval: state.snap?.pending?.call_id, allow});
   } catch (e) { notice(e.message); }
-  await refresh();
+  state.deciding=false;await refresh();
+  for(const b of document.querySelectorAll('[data-decide]'))b.disabled=false;
 }
 
 function approvalBar(name) {
@@ -262,8 +278,13 @@ function toolCard(id, name, args, output, awaiting) {
   }
   card.append(head, body);
   if (awaiting || state.openTools.has(id)) card.classList.add('open');
+  head.setAttribute('role', 'button');
+  head.tabIndex = 0;
+  head.setAttribute('aria-expanded', String(card.classList.contains('open')));
+  head.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); head.click(); } };
   head.onclick = () => {
     card.classList.toggle('open');
+    head.setAttribute('aria-expanded', String(card.classList.contains('open')));
     if (card.classList.contains('open')) state.openTools.add(id); else state.openTools.delete(id);
   };
   if (awaiting) card.append(approvalBar(name));
@@ -295,28 +316,69 @@ function assistantMessage(text, live) {
   return node;
 }
 
+const messageCache = new Map();
+const composerDrafts = new Map();
 function buildChat(snap) {
+  const used = new Set();
+  const cached = (key, value, create) => {
+    used.add(key);
+    const signature = JSON.stringify(value);
+    let entry = messageCache.get(key);
+    if (!entry || entry.signature !== signature) {
+      entry = { signature, node: create() };
+      messageCache.set(key, entry);
+    }
+    return entry.node;
+  };
   const rows = snap.timeline || [];
   const pending = snap.pending;
   const nodes = [];
   let matched = false;
-  for (const row of rows) {
-    if (row.k === 'user') nodes.push(userBubble(row.text));
-    else if (row.k === 'assistant') nodes.push(assistantMessage(row.text, false));
+  for (const [index, row] of rows.entries()) {
+    const key = snap.session_id + ':' + row.k + ':' + (row.id || index);
+    if (row.k === 'user') nodes.push(cached(key, row.text, () => userBubble(row.text)));
+    else if (row.k === 'assistant')
+      nodes.push(cached(key, row.text, () => assistantMessage(row.text, false)));
     else {
-      const awaiting = !!pending && (pending.tool_call_id || pending.call_id) === row.id && row.output === null;
+      const awaiting =
+        !!pending && (pending.tool_call_id || pending.call_id) === row.id && row.output === null;
       matched ||= awaiting;
-      nodes.push(toolCard(row.id, row.name, row.args, row.output, awaiting));
+      nodes.push(
+        cached(key, [row, awaiting, row.output == null ? snap.busy : false], () =>
+          toolCard(
+            row.id,
+            row.name,
+            row.args,
+            !snap.busy && row.output === null ? '执行已中断，未收到结果' : row.output,
+            awaiting,
+          ),
+        ),
+      );
     }
   }
-  if (!rows.length) for (const m of snap.messages || []) nodes.push(m.role === 'user' ? userBubble(m.content) : assistantMessage(m.content, false));
+  if (!rows.length)
+    for (const [index, m] of (snap.messages || []).entries())
+      nodes.push(
+        cached('fallback:' + index, m, () =>
+          m.role === 'user' ? userBubble(m.content) : assistantMessage(m.content, false),
+        ),
+      );
   // 用户消息写入会话日志之前先本地回显
-  const lastSent = [...(snap.messages || [])].reverse().find(m => m.role === 'user');
-  const lastShown = [...rows].reverse().find(r => r.k === 'user');
-  if (snap.busy && lastSent && (!lastShown || !lastShown.text.includes(lastSent.content.trim()))) nodes.push(userBubble(lastSent.content));
-  if (pending && !matched) nodes.push(toolCard(pending.call_id, pending.tool, pending.arguments, null, true));
-  if (snap.busy && snap.draft) nodes.push(assistantMessage(snap.draft, true));
-  else if (snap.busy && !pending && !rows.some(r => r.k === 'tool' && r.output === null)) nodes.push(el('div', '思考中…', 'message thinking'));
+  const lastSent = [...(snap.messages || [])].reverse().find((m) => m.role === 'user');
+  const lastShown = [...rows].reverse().find((r) => r.k === 'user');
+  if (snap.busy && lastSent && (!lastShown || !lastShown.text.includes(lastSent.content.trim())))
+    nodes.push(cached('sent', lastSent.content, () => userBubble(lastSent.content)));
+  if (pending && !matched)
+    nodes.push(
+      cached('pending', pending, () =>
+        toolCard(pending.call_id, pending.tool, pending.arguments, null, true),
+      ),
+    );
+  if (snap.busy && snap.draft)
+    nodes.push(cached('draft', snap.draft, () => assistantMessage(snap.draft, true)));
+  else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
+    nodes.push(cached('thinking', true, () => el('div', '思考中…', 'message thinking')));
+  for (const key of messageCache.keys()) if (!used.has(key)) messageCache.delete(key);
   return nodes;
 }
 
@@ -324,16 +386,32 @@ function drawMessages(nodes) {
   const box = $('messages');
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   document.querySelector('.conversation').classList.toggle('is-empty', !nodes.length);
-  box.replaceChildren(...nodes);
+  let cursor = box.firstChild;
+  for (const node of nodes) {
+    if (node === cursor) cursor = cursor.nextSibling;
+    else box.insertBefore(node, cursor);
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    cursor.remove();
+    cursor = next;
+  }
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
-    empty.querySelectorAll('[data-q]').forEach(b => { b.onclick = () => { $('prompt').value = b.dataset.q; $('composer').requestSubmit(); }; });
+    empty.querySelectorAll('[data-q]').forEach((b) => {
+      b.onclick = () => {
+        $('prompt').value = b.dataset.q;
+        $('composer').requestSubmit();
+      };
+    });
     box.append(empty);
   }
   if (nearBottom) box.scrollTop = box.scrollHeight;
+  $('jump-bottom').hidden = nearBottom || !nodes.length;
 }
 
 /* ---------- 右侧面板 ---------- */
+let diffTicket=0, filesTicket=0;
 
 function showPanel(name) {
   state.panel = name;
@@ -352,6 +430,7 @@ function showInspector(panel) {
 }
 
 function renderTerminal(rows) {
+  const signature=JSON.stringify(rows.filter(r=>r.k==='tool'&&r.name==='shell'));if($('term')._signature===signature)return;$('term')._signature=signature;
   const shells = rows.filter(r => r.k === 'tool' && r.name === 'shell').slice(-30);
   const box = $('term');
   if (!shells.length) { box.replaceChildren(el('span', '命令的输出会显示在这里', 'term-empty')); return; }
@@ -369,6 +448,7 @@ function renderTerminal(rows) {
 function renderPendingDiff(snap) {
   const host = $('pending-diff');
   const p = snap.pending;
+  const signature=JSON.stringify(p);if(host._signature===signature)return;host._signature=signature;
   if (!p || p.tool !== 'apply_patch') { host.replaceChildren(); return; }
   const files = parsePatch(parseArgs(p.arguments).patch || '');
   if (!files.length) { host.replaceChildren(); return; }
@@ -386,13 +466,16 @@ function renderPendingDiff(snap) {
 }
 
 async function loadDiff() {
+  const generation=state.generation, ticket=++diffTicket;
   let result;
   try { result = await rpc('diff'); }
   catch (e) {
+    if(generation!==state.generation||ticket!==diffTicket)return;
     $('diff-stat').textContent = '';
     $('diff-view').replaceChildren(noneNode('无法显示变更', '需要在已有提交的 Git 仓库中查看工作区差异（' + e.message + '）'));
     return;
   }
+  if(generation!==state.generation||ticket!==diffTicket)return;
   const files = parsePatch(result.diff || '');
   let add = 0, del = 0;
   for (const f of files) for (const l of f.lines) { if (l.t === 'add') add++; else if (l.t === 'del') del++; }
@@ -459,7 +542,8 @@ function renderTree() {
 }
 
 async function loadFiles() {
-  state.fileList = (await rpc('files')).files;
+  const ticket=++filesTicket;const result=await rpc('files');if(ticket!==filesTicket)return;
+  state.fileList = result.files;
   renderTree();
 }
 
@@ -506,11 +590,30 @@ function updateEditorState(message = '') {
 }
 
 async function loadIntoEditor(path) {
-  const read = await rpc('read', {path});
-  Object.assign(editor, {path, version: read.version, editable: read.editable, crlf: read.text.includes('\r\n'), dirty: false, conflict: false});
+  const ticket = ++editor.loadTicket,
+    revision = editor.revision;
+  let read;
+  try {
+    read = await rpc('read', { path });
+  } catch (error) {
+    if (ticket !== editor.loadTicket) return;
+    throw error;
+  }
+  if (ticket !== editor.loadTicket || revision !== editor.revision) return;
+  Object.assign(editor, {
+    saving: false,
+    path,
+    version: read.version,
+    editable: read.editable,
+    crlf: read.text.includes('\r\n'),
+    dirty: false,
+    conflict: false,
+  });
   state.file = path;
   const ta = $('editor-text');
   ta.value = read.text.replaceAll('\r\n', '\n');
+  editor.baseline = ta.value;
+  editor.revision++;
   ta.readOnly = !read.editable;
   ta.scrollTop = ta.scrollLeft = 0;
   $('editor-path').textContent = path;
@@ -525,31 +628,51 @@ async function loadIntoEditor(path) {
 }
 
 async function openFile(path) {
+  if (editor.dirty && editor.path === path) {
+    showInspector('code');
+    return;
+  }
   if (editor.dirty && editor.path !== path) {
-    return openDialog('放弃未保存的修改？', [], () => () => loadIntoEditor(path).catch(e => notice(e.message)),
-      editor.path + ' 有未保存的修改，打开其他文件会丢弃它们。');
+    return openDialog(
+      '放弃未保存的修改？',
+      [],
+      () => () => loadIntoEditor(path).catch((e) => notice(e.message)),
+      editor.path + ' 有未保存的修改，打开其他文件会丢弃它们。',
+    );
   }
   await loadIntoEditor(path);
 }
 
 async function saveFile() {
   if (!editor.path || !editor.dirty || !editor.editable || editor.saving) return;
-  let text = $('editor-text').value;
+  const path = editor.path,
+    generation = state.generation,
+    revision = editor.revision,
+    loadTicket = editor.loadTicket,
+    value = $('editor-text').value;
+  let text = value;
   if (editor.crlf) text = text.replaceAll('\n', '\r\n');
   editor.saving = true;
   updateEditorState();
   try {
-    const result = await rpc('write', {path: editor.path, text, base: editor.version});
+    const result = await rpc('write', { path, text, base: editor.version });
+    if (generation !== state.generation || editor.path !== path || loadTicket !== editor.loadTicket) return;
     editor.version = result.version;
-    editor.dirty = editor.conflict = false;
+    editor.baseline = value;
+    editor.dirty = editor.revision !== revision && $('editor-text').value !== value;
+    editor.conflict = false;
     notice('');
     editor.saving = false;
-    updateEditorState('已保存 ✓');
-    setTimeout(() => { if (!editor.dirty) updateEditorState(); }, 1800);
+    updateEditorState(editor.dirty ? '● 未保存' : '已保存 ✓');
+    setTimeout(() => {
+      if (generation === state.generation && loadTicket === editor.loadTicket && !editor.dirty)
+        updateEditorState();
+    }, 1800);
     loadDiff().catch(() => {});
   } catch (e) {
+    if (generation !== state.generation || editor.path !== path || loadTicket !== editor.loadTicket) return;
     editor.saving = false;
-    if (/已变化/.test(e.message)) editor.conflict = true;
+    if (/已变化|changed|conflict/i.test(e.message)) editor.conflict = true;
     notice(e.message);
     updateEditorState();
   }
@@ -558,22 +681,24 @@ async function saveFile() {
 // Agent 或外部程序改了磁盘上的文件：未编辑时静默更新，已编辑则提示冲突。
 async function syncOpenFile() {
   if (!editor.path || editor.saving) return;
+  const path=editor.path,ticket=editor.loadTicket,revision=editor.revision;
   let read;
-  try { read = await rpc('read', {path: editor.path}); } catch { return; }
+  try { read = await rpc('read', {path}); } catch { return; }
+  if(editor.path!==path||ticket!==editor.loadTicket||editor.saving)return;
   if (read.version === editor.version) return;
-  if (editor.dirty) { editor.conflict = true; updateEditorState(); return; }
+  if (editor.dirty||editor.revision!==revision) { editor.conflict = true; updateEditorState(); return; }
   const ta = $('editor-text');
   const top = ta.scrollTop, left = ta.scrollLeft;
   editor.version = read.version;
   editor.crlf = read.text.includes('\r\n');
-  ta.value = read.text.replaceAll('\r\n', '\n');
+  ta.value = read.text.replaceAll('\r\n', '\n');editor.baseline=ta.value;editor.revision++;
   ta.scrollTop = top; ta.scrollLeft = left;
   paintEditor();
   updateEditorState();
 }
 
 $('editor-text').addEventListener('input', () => {
-  editor.dirty = true;
+  editor.revision++;editor.dirty = $('editor-text').value!==editor.baseline;
   updateEditorState();
   cancelAnimationFrame(paintTimer);
   paintTimer = requestAnimationFrame(paintEditor);
@@ -615,7 +740,7 @@ function renderSessions(sessions, busy) {
     if (s.selected) button.setAttribute('aria-current', 'true');
     button.disabled = busy && !s.selected;
     button.onclick = async () => {
-      try { await rpc('session', {session_id: s.id}); state.openTools.clear(); await refresh(); } catch (e) { notice(e.message); }
+      try { await changeSession(s.id); } catch (e) { notice(e.message); }
     };
     return button;
   }));
@@ -643,14 +768,40 @@ function setSendMode(busy) {
 }
 
 async function refresh() {
-  if ((state.user?.mode === 'server' && !state.project) || !state.user || state.polling) return;
+  if ((state.user?.mode === 'server' && !state.project) || !state.user || state.polling || state.switching)
+    return;
   state.polling = true;
+  const generation = state.generation;
   try {
     const snap = await rpc('snapshot');
-    if (state.user.mode === 'server') { const info = await rpc('project_status'); state.projectInfo = info; const queued=info.jobs.filter(j=>j.status==='queued').length; $('host-jobs').textContent=info.blocked?'项目需要检查后恢复':(queued?`${queued} 个排队任务`:info.busy?'项目处理中':'无排队任务'); }
+    if (generation !== state.generation) return;
+    if (state.user.mode === 'server') {
+      const info = await rpc('project_status');
+      if (generation !== state.generation) return;
+      state.projectInfo = info;
+      const queued = info.jobs.filter((j) => j.status === 'queued').length;
+      $('host-jobs').textContent = info.blocked
+        ? '项目需要检查后恢复'
+        : queued
+          ? `${queued} 个排队任务`
+          : info.busy
+            ? '项目处理中'
+            : '无排队任务';
+    }
+    if (generation !== state.generation) return;
     state.snap = snap;
+    const composerKey = JSON.stringify([state.project, state.scope, snap.session_id]);
+    if (!state.composerKey) $('prompt').value = composerDrafts.get(composerKey) || $('prompt').value;
+    state.composerKey = composerKey;
     const rows = snap.timeline || [];
-    const signature = JSON.stringify([rows.length, rows.length ? rows[rows.length - 1] : null, snap.draft?.length, snap.busy, snap.pending?.call_id, snap.messages?.length, snap.session_id]);
+    const signature = JSON.stringify([
+      rows,
+      snap.draft,
+      snap.busy,
+      snap.pending,
+      snap.messages,
+      snap.session_id,
+    ]);
     if (signature !== state.signature) {
       state.signature = signature;
       drawMessages(buildChat(snap));
@@ -659,27 +810,65 @@ async function refresh() {
       if (snap.pending?.tool === 'apply_patch') showInspector('changes');
     }
     // 工具完成数变化 → 刷新文件树与 Diff
-    const finished = rows.filter(r => r.k === 'tool' && r.output !== null && r.name !== 'read_file' && r.name !== 'list_dir').length + ':' + snap.busy;
+    const finished =
+      rows.filter(
+        (r) => r.k === 'tool' && r.output !== null && r.name !== 'read_file' && r.name !== 'list_dir',
+      ).length +
+      ':' +
+      snap.busy;
     if (finished !== state.toolSignature) {
       const first = state.toolSignature === '';
       state.toolSignature = finished;
-      if (!first) { loadFiles().catch(() => {}); loadDiff().catch(() => {}); syncOpenFile(); }
+      if (!first) {
+        loadFiles().catch(() => {});
+        loadDiff().catch(() => {});
+        syncOpenFile();
+      }
     }
     renderSessions(snap.sessions || [], snap.busy);
     state.provider = snap.provider || null;
     updateChips(snap);
-    const current = (snap.sessions || []).find(s => s.selected);
+    const current = (snap.sessions || []).find((s) => s.selected);
     $('project-title').textContent = current?.title || '新会话';
-    setQueueState(snap.pending ? '等待批准' : snap.busy ? '正在执行' : '就绪', snap.busy);
+    const queued = state.projectInfo?.jobs?.some((j) => j.status === 'queued');
+    const interrupted = state.projectInfo?.blocked;
+    const runningTool = rows.some((r) => r.k === 'tool' && r.output === null);
+    setQueueState(
+      interrupted
+        ? '需要检查后恢复'
+        : snap.pending
+          ? '等待批准'
+          : snap.busy
+            ? runningTool
+              ? '工具执行中'
+              : '模型处理中'
+            : queued
+              ? '任务排队'
+              : state.projectInfo?.busy
+                ? '项目处理中'
+                : '就绪',
+      snap.busy,
+    );
     setSendMode(snap.busy);
-    if (snap.error) { notice(snap.error); state.snapNotice = true; }
-    else if (state.snapNotice) { notice(''); state.snapNotice = false; }
+    if (snap.error) {
+      notice(snap.error);
+      state.snapNotice = true;
+    } else if (state.snapNotice) {
+      notice('');
+      state.snapNotice = false;
+    }
+    if (state.connectionError && $('notice').textContent === state.connectionError) notice('');
+    state.connectionError = '';
     setConnection('已连接', true);
   } catch (e) {
-    setConnection('连接异常', false);
+    if (generation !== state.generation) return;
+    state.connectionError = e.message;
+    setConnection('连接中断', false);
+    setQueueState('连接中断', false);
     notice(e.message);
   } finally {
     state.polling = false;
+    if (generation !== state.generation && !state.switching) refresh();
   }
 }
 
@@ -691,23 +880,36 @@ function pendingSubmission() {
 
 async function submitTask(event) {
   event.preventDefault();
+  if (state.submitting) return;
   if (state.snap?.busy && state.user?.mode !== 'server') return;
   const text = $('prompt').value;
   if (!text.trim()) return;
   if (tryCommand(text)) return;
   const previous = pendingSubmission();
-  const pending = previous && previous.text === text && previous.project===state.project && previous.scope===state.scope && previous.user===state.user.username ? previous : {text, project:state.project,scope:state.scope,user:state.user.username,request_id: newId()};
+  const pending =
+    previous &&
+    previous.text === text &&
+    previous.project === state.project &&
+    previous.scope === state.scope &&
+    previous.user === state.user.username
+      ? previous
+      : { text, project: state.project, scope: state.scope, user: state.user.username, request_id: newId() };
   sessionStorage.setItem('codex.pending', JSON.stringify(pending));
+  const generation = state.generation;
+  state.submitting = true;
   $('send').disabled = true;
   try {
-    await rpc('send', {text, request_id: pending.request_id});
+    await rpc('send', { text, request_id: pending.request_id });
     sessionStorage.removeItem('codex.pending');
-    $('prompt').value = '';
+    if (generation !== state.generation) return;
+    if ($('prompt').value === text) $('prompt').value = '';
     notice('');
     await refresh();
   } catch (e) {
+    if (generation !== state.generation) return;
     notice(e.message + '。保留相同内容再次发送可使用原请求 ID 安全重试。');
   } finally {
+    state.submitting = false;
     $('send').disabled = false;
   }
 }
@@ -855,17 +1057,17 @@ function drawModelPopover() {
 
 async function loadCatalog(force = false) {
   if (catalog.loading || (!force && catalog.models)) return;
-  catalog.loading = true;
+  const generation=state.generation;catalog.loading = true;
   drawModelPopover();
   try {
     const result = await rpc('models', {refresh: force});
+    if(generation!==state.generation)return;
     catalog.models = result.models.length ? result.models : null;
     catalog.error = result.error || '';
   } catch (e) {
-    catalog.error = e.message;
+    if(generation!==state.generation)return;catalog.error = e.message;
   } finally {
-    catalog.loading = false;
-    drawModelPopover();
+    if(generation===state.generation){catalog.loading = false;if(pop.kind==='model')drawModelPopover();}
   }
 }
 
@@ -1086,11 +1288,11 @@ async function openSessions() {
   const snap = await rpc('snapshot');
   openDialog('切换本地会话',
     [field('session_id', '会话', 'select', '新建', ['新建', ...snap.sessions.map(s => s.id)])],
-    data => rpc('session', {session_id: data.session_id === '新建' ? null : data.session_id}));
+    data => changeSession(data.session_id === '新建' ? null : data.session_id));
 }
 
 async function newChat() {
-  await rpc('session', {session_id: null});
+  await changeSession(null);
   state.openTools.clear();
   $('prompt').focus();
   await refresh();
@@ -1100,7 +1302,11 @@ onClick('new-chat', newChat);
 /* ---------- 侧栏与检查器开关 ---------- */
 
 const narrowScreen = matchMedia('(max-width: 760px)');
+const panels={desktop:{sidebar:true,inspector:true},mobile:{sidebar:false,inspector:false}};
+try{Object.assign(panels.desktop,JSON.parse(localStorage.getItem('codex.panels')||'{}'));}catch{}
+function rememberPanel(key,value){panels[narrowScreen.matches?'mobile':'desktop'][key]=value;try{localStorage.setItem('codex.panels',JSON.stringify(panels.desktop));}catch{}}
 function setSidebar(open, restoreFocus = false) {
+  rememberPanel('sidebar',open);
   $('sidebar-toggle').setAttribute('aria-pressed', String(open));
   $('workspace').classList.toggle('sidebar-collapsed', !open);
   $('workspace').classList.toggle('sidebar-open', open);
@@ -1110,8 +1316,8 @@ function setSidebar(open, restoreFocus = false) {
     else if (restoreFocus) $('sidebar-toggle').focus();
   } else document.querySelector('main').inert = false;
 }
-setSidebar(!narrowScreen.matches);
-narrowScreen.addEventListener('change', () => setSidebar(!narrowScreen.matches));
+setSidebar(panels[narrowScreen.matches?'mobile':'desktop'].sidebar);
+narrowScreen.addEventListener('change', () => {setSidebar(panels[narrowScreen.matches?'mobile':'desktop'].sidebar);setInspector(panels[narrowScreen.matches?'mobile':'desktop'].inspector);});
 onClick('sidebar-toggle', () => setSidebar($('sidebar-toggle').getAttribute('aria-pressed') !== 'true'));
 onClick('sidebar-backdrop', () => setSidebar(false, true));
 document.querySelector('.sidebar').addEventListener('click', event => {
@@ -1122,12 +1328,16 @@ document.addEventListener('keydown', event => {
 });
 
 function setInspector(open) {
+  rememberPanel('inspector',open);
   $('inspector-toggle').setAttribute('aria-pressed', String(open));
   document.querySelector('.workspace-body').classList.toggle('no-inspector', !open);
 }
-setInspector(!narrowScreen.matches);
+setInspector(panels[narrowScreen.matches?'mobile':'desktop'].inspector);
 onClick('inspector-toggle', () => setInspector($('inspector-toggle').getAttribute('aria-pressed') !== 'true'));
 
+onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
+onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
+$('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
 /* ---------- 启动 ---------- */
 
 async function initialize() {
@@ -1151,14 +1361,80 @@ async function hostProjects(preferred) {
  const {projects}=await rpc('projects'); $('host-project').replaceChildren(...projects.map(id=>new Option(id,id)));
  state.project=preferred&&projects.includes(preferred)?preferred:projects.includes(state.project)?state.project:(projects[0]||'');$('host-project').value=state.project;
 }
-async function switchContext(){
- state.generation++;
- state.signature='';state.toolSignature='';state.snap=null;state.openTools.clear();state.file=null;editor.path=null;editor.dirty=false;state.expanded.clear();catalog.models=null;catalog.error='';$('tree').replaceChildren();$('projects').replaceChildren();$('messages').replaceChildren();
- closePopover(); state.diffSignature=''; $('editor').hidden=true; $('file-view').hidden=false; $('editor-text').value='';
- $('pending-diff').replaceChildren(); $('diff-view').replaceChildren(); $('term').replaceChildren();
- $('prompt').value=''; $('root-name').textContent=''; state.projectInfo=null;
- if(state.project){if(state.scope==='personal')await rpc('personal');const status=await rpc('status');$('root-name').textContent=String(status.workspace||'').split(/[\\/]/).filter(Boolean).pop()||'';await refresh();await loadFiles();}
+function resetContext(clearRoot = false) {
+  if (state.composerKey) composerDrafts.set(state.composerKey, $('prompt').value);
+  state.composerKey = null;
+  state.generation++;
+  state.switching = false;
+  editor.loadTicket++;
+  editor.saving = false;
+  editor.baseline = '';
+  editor.revision++;
+  messageCache.clear();
+  state.signature = '';
+  state.toolSignature = '';
+  state.snap = null;
+  state.openTools.clear();
+  state.file = null;
+  editor.path = null;
+  editor.dirty = false;
+  state.expanded.clear();
+  catalog.models = null;
+  catalog.loading = false;
+  catalog.error = '';
+  $('tree').replaceChildren();
+  $('projects').replaceChildren();
+  $('messages').replaceChildren();
+  closePopover();
+  state.diffSignature = '';
+  $('editor').hidden = true;
+  $('file-view').hidden = false;
+  $('editor-text').value = '';
+  for (const id of ['pending-diff', 'term', 'projects']) delete $(id)._signature;
+  $('pending-diff').replaceChildren();
+  $('diff-view').replaceChildren();
+  $('term').replaceChildren();
+  $('prompt').value = '';
+  if (clearRoot) $('root-name').textContent = '';
+  state.projectInfo = null;
 }
+async function changeSession(id) {
+  if (editor.dirty && !confirm('放弃未保存的编辑？')) return;
+  // Explicit navigation starts a new submission context; an assigned session ID
+  // from an accepted task must not invalidate a failed-response retry.
+  sessionStorage.removeItem('codex.pending');
+  resetContext();
+  const generation = state.generation;
+  state.switching = true;
+  try {
+    await rpc('session', { session_id: id });
+  } finally {
+    if (generation === state.generation) {
+      state.switching = false;
+      await refresh();
+      await loadFiles();
+    }
+  }
+}
+async function switchContext() {
+  resetContext(true);
+  const generation = state.generation;
+  if (!state.project) return;
+  state.switching = true;
+  try {
+    if (state.scope === 'personal') await rpc('personal');
+    const status = await rpc('status');
+    if (generation !== state.generation) return;
+    $('root-name').textContent = String(status.workspace || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  } finally {
+    if (generation === state.generation) {
+      state.switching = false;
+      await refresh();
+      await loadFiles();
+    }
+  }
+}
+
 $('host-login-form').onsubmit=async event=>{event.preventDefault();try{await http('/api/login',{username:$('host-user').value,password:$('host-token').value});$('host-token').value='';await initialize();}catch(error){$('host-login-error').textContent=error.message;}};
 onClick('host-logout',async()=>{await http('/api/logout',{});location.reload();});
 $('host-project').onchange=async()=>{if(editor.dirty&&!confirm('放弃未保存的编辑？')){$('host-project').value=state.project;return;}state.project=$('host-project').value;try{await switchContext();}catch(error){notice(error.message);}};

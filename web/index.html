@@ -23,6 +23,7 @@
     <div id="tree" aria-label="项目文件"></div>
     <div class="sidebar-footer">
       <span id="connection" role="status" data-state="pending">连接中</span>
+      <button type="button" id="retry-connection" hidden>重新连接</button>
     </div>
   </aside>
 
@@ -45,6 +46,7 @@
     <div class="workspace-body">
       <section class="conversation" aria-label="对话">
         <div id="messages" aria-live="polite"></div>
+        <button type="button" id="jump-bottom" hidden>↓ 返回最新消息</button>
 
         <form id="composer">
           <div id="popover" role="menu" hidden></div>

@@ -68,14 +68,17 @@ label input, label select { margin-top: 7px; color: var(--ink); }
 
 /* ---------- 布局：左 会话+文件 / 中 对话 / 右 代码·变更·终端 ---------- */
 
-#workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100dvh; }
-#workspace.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+#workspace { --sidebar-width: 270px; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); height: 100dvh; }
+#workspace.sidebar-collapsed { --sidebar-width: 0px; }
+#workspace > main { grid-column: 2; }
 #workspace.sidebar-collapsed .sidebar { display: none; }
 main { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .workspace-body { display: grid; grid-template-columns: minmax(0, 1fr) 440px; flex: 1; min-height: 0; position: relative; }
 .workspace-body.no-inspector { grid-template-columns: minmax(0, 1fr); }
 .workspace-body.no-inspector .inspector { display: none; }
 #sidebar-backdrop { display: none; }
+#jump-bottom { align-self: center; margin: 6px 0; font-size: 12px; }
+.tool-h { cursor: pointer; }
 
 /* 侧栏 */
 .sidebar { padding: 14px 10px; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -343,12 +346,15 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 /* ---------- 响应式 ---------- */
 
 @media (min-width: 761px) and (max-width: 1100px) {
-  #workspace { grid-template-columns: 230px minmax(0, 1fr); }
+  #workspace { --sidebar-width: 230px; }
+  #workspace.sidebar-collapsed { --sidebar-width: 0px; }
   .workspace-body:not(.no-inspector) { grid-template-columns: minmax(0, 1fr) 340px; }
 }
 
 @media (max-width: 760px) {
   #workspace, #workspace.sidebar-collapsed { height: 100dvh; grid-template-columns: minmax(0, 1fr); }
+  #workspace > main { grid-column: 1; }
+  .workspace-body, .workspace-body:not(.no-inspector) { grid-template-columns: minmax(0, 1fr); }
   #workspace .sidebar { display: none; }
   #workspace.sidebar-open .sidebar { display: flex; position: fixed; inset: 0 auto 0 0; width: min(300px, 85vw); height: 100dvh; z-index: 21; }
   #workspace.sidebar-open #sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 20; background: #0005; border: 0; border-radius: 0; }
