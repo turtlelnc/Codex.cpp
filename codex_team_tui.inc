@@ -3,6 +3,7 @@ struct TeamConsole {
   native_web::LocalService service;
   explicit TeamConsole(const char* argv0){
     service.home=own_auth_path().parent_path();service.binary=native_web::executable(argv0);
+    native_web::private_dir(service.home);
     service.port=0; // No local HTTP listener is created by this console.
   }
   native_web::J rpc(const std::string& op,native_web::J values=native_web::obj()){

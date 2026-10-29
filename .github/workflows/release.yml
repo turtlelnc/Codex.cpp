@@ -27,28 +27,29 @@ jobs:
           node-version: 22
       - name: Build Windows (static CRT and system TLS)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
-          cmake -S . -B build-release -A ${{ matrix.cmake_arch }}
-          cmake --build build-release --config Release --target codex-cpp --parallel 2
+          cmake -S . -B build-release -A ${{ matrix.cmake_arch }} 2>&1 | tee release-build.log
+          cmake --build build-release --config Release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
       - name: Build macOS (static TLS with system certificate trust)
         if: runner.os == 'macOS'
         run: |
-          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
-          cmake --build build-release --target codex-cpp --parallel 2
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee release-build.log
+          cmake --build build-release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
           strip build-release/codex-cpp
           codesign --force --sign - build-release/codex-cpp
       - name: Build Linux (static musl, TLS and embedded sandbox)
         if: runner.os == 'Linux'
-        run: docker run --rm -v "$PWD:/src" -w /src alpine:3.22 sh scripts/build-linux-release.sh
+        run: docker run --rm -v "$PWD:/src" -w /src alpine:3.22 sh scripts/build-linux-release.sh 2>&1 | tee release-build.log
       - name: Verify standalone executable
         shell: bash
         run: |
-          node tests/standalone_test.cjs '${{ matrix.binary }}'
-          node tests/runtime_dependencies.cjs '${{ matrix.binary }}'
-          CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}'
+          node tests/standalone_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+          node tests/runtime_dependencies.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+          CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Verify Linux embedded sandbox and team workflow
         if: runner.os == 'Linux'
-        run: node tests/team_service_test.cjs '${{ matrix.binary }}'
+        run: node tests/team_service_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Prepare download
         shell: bash
         run: |
@@ -62,7 +63,9 @@ jobs:
       - name: Explain failures
         if: failure()
         shell: bash
-        run: echo '::error::Single-file build or standalone verification failed on ${{ matrix.platform }}. Release publication is blocked until every architecture passes.'
+        run: |
+          tail -n 100 release-build.log >> "$GITHUB_STEP_SUMMARY"
+          node -e 'const fs=require("fs");for(const line of fs.readFileSync("release-build.log","utf8").split(/\r?\n/).filter(s=>/error:|Error:|error C[0-9]|error LNK|not found|cannot find|undefined reference|AssertionError|FAILED|fatal|not supported|Unable to find|ERROR/i.test(s)).slice(-15))console.log("::error::"+line.replaceAll("%","%25"));'
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: binaries
