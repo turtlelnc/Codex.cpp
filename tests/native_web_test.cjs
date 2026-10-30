@@ -32,6 +32,20 @@ class Client{
  const state=path.join(temp,'server');const tokens={};for(const user of ['alice','bob','eve']){const output=execFileSync(binary,['serve','--state-dir',state,'--add-user',user],{encoding:'utf8'});tokens[user]=output.match(/Login token \(save privately\): (\w+)/)[1];}
  p=await launch(['serve','--state-dir',state,'--origin','https://native.fixture']);const alice=new Client(p,'native.fixture'),bob=new Client(p,'native.fixture'),eve=new Client(p,'native.fixture');for(const [client,user] of [[alice,'alice'],[bob,'bob'],[eve,'eve']])await client.login(user,tokens[user]);
  await alice.rpc('create',{name:'demo'});for(const client of [alice,bob,eve])client.project='demo';await alice.rpc('invite',{username:'bob'});await eve.rpc('snapshot',{},400);await bob.rpc('invite',{username:'eve'},400);await bob.rpc('provider_save',{name:'forged',base_url:base,api:'responses',key:'no'},400);
+ // These workspace-backed checks require the integration runner's OS sandbox.
+ // Same call/session identifiers must still resolve within the selected scope.
+ await alice.rpc('create',{name:'log-scope'});
+ const seedLog=async(scope,output)=>{const values={project:'log-scope',scope};if(scope==='personal')await alice.rpc('personal',values);const info=await alice.rpc('status',values);const directory=path.join(info.workspace,'.codex_cpp','sessions');fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'session-scope.items.jsonl'),[{type:'function_call',call_id:'scope-call',name:'shell',arguments:'{}'},{type:'function_call_output',call_id:'scope-call',output}].map(row=>JSON.stringify(row)).join('\n')+'\n');await alice.rpc('session',{...values,session_id:'session-scope'});};
+ await seedLog('shared','shared-log');await seedLog('personal','private-log');
+ assert.equal((await alice.rpc('tool_log',{project:'log-scope',scope:'shared',session_id:'session-scope',call_id:'scope-call'})).output,'shared-log');
+ assert.equal((await alice.rpc('tool_log',{project:'log-scope',scope:'personal',session_id:'session-scope',call_id:'scope-call'})).output,'private-log');
+ console.log('PASS full tool log hosted shared/personal scope isolation');
+
+ await eve.rpc('tool_log',{project:'log-scope',scope:'shared',session_id:'session-scope',call_id:'scope-call'},400);
+ await alice.rpc('invite',{project:'log-scope',username:'bob'});
+ assert.equal((await bob.rpc('tool_log',{project:'log-scope',scope:'shared',session_id:'session-scope',call_id:'scope-call'})).output,'shared-log');
+ await bob.rpc('tool_log',{project:'log-scope',scope:'personal',session_id:'session-scope',call_id:'scope-call'},400);
+ console.log('PASS full tool log nonmember rejection and personal-user isolation');
  const shared=await alice.rpc('provider_save',{name:'Shared',base_url:base,api:'responses',models:['fixture'],key:'fixture-project-key'});await alice.rpc('provider_use',{id:shared.id});
  const first=await alice.rpc('send',{text:'FIRST',request_id:'shared-first'}),second=await bob.rpc('send',{text:'SECOND',request_id:'shared-second'});
  assert.equal((await bob.rpc('send',{text:'SECOND',request_id:'shared-second'})).job,second.job);

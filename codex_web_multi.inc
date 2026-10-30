@@ -152,28 +152,9 @@ struct HostedService : Service {
                 bool allow_failure = false, const std::vector<fs::path> &reads = {}) {
     auto application = app(user, id, personal);
     auto repo = repository(user, id, personal);
-#ifdef CODEX_WITH_LIBGIT2
     std::vector<std::string> args = {binary.u8string(), "--native-git-command", repo.u8string(),
                                      application->workspace.root.u8string()};
     args.insert(args.end(), tail.begin(), tail.end());
-#else
-    std::vector<std::string> args = {"git",
-                                     "--git-dir=" + repo.u8string(),
-                                     "--work-tree=" + application->workspace.root.u8string(),
-                                     "-c",
-                                     "core.bare=false",
-                                     "-c",
-                                     "core.hooksPath=/dev/null",
-                                     "-c",
-                                     "core.fsmonitor=false",
-                                     "-c",
-                                     "user.name=Codex.cpp",
-                                     "-c",
-                                     "user.email=codex@localhost"};
-    if (!tail.empty() && tail[0] == "init")
-      args = {"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"};
-    args.insert(args.end(), tail.begin(), tail.end());
-#endif
     ManagedProcess process;
     auto policy = ProcessPolicy::tool(application->workspace.root, true);
     policy.reads = reads;
@@ -285,13 +266,8 @@ struct HostedService : Service {
     auto result = git(user, id, personal, {"merge", "--no-ff", "--no-edit", ref}, true);
     J outcome;
     if (result.code) {
-#ifdef CODEX_WITH_LIBGIT2
       require(result.code == 1, "libgit2 merge failed; inspect workspace before retrying");
       auto paths = result.out;
-#else
-      auto paths = git(user, id, personal, {"diff", "--name-only", "--diff-filter=U"}, true).out;
-      git(user, id, personal, {"merge", "--abort"}, true);
-#endif
       require(!fs::exists(repository(user, id, personal) / "MERGE_HEAD"),
               "Merge abort incomplete; administrator must inspect repository before recovery");
       std::vector<J> files;
@@ -314,6 +290,7 @@ struct HostedService : Service {
       workers[id].join();
     active_projects.insert(id);
     workers[id] = std::thread([this, id]() {
+      try {
       while (true) {
         J task;
         size_t index = 0;
@@ -418,6 +395,11 @@ struct HostedService : Service {
       }
       std::lock_guard<std::recursive_mutex> lock(mutex);
       active_projects.erase(id);
+      } catch(const std::exception& error) {
+        std::cerr<<"Team worker failed; stopping service: "<<error.what()<<'\n';
+        begin_shutdown();
+        stopping_service=true;
+      }
     });
   }
   void audit(const std::string &user, const std::string &id, const J &request) {
@@ -477,6 +459,13 @@ J HostedService::dispatch(const std::string &user, const J &request) {
   auto &info = project(user, id);
   bool owner = text(info, "owner") == user, personal = text(request, "scope") == "personal";
   require(identifier(id), "Invalid project");
+  if(op=="member_candidates") {
+    require(owner,"Only the creator can view invitation candidates");
+    std::vector<J> names;
+    for(const auto &item:database.fields["users"].fields)
+      if(!member(item.first,info) && names.size()<1000)names.push_back(str(item.first));
+    return obj({{"users",arr(names)}});
+  }
   if (op == "invite" || op == "remove") {
     require(owner, "Only the creator can manage members");
     auto target = text(request, "username");

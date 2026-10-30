@@ -1,0 +1,7 @@
+Codex.cpp statically includes libgit2 (GPLv2 with linking exception) and
+libcurl (curl license). Full upstream license texts follow below.
+Linux releases include OpenSSL (Apache-2.0) and bubblewrap (LGPL-2.0-or-later).
+The pinned source URLs and build instructions are in CMakeLists.txt and
+.github/workflows/release.yml. The embedded bubblewrap is an unmodified,
+separate executable extracted at runtime; it is not linked into Codex.cpp.
+Use --licenses to display these notices from the single-file executable.

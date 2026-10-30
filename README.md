@@ -5,49 +5,80 @@
 浏览器就是客户端：本地模式操作本机工作区，服务器模式操作服务器上的工作区。
 保留文件树、编辑器、工具审批、会话记录、两级模型菜单与自定义模型提供商。
 
-可选的 [libgit2 嵌入实验](docs/LIBGIT2_TRIAL.md) 已支持本地网页状态与 Diff，无需运行系统 Git；
-启用该构建后，多人提交、发布和合并也使用 libgit2；普通构建仍保留系统 Git 后端。
-同一构建中的 `apply_patch` 也使用 libgit2，并提供 `git_read` / `git_write` 模型工具，沿用只读限制与写审批。
+程序始终使用 [内置 Git（libgit2）](docs/LIBGIT2_TRIAL.md)：网页 Diff、多人协作、
+`apply_patch` 和 `git_read` / `git_write` 模型工具均无需系统 Git，沿用只读限制、写审批和系统沙箱。
 
 ## 编译
 
-保留所有 `.inc` 源文件，以及二进制旁的 `web/` 静态资源。
-Linux / macOS / Termux 可用支持 C++17 的编译器：
-
-```sh
-clang++ -std=c++17 -O2 -pthread codex.cpp -o codex-cpp
-# 或用 g++ 替代 clang++
-```
-
-也可用 CMake；它会把 `web/` 复制到可执行文件旁：
+需要 CMake、C/C++ 编译器（主程序 C++17），不需要 Python。保留全部 `.inc` 源文件；
+CMake 将网页资源直接编入程序；`web/` 目录仅在开发和覆盖页面时使用。
+Linux/macOS 构建另需 OpenSSL 开发包及静态库；Windows 使用系统 Schannel。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel 2
 ```
 
-Windows 可用 Visual Studio 的 C++ 工具链运行以上 CMake 命令，产物通常是
-`build/Release/codex-cpp.exe`。MinGW-w64 的直接编译方式：
+Linux/macOS/Termux 产物通常是 `build/codex-cpp`；Windows 可使用 Visual Studio 或 MinGW，
+Visual Studio 产物通常是 `build/Release/codex-cpp.exe`。
+首次配置会下载固定版本 libgit2、libcurl 并校验 SHA-256，之后复用缓存；
+离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 指定已取得的依赖源码。
 
-```sh
-g++ -std=c++17 -O2 -pthread codex.cpp -o codex-cpp.exe -static -lws2_32 -lbcrypt -ladvapi32 -lshell32
-```
+后端开关和系统 Git 回退实现已移除；旧缓存中的关闭选项也不会再禁用内置 Git。
+不需要任何启用宏或后端选择参数。CMake 会自动编译、链接依赖。
+若手动使用 g++，仍需提供 libgit2 的头文件与链接参数；单独编译 codex.cpp 已不再是完整构建方式。
 
-只启动网页、登录多人服务、编辑已有文件，不需要其他运行时。
-模型网络请求需要系统 `curl`，Diff 和协作分支需要 `git`；Agent 的受限进程执行还需要可用的系统沙箱。
-Linux 使用 `bubblewrap`（`bwrap`），macOS 使用 `sandbox-exec`。请以普通用户运行，程序拒绝以 root 启动网页服务。
+网页、登录、编辑文件和模型请求不需要其他语言运行时或系统 `curl`；
+上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。
+Agent 受限执行仍需要系统沙箱：Linux 使用 `bubblewrap`，macOS 使用 `sandbox-exec`。
+Linux Release 将 bubblewrap 一起嵌入单文件，但仍需内核允许用户命名空间。
+请以普通用户运行，程序拒绝以 root 启动网页服务。
 
 ### 平台验证范围
 
 | 平台 | 当前状态 |
 | --- | --- |
 | Linux | 已验证本地网页、真实 Agent 子进程、审批、多人队列、分支冲突与重启恢复 |
-| Windows | 原生服务已通过 MinGW-w64 交叉编译；尚未实机验证。原 Agent 的 AppContainer 沙箱未实现，依赖它的模型请求和协作 Git 操作会拒绝执行 |
+| Windows | 提供 x86、x64、ARM64 单文件构建与运行测试；AppContainer 沙箱未实现，受限 Shell、沙箱 Git 和团队开发操作仍会拒绝执行；模型 HTTP 请求不再依赖沙箱 |
 | macOS | 提供原生实现和 CI 构建配置，尚未实机验证；Agent 依赖系统提供可用的 `sandbox-exec` |
 | Android / Termux | 不依赖 Python，尚未实机验证；Agent 运行取决于设备内核和应用权限是否允许所需的 Linux 沙箱 |
 
 跨平台编译成功不等于完成所有平台的 Agent 沙箱。受限模式缺少沙箱时拒绝执行，不会自动放宽权限。
 Windows/Android 设备也可以直接用浏览器连接已部署的 Linux 服务器，不需要在客户端安装这些工具。
+
+### 单文件下载
+
+[GitHub Releases](https://github.com/turtlelnc/Codex.cpp/releases) 的发布流程涵盖 Windows x86（32 位）、
+x64、ARM64，macOS Intel / Apple Silicon，以及 Linux x64 / ARM64。
+每个平台先验证把可执行文件独立复制到空目录、清空子进程 PATH 后的模型与网页功能，
+并检查动态库依赖；全部成功才发布七个文件与 `SHA256SUMS.txt`。
+Windows 静态链接 CRT，macOS 静态链接 OpenSSL 并使用系统证书信任，Linux 使用静态 musl/OpenSSL。
+无需额外 DLL、网页目录、Python、Node、Git 或 curl 可执行文件。
+macOS 建议下载 `.zip`，Linux 建议下载 `.tar.gz`；解压后仍是一个文件，并保留执行权限。
+浏览器直接下载裸文件时通常会丢失执行权限，Finder 可能将其当作文本文件。
+此时在终端对实际文件运行 `chmod +x 文件名`，再用 `./文件名` 启动。
+运行 `--licenses` 可查看内嵌许可证；平台限制和可选工具依赖见 [发行说明](docs/RELEASE_NOTES.md)。
+
+## TUI 团队设置
+
+在终端运行 `./codex-cpp --ui tui`，输入 `/team` 打开菜单。
+可配置监听 IPv4 地址和端口，登记账号、重置令牌、撤销账号，并启动或停止团队服务。
+访问地址可以留空，直接用 `http://服务器IP:端口` 连接，不需要域名、证书或反向代理。
+`0.0.0.0` 监听所有 IPv4 接口，`127.0.0.1` 只允许本机连接。
+令牌只在临时面板显示一次，不写入会话或输入历史。
+账号操作必须先停服，撤销账号保留项目文件；退出 TUI 会停止由它启动的服务。
+配置与 WebUI 的“团队”入口共用，数据默认在 `~/.codex-cpp/team-server`。
+两处均只管理自己启动的进程，不能接管另一实例；切换管理入口前请先停服。
+选择“Team projects (HTTP/HTTPS)”可直接在 TUI 登录本机或远程团队服务器，无需打开浏览器。
+支持创建项目、邀请和移除成员、共同及个人模型配置、模型选择、分支发布与同步、
+审阅共同修改并提交、确认精确 SHA 后合并、查看任务和操作审计、检查文件后恢复中断队列。
+共同凭据仍只允许创建者配置；成员可以使用，无法查看密钥。
+
+项目菜单“Agent tasks on server”支持共同或个人会话的任务排队、查看会话、审批和停止任务。
+其他成员也可以审批共同任务，服务器记录实际操作人。这里的任务始终操作服务器工作区；
+退出团队菜单后的普通聊天仍使用当前本地工作区。
+访问令牌和 API 密钥输入会被遮罩，登录 Cookie 只存在进程内存中，退出登录会撤销会话。
+HTTP 不加密传输内容；需要加密时可选用 HTTPS 代理。HTTPS 证书照常校验，不提供跳过验证的开关。
 
 ## 本地网页
 
@@ -59,7 +90,7 @@ Windows/Android 设备也可以直接用浏览器连接已部署的 Linux 服务
 校验 Host、Origin、SameSite Cookie 和 CSRF。可以用 `--port` 改端口，或用 `--web-dir` 指定静态资源目录。
 在 CMake 构建目录使用 `./build/codex-cpp`（Windows 使用对应 `.exe` 路径）。
 
-网页左侧是会话与文件树，中间是对话和工具审批，右侧是编辑器、Diff 与终端输出。
+网页默认以对话和工具审批为主，侧栏用于会话与项目导航，项目文件可折叠。编辑器、Diff 与终端通过右上角检查器按需打开，连续工具记录可展开查看原始参数和日志。
 编辑器支持 Ctrl/⌘+S；只能保存已有普通文件，单文件上限 1 MiB，不提供新建、删除或重命名。
 符号链接、硬链接、特殊文件和内部状态目录会被拒绝；二进制和无效 UTF-8 文件只读。
 保存时校验 SHA-256，文件被其他人或 Agent 修改后，需要重新载入再保存。
@@ -85,29 +116,58 @@ Windows/Android 设备也可以直接用浏览器连接已部署的 Linux 服务
 
 ## 多人服务器
 
+### 从 WebUI 配置
+
+运行 `./codex-cpp web --root /path/to/project` 后，点击顶部“团队”。
+在“本机服务”中设置监听 IP 与端口，访问地址留空；在“账号”中登记成员并保存仅显示一次的访问令牌，
+再启动团队服务。成员直接打开 `http://服务器IP:端口`，使用用户名和令牌登录即可。
+如需固定域名或 HTTPS 代理，再填写对应的访问地址；页面提供可选代理示例。
+
+此入口使用 `<CODEX_CPP_HOME>/team-server` 保存团队数据（默认 `~/.codex-cpp/team-server`），
+与当前本地项目分开。它仅管理自己启动的服务，不接管单独运行的 `serve` 进程。
+关闭浏览器标签页不会停止服务；退出本地 Codex.cpp 进程会停止其托管的团队服务。
+新增、重置或撤销账号需要先停止团队服务；重置与撤销不会删除项目文件。
+当前平台缺少工作区沙箱时，页面会提示限制，团队开发仍要求可用的沙箱。
+
+登录团队服务器后，“团队”面板提供成员、共同模型、分支和活动四个页面。
+项目创建者可邀请已登记账号、移除成员及配置共同模型凭据；所有成员拥有相同开发和审批权限。
+个人模型凭据仍在个人工作区配置。
+
+### 从命令行配置
+
 先创建账户。以下命令会各输出一次随机访问令牌，请私下保存；登录时填写用户名与该令牌。
 服务只保存令牌的 SHA-256 摘要，不使用用户自选密码。
 
 ```sh
 ./codex-cpp serve --state-dir /srv/codex-data --add-user alice
 ./codex-cpp serve --state-dir /srv/codex-data --add-user bob
-./codex-cpp serve --state-dir /srv/codex-data --origin https://codex.example.com --port 8765
+./codex-cpp serve --state-dir /srv/codex-data --host 0.0.0.0 --port 8766
 ```
 
 `/srv/codex-data` 须由运行服务的普通用户拥有且可写；也可以选择用户自己的目录。
 新增、重置或撤销账户前必须停止服务，状态目录有独占写锁。对已有用户名再次 `--add-user` 会重置其令牌；
 `--revoke-user bob` 撤销账户。账户管理命令不需要 `--origin`。
 
-服务只监听 `127.0.0.1`，在 HTTPS 反向代理后部署。以 Caddy 为例：
+不填写 `--origin` 时，服务默认监听 `0.0.0.0`，通过 `http://服务器IP:端口` 直接访问。
+直接连接模式接受监听 IP（以及本机的 `localhost`），校验请求端口、同源 Origin 和 CSRF；
+使用自定义 DNS 名称时，可填写可选的 `--origin http://名称:端口` 并设置相应的监听地址。
+
+HTTPS 反向代理是可选部署方式。已有 HTTPS 配置保持兼容，填写 `--origin` 且未指定 `--host` 时仍默认只监听本机：
+
+```sh
+./codex-cpp serve --state-dir /srv/codex-data --host 127.0.0.1 --port 8766 --origin https://codex.example.com
+```
+
+以 Caddy 为例：
 
 ```caddyfile
 codex.example.com {
-    reverse_proxy 127.0.0.1:8765
+    reverse_proxy 127.0.0.1:8766
 }
 ```
 
 代理应保留浏览器的 Host、Origin，外部地址必须与 `--origin` 完全一致，包括非默认端口。
-登录 Cookie 使用 Secure、HttpOnly、SameSite=Strict，8 小时过期；重启需重新登录。
+登录 Cookie 使用 HttpOnly、SameSite=Strict，HTTPS 模式额外使用 Secure，8 小时过期；重启需重新登录。
 不需要 Docker，之后可按部署需求增加容器。
 
 ### 协作方式
@@ -164,12 +224,17 @@ Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本�
 Node.js 仅用作测试运行器，正式运行不需要它：
 
 ```sh
-node tests/native_smoke.cjs ./codex-cpp
-clang++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
-./codex-self-test
-node tests/native_web_test.cjs ./codex-cpp
+node tests/native_smoke.cjs ./build/codex-cpp
+cmake --build build --target codex-self-test --parallel 2
+./build/codex-self-test
+node tests/native_web_test.cjs ./build/codex-cpp
+node tests/team_service_test.cjs ./build/codex-cpp
 ```
 
 第一项不依赖 Agent 沙箱；后两项完整测试需要受限进程执行可用，集成测试还需要 `curl` 和 `git`。
 测试使用本地假模型服务，不消耗模型额度。浏览器回归脚本另需 Playwright、Chromium 和 OpenSSL。
 GitHub Actions 配置包含 Linux/macOS/Windows 构建与基础冒烟测试，以及 Linux 集成测试。
+
+WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量说明](docs/WEBUI_QUALITY.md)。
+
+对话优先布局、真实工具摘要及完整日志接口的实现与验证边界见 [WebUI 对话布局说明](docs/WEBUI_CONVERSATION.md)。

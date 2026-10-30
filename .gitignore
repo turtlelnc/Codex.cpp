@@ -12,3 +12,6 @@ __pycache__/
 /codex-cpp.exe
 /codex-self-test.exe
 /build-libgit2/
+/build-default-git/
+/build-release/
+/dist/

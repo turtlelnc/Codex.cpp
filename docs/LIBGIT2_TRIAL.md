@@ -1,13 +1,15 @@
 # libgit2 直接嵌入：本地网页与多人协作
 
-Codex.cpp 直接静态链接 libgit2，不使用 Gitx 或 C++20。启用后，本地网页 Diff/状态，
-以及多人服务的仓库初始化、暂存、提交、本地对象传输、分支枚举、发布、同步与合并都不调用系统 Git。
-关闭构建开关时仍使用已有的系统 Git 后端。
+程序只有内置 Git 后端，直接静态链接 libgit2，不使用 Gitx 或 C++20。
+本地网页 Diff/状态、终端 `/diff`，以及多人服务的初始化、暂存、提交、本地对象传输、
+分支枚举、发布、同步和合并，均不调用系统 Git。
+后端宏、构建开关及系统 Git 回退代码已经移除，旧的 OFF 缓存也不会再影响构建。
+正常 CMake 构建会自动处理 libgit2；直接用 g++ 时仍需头文件和链接参数，但不再需要启用宏。
 
 ## 构建
 
 ```sh
-cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=ON
+cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-libgit2 --parallel 4
 ./build-libgit2/codex-cpp web --root /path/to/repository
 ```
@@ -60,7 +62,7 @@ Linux 需要可用的 bubblewrap 沙箱与 curl；本地测试不消耗模型额
 
 ## Agent 补丁与结构化 Git 工具
 
-同一构建中的 apply_patch 直接使用 libgit2，不调用 git apply，也不经过 Shell。
+apply_patch 直接使用 libgit2，不调用 git apply，也不经过 Shell。
 输入仍是 unified Git diff（不是 *** Begin Patch 格式）。支持普通目录以及已有 Git 仓库中的
 新增、修改、删除、重命名；不修改真实仓库的暂存区。先验证所有路径、再预检查整份补丁，
 不匹配的补丁在实际写入前拒绝；操作系统 I/O 故障或中途取消后仍需检查实际文件，不能盲目重放。
@@ -94,5 +96,5 @@ Linux 需要可用的 bubblewrap 沙箱与 curl；本地测试不消耗模型额
 真实 Agent 回归使用本地假模型，确认工具 schema、读/写审批、拒绝与只读模式、各 Git 操作及补丁保护；
 运行中的 Agent 使用一执行就失败的 git 替身，测试运行器的 Git 仅用于独立断言与准备恶意历史。
 
-因此，启用此构建后，网页/多人协作、apply_patch 以及上述模型工具都不需要系统 Git。
+因此，网页/多人协作、apply_patch 以及上述模型工具都不需要系统 Git。
 模型仍能通过 shell 主动运行用户明确需要的其他 Git 命令，那些命令需要系统 Git；curl 依赖不在本次范围内。

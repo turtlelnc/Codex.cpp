@@ -29,40 +29,19 @@ struct ApiClient{std::string api_key;std::string base_url = "https://api.openai.
 ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
 std::optional<std::string> post_codex(const std::string& body,std::string& err,const std::function<void(const std::string&)>& on_delta ={}, const std::function<void()>& on_tick ={},bool watch_escape = false)const{
   auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};
-  auto request=[&](){WebReply result;const fs::path req=temp_path("codex-stream-req"),hdr=temp_path("codex-stream-hdr"), stderr_path=temp_path("codex-stream-stderr");
-  {std::ofstream f(req,std::ios::binary);f<<body;std::ofstream h(hdr,std::ios::binary); h<<"Authorization: Bearer "<<a->access<<"\nAccept: text/event-stream\nContent-Type: application/json\n";
-    if(!a->account.empty())h<<"ChatGPT-Account-ID: "<<a->account<<"\n";
-  }
-  const std::string marker="__CODEX_HTTP_"+random_id("status")+"__:";std::string cmd="curl -sS -N --connect-timeout 20 --max-time 300 --max-redirs 0"+
-    std::string(" -w ")+shell_quote("\n"+marker+"%{http_code}\n")+ " -H "+shell_quote("@"+hdr.string())+" --data-binary @"+shell_quote(req.string())+
-    " "+shell_quote("https://chatgpt.com/backend-api/codex/responses")+ " 2>"+shell_quote(stderr_path.string());
-  ManagedProcess process;std::string launch_error;const bool launched=process.start(shell_argv(cmd),ProcessPolicy::network(),launch_error,false);if(launched)process.close_input();
-  if(!launched)result.error=launch_error;
-  else{std::array<char,4096> buf{};std::string line;auto consume_line=[&](){if(line.rfind(marker,0)==0){ try{result.status=std::stol(line.substr(marker.size()));}catch(...){}
-    }else{
-      if(result.body.size()+line.size()<=8'000'000)result.body+=line;else result.error="Codex stream exceeded 8 MB"; if(result.error.empty()&& line.rfind("data: ",0)==0 && on_delta){auto event=parse_json(line.substr(6));
-      if(event && at(&*event,"type")&& at(&*event,"type")->str()=="response.output_text.delta"){auto delta=event->get("delta"); if(delta && delta->kind==Json::String)on_delta(delta->value);
-      }
-      }
-    }
-    line.clear(); }; auto consume_bytes=[&](const char* data,size_t count){for(size_t i=0;i<count;++i){line+=data[i];if(data[i]=='\n')consume_line();
-      else if(line.size()>1'000'000){result.error="Codex stream line exceeded 1 MB";line.clear(); }
-    }
-    };
-    TerminalInputScope terminal_scope(watch_escape);bool interrupted=false;auto last_tick=std::chrono::steady_clock::now();const auto deadline=last_tick+std::chrono::minutes(5);
-    for(;;){
-#if !defined(_WIN32)
-      if(tui_interrupt_requested){interrupted=true;result.error="Interrupted by Ctrl+C";break;}
-#endif
-      if(watch_escape&&busy_input&&busy_input("",0)){interrupted=true;result.error="Interrupted by Esc";break;}
-      const int n=process.receive(buf.data(),buf.size(),100);if(n>0)consume_bytes(buf.data(),static_cast<size_t>(n));else if(n<0)break;
-      const auto now=std::chrono::steady_clock::now();if(now>=deadline){result.error="Codex stream timed out";break;}if(on_tick&&now-last_tick>=std::chrono::seconds(1)){on_tick();last_tick=now;}
-    }if(interrupted)process.stop();
-    if(!line.empty()&& result.error.empty())consume_line();
-    if(result.error.empty()&&process.wait(1000)!=0)result.error="curl failed: "+trim(slurp(stderr_path,2000));
-
-  }
-  std::error_code ec;fs::remove(req,ec);fs::remove(hdr,ec);fs::remove(stderr_path,ec);return result; };
+  auto request=[&](){
+    std::vector<std::string> headers={"Authorization: Bearer "+a->access,"Accept: text/event-stream","Content-Type: application/json"};
+    if(!a->account.empty())headers.push_back("ChatGPT-Account-ID: "+a->account);
+    std::string line;
+    auto consume=[&](const char* data,size_t size){for(size_t i=0;i<size;++i){line+=data[i];
+      if(line.size()>1'000'000)throw std::runtime_error("Codex stream line exceeded 1 MB");
+      if(data[i]=='\n'){if(on_delta&&line.rfind("data: ",0)==0){auto event=parse_json(line.substr(6));
+        if(event&&at(&*event,"type")&&at(&*event,"type")->str()=="response.output_text.delta"){
+          auto delta=event->get("delta");if(delta&&delta->kind==Json::String)on_delta(delta->value);
+        }}line.clear();}
+    }};
+    return native_http("https://chatgpt.com/backend-api/codex/responses",body,headers,false,consume,on_tick,watch_escape);
+  };
   auto r=request();for(int retry=0;retry<2 && r.body.find("data:")==std::string::npos &&
     (r.status==429 || r.status==502 || r.status==503 || r.status==504 ||
      (r.status==0 && r.error.rfind("curl failed:",0)==0));++retry){
@@ -112,16 +91,11 @@ std::optional<ApiResponse> parse_codex_stream(const std::string& raw,std::string
 }
 std::optional<std::string> post(const std::string& path,const std::string& body,std::string& err)const{
   if(chatgpt_auth){err = "internal routing error: ChatGPT login request reached API Key transport";return std::nullopt; }
-  const fs::path req = temp_path("codex-cpp-request");const fs::path out = temp_path("codex-cpp-response"); const fs::path header = temp_path("codex-cpp-header");
-  {std::ofstream f(req,std::ios::binary);if(!f){err = "cannot create request temp file";return std::nullopt;}f << body;}
-  std::string cmd = "curl -sS --fail-with-body --retry 2 --retry-connrefused --retry-max-time 20 --connect-timeout 20 --max-time 300 -o " + shell_quote(out.string());if(!no_api_key){
-  if(api_key.empty()){std::error_code ec;fs::remove(req,ec);err = "API key is not set";return std::nullopt;} {std::ofstream f(header,std::ios::binary);f << "Authorization: Bearer " << api_key << "\n";}
-#if !defined(_WIN32)
-  fs::permissions(header,fs::perms::owner_read | fs::perms::owner_write,fs::perm_options::replace);
-#endif
-  cmd += " -H " + shell_quote("@" + header.string()); } cmd += " -H " + shell_quote("Content-Type: application/json")+ " --data-binary @" + shell_quote(req.string())+ " " + shell_quote(base_url + path);
-  CommandResult cr = run_capture_interruptible(cmd,100000,{},bool(busy_input),ProcessPolicy::network());const std::string raw = slurp(out,2'000'000); std::error_code ec;fs::remove(req,ec);fs::remove(out,ec);fs::remove(header,ec);if(cr.exit_code==130 && cr.output=="Interrupted by Esc"){err=cr.output;return std::nullopt;}if(cr.exit_code != 0){
-  err = "HTTP request failed (curl " + std::to_string(cr.exit_code)+ "): " + cr.output;if(!raw.empty())err += "\n" + raw;return std::nullopt; } return raw;
+  std::vector<std::string> headers={"Content-Type: application/json"};
+  if(!no_api_key){if(api_key.empty()){err="API key is not set";return{};}headers.push_back("Authorization: Bearer "+api_key);}
+  auto reply=native_http(base_url+path,body,headers,false,{}, {},bool(busy_input));
+  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
+  return reply.body;
 }
 std::optional<ApiResponse> call_text_only(const std::string& instructions,const std::string& text,std::string& err)const{
   std::string body;std::string path;if(style == ApiStyle::Responses){body = "{\"model\":\"" + json_escape(model)+ "\",\"instructions\":\"" + json_escape(instructions)+ "\",\"input\":\"" + json_escape(text)+ "\"";

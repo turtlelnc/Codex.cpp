@@ -13,37 +13,43 @@
 <section id="host-login" hidden><form id="host-login-form"><h1>连接工作区</h1><label>用户名<input id="host-user" autocomplete="username" required></label><label>访问令牌<input id="host-token" type="password" autocomplete="current-password" required></label><button class="primary">登录</button><p id="host-login-error" role="alert"></p></form></section>
 <div id="workspace">
   <button type="button" id="sidebar-backdrop" aria-label="关闭侧栏" tabindex="-1"></button>
-  <aside class="sidebar">
+  <aside id="navigation-sidebar" class="sidebar" aria-label="工作区导航">
     <a class="logo" href="/"><i class="logo-mark"></i>Codex.cpp</a>
     <section id="host-controls" hidden><label>项目<select id="host-project" aria-label="项目"></select></label><div class="host-actions"><button id="host-create">创建项目</button><button id="host-manage">协作</button></div><label>会话<select id="host-scope" aria-label="会话范围"><option value="shared">共同会话</option><option value="personal">个人会话</option></select></label><p id="host-jobs" role="status"></p><button id="host-logout">退出登录</button></section>
     <button id="new-chat" class="nav-item"><span aria-hidden="true">＋</span> 新会话</button>
     <div class="sidebar-heading"><span>会话</span></div>
     <nav id="projects" aria-label="会话"></nav>
-    <div class="sidebar-heading files-heading"><span>项目文件</span><button id="refresh-files" aria-label="刷新文件" title="刷新文件">↻</button></div>
-    <div id="tree" aria-label="项目文件"></div>
+    <details id="project-files" class="file-browser">
+      <summary>项目文件</summary>
+      <div class="files-actions"><button id="refresh-files" aria-label="刷新文件" title="刷新文件">刷新文件</button></div>
+      <div id="tree" aria-label="项目文件"></div>
+    </details>
     <div class="sidebar-footer">
       <span id="connection" role="status" data-state="pending">连接中</span>
+      <button type="button" id="retry-connection" hidden>重新连接</button>
     </div>
   </aside>
 
   <main>
     <header>
       <div class="header-title">
-        <button id="sidebar-toggle" aria-label="显示或隐藏侧栏" aria-pressed="true" title="侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+        <button id="sidebar-toggle" aria-label="显示或隐藏侧栏" aria-controls="navigation-sidebar" aria-expanded="true" aria-pressed="true" title="侧栏"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
         <h1 id="project-title">新会话</h1>
         <span id="root-name" class="root-name"></span>
       </div>
       <div class="header-actions">
         <span id="queue-state" class="status-pill" data-busy="false">就绪</span>
+        <button id="team-button" disabled>团队</button>
         <button id="settings-button" title="模型提供商">提供商</button>
-        <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-pressed="true" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
+        <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-controls="workspace-inspector" aria-expanded="false" aria-pressed="false" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
       </div>
     </header>
     <div id="notice" role="status" hidden></div>
 
-    <div class="workspace-body">
+    <div class="workspace-body no-inspector">
       <section class="conversation" aria-label="对话">
         <div id="messages" aria-live="polite"></div>
+        <button type="button" id="jump-bottom" hidden>↓ 返回最新消息</button>
 
         <form id="composer">
           <div id="popover" role="menu" hidden></div>
@@ -62,11 +68,12 @@
         <p class="keys">Enter 发送 · Shift+Enter 换行 · Esc 关闭菜单</p>
       </section>
 
-      <aside class="inspector" aria-label="检查器">
+      <aside id="workspace-inspector" class="inspector" aria-label="检查器">
         <div class="tabs" role="group" aria-label="面板">
           <button data-panel="code" aria-pressed="true">代码</button>
           <button data-panel="changes" aria-pressed="false">变更<span id="diff-stat" class="diff-stat"></span></button>
           <button data-panel="terminal" aria-pressed="false">终端</button>
+          <button type="button" id="inspector-close" aria-label="关闭检查器" title="关闭检查器（Esc）">×</button>
         </div>
 
         <section id="code-panel" class="panel">
@@ -115,6 +122,17 @@
   </div>
 </template>
 
+<dialog id="device-login-dialog" aria-labelledby="device-login-title">
+  <div class="dialog-heading"><h2 id="device-login-title">登录 ChatGPT</h2><button type="button" id="device-login-close" aria-label="关闭登录窗口">×</button></div>
+  <p>在浏览器中打开下面的地址，登录后输入设备码。此过程不调用模型。</p>
+  <p><a id="device-login-url" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">https://auth.openai.com/codex/device</a></p>
+  <label>设备码<input id="device-login-code" readonly placeholder="正在获取设备码…" autocomplete="off"></label>
+  <button type="button" id="device-login-copy" disabled>复制设备码</button>
+  <p id="device-login-status" role="status" aria-live="polite">正在发起登录…</p>
+  <pre id="device-login-details" hidden></pre>
+  <button type="button" id="device-login-stop">取消登录</button>
+</dialog>
+
 <dialog id="dialog">
   <form id="dialog-form">
     <div class="dialog-heading">
@@ -130,5 +148,17 @@
   </form>
 </dialog>
 
+<dialog id="team-dialog" aria-labelledby="team-title">
+  <div class="dialog-heading"><div><h2 id="team-title">团队设置</h2><p id="team-subtitle"></p></div><button type="button" id="team-close" aria-label="关闭团队设置">×</button></div>
+  <div id="team-tabs" role="tablist" aria-label="团队设置"></div>
+  <div id="team-body" role="tabpanel" tabindex="0"></div>
+  <p id="team-error" role="alert"></p>
+</dialog>
+<dialog id="team-token-dialog" aria-labelledby="team-token-title">
+  <h2 id="team-token-title">保存访问令牌</h2><p>令牌只显示这一次，请保存到密码管理器。其他人可用它登录此账号。</p>
+  <label>访问令牌<input id="team-token" type="password" readonly autocomplete="off" spellcheck="false"></label>
+  <div class="actions"><button id="team-token-show" type="button" aria-pressed="false">显示令牌</button><button id="team-token-copy" type="button">复制令牌</button><button id="team-token-close" type="button" class="primary">已保存，关闭</button></div>
+  <p id="team-token-feedback" role="status"></p>
+</dialog>
 </body>
 </html>

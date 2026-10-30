@@ -1,0 +1,35 @@
+name: Repair POSIX release downloads
+on:
+  push:
+    branches: ['fix/posix-release-packaging']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Existing release tag
+        default: v2026.10.29.3
+        required: true
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release || 'v2026.10.29.3' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download and verify original release files
+        shell: bash
+        run: |
+          mkdir dist
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" -D dist -p codex-cpp-macos-x64 -p codex-cpp-macos-arm64 -p codex-cpp-linux-x64 -p codex-cpp-linux-arm64 -p SHA256SUMS.txt
+          cd dist
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+      - name: Package and verify extraction
+        run: node scripts/package-posix-release.cjs dist
+      - name: Add permission-preserving downloads
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" dist/*.zip dist/*.tar.gz dist/DOWNLOADS_SHA256SUMS.txt --clobber

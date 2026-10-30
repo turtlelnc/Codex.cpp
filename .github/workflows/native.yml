@@ -1,22 +1,28 @@
 name: Native web runtime
 on: [push, pull_request, workflow_dispatch]
 jobs:
-  libgit2-trial:
+  embedded-git:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release -DCODEX_WITH_LIBGIT2=ON
+      - run: cmake -S . -B build-libgit2 -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build-libgit2 --parallel 4
       - run: node tests/libgit2_trial.cjs build-libgit2/codex-cpp
       - run: node tests/native_smoke.cjs build-libgit2/codex-cpp
+      - run: node tests/standalone_test.cjs build-libgit2/codex-cpp
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
       - run: node tests/native_web_test.cjs build-libgit2/codex-cpp
         env:
           CODEX_TEST_NO_GIT: 1
       - run: node tests/agent_git_test.cjs build-libgit2/codex-cpp
+      - run: node tests/team_service_test.cjs build-libgit2/codex-cpp
+      - run: node tests/tui_team_test.cjs build-libgit2/codex-cpp
+      - run: node tests/team_remote_tui_test.cjs build-libgit2/codex-cpp
+      - run: node tests/direct_team_test.cjs build-libgit2/codex-cpp
+      - run: node tests/review_regressions.cjs build-libgit2/codex-cpp
   build-and-smoke:
     strategy:
       fail-fast: false
@@ -35,6 +41,14 @@ jobs:
         run: node tests/native_smoke.cjs build/codex-cpp
       - if: runner.os == 'Windows'
         run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+      - if: runner.os != 'Windows'
+        run: node tests/direct_team_test.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/direct_team_test.cjs build/Release/codex-cpp.exe
+      - if: runner.os != 'Windows'
+        run: node tests/libgit2_trial.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/libgit2_trial.cjs build/Release/codex-cpp.exe
       - name: Publish build diagnostics
         if: failure()
         shell: bash
@@ -45,7 +59,7 @@ jobs:
             printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
             node -e 'for (const line of require("fs").readFileSync("native-build.log", "utf8").split(/\r?\n/).filter(s => /error:|fatal error|error C[0-9]+/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));'
           fi
-  linux-integration:
+  core-self-test:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -53,13 +67,12 @@ jobs:
         with:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap curl git
-      - run: g++ -std=c++17 -O1 -pthread codex.cpp -o codex-cpp
+      - run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-core --target codex-self-test codex-transport-test --parallel 2
+      - run: node tests/http_transport_test.cjs build-core/codex-transport-test
       - shell: bash
         run: |
-          g++ -std=c++17 -O1 -pthread tests/agent_self_test.cpp -o codex-self-test
-          ./codex-self-test 2>&1 | tee native-self-test.log
-      - shell: bash
-        run: node tests/native_web_test.cjs ./codex-cpp 2>&1 | tee native-integration.log
+          ./build-core/codex-self-test 2>&1 | tee native-self-test.log
       - name: Publish test diagnostics
         if: failure()
         shell: bash
@@ -72,3 +85,17 @@ jobs:
               node -e 'for (const line of require("fs").readFileSync(process.argv[1], "utf8").split(/\r?\n/).filter(s => /^FAIL\b|Error:|AssertionError/.test(s)).slice(0, 20)) console.log("::error::" + line.replaceAll("%", "%25"));' "$log"
             fi
           done
+  webui-browser-regressions:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/webui-tests" playwright@1.62.1
+          "$RUNNER_TEMP/webui-tests/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run WebUI race, layout and rendering regressions
+        run: NODE_PATH="$RUNNER_TEMP/webui-tests/node_modules" node tests/webui_quality_test.cjs

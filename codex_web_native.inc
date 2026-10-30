@@ -6,9 +6,8 @@
 #include <csignal>
 #include <cwctype>
 #include <regex>
-#ifdef CODEX_WITH_LIBGIT2
 #include <git2.h>
-#endif
+#include "codex_resources.h"
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -35,6 +34,34 @@ extern char **environ;
 #endif
 namespace native_web {
 using J = Json;
+void require(bool condition,const std::string& message);
+// Shared normalization for optional browser origins and TUI server URLs.
+std::string browser_origin(std::string value) {
+  while(!value.empty()&&value.back()=='/')value.pop_back();
+  require(value.size()<=2048&&value.find_first_of("@?#\\") == std::string::npos&&
+    std::none_of(value.begin(),value.end(),[](unsigned char c){return c<=32||c==127;}),"Use an HTTP(S) origin without path or credentials");
+  auto separator=value.find("://");
+  require(separator!=std::string::npos&&value.find('/',separator+3)==std::string::npos,"Use an HTTP(S) origin without a path");
+  std::unique_ptr<CURLU,decltype(&curl_url_cleanup)> url(curl_url(),curl_url_cleanup);
+  require(url&&curl_url_set(url.get(),CURLUPART_URL,value.c_str(),0)==CURLUE_OK,"Invalid server URL");
+  auto part=[&](CURLUPart key){char* bytes=nullptr;if(curl_url_get(url.get(),key,&bytes,0)!=CURLUE_OK)return std::string{};
+    std::string result(bytes);curl_free(bytes);return result;};
+  auto scheme=part(CURLUPART_SCHEME),name=part(CURLUPART_HOST),port=part(CURLUPART_PORT);
+  require((scheme=="http"||scheme=="https")&&!name.empty(),"Use an HTTP or HTTPS origin");
+  require(port.empty()||std::stoi(port)>0,"URL port must be 1..65535");
+  for(char& c:name)c=char(std::tolower(static_cast<unsigned char>(c)));
+  if((scheme=="http"&&port=="80")||(scheme=="https"&&port=="443"))port.clear();
+  return scheme+"://"+name+(port.empty()?"":":"+port);
+}
+bool ipv4_address(const std::string& address) {
+  std::istringstream input(address);std::string octet;int count=0;
+  while(std::getline(input,octet,'.')){
+    if(octet.empty()||octet.size()>3||(octet.size()>1&&octet.front()=='0')||
+      !std::all_of(octet.begin(),octet.end(),[](unsigned char c){return std::isdigit(c);})||std::stoi(octet)>255)return false;
+    ++count;
+  }
+  return count==4&&!address.empty()&&address.back()!='.';
+}
 J obj(std::initializer_list<std::pair<const std::string, J>> fields = {}) {
   J j;
   j.kind = J::Object;
@@ -77,16 +104,12 @@ J field(const J &j, const std::string &k, J fallback = J{}) {
   auto p = j.get(k);
   return p ? *p : fallback;
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_git.inc"
-#endif
 void require(bool good, const std::string &why) {
   if (!good)
     throw std::runtime_error(why);
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_git_server.inc"
-#endif
 std::string entropy() {
   unsigned char bytes[32];
 #if defined(_WIN32)
@@ -298,9 +321,13 @@ void atomic_save(const fs::path &path, const J &value) {
   temporary += "." + entropy();
   auto data = json_dump(value);
 #if defined(_WIN32)
+  struct RemovePartial {fs::path path;~RemovePartial(){std::error_code ignored;fs::remove(path,ignored);}} remove_partial{temporary};
   std::ofstream stream(temporary, std::ios::binary);
   stream << data;
+  stream.flush();
+  require(bool(stream),"Cannot write state file");
   stream.close();
+  require(bool(stream),"Cannot close state file");
   protect(temporary);
   require(MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) !=
               0,
@@ -318,7 +345,7 @@ void atomic_save(const fs::path &path, const J &value) {
     }
     offset += static_cast<size_t>(n);
   }
-  ::fsync(fd);
+  if(::fsync(fd)!=0){::close(fd);fs::remove(temporary);throw std::runtime_error("Cannot sync state file");}
   ::close(fd);
   require(::rename(temporary.c_str(), path.c_str()) == 0, "Cannot replace state");
   int directory = ::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -861,6 +888,31 @@ std::string command(std::vector<std::string> args, int timeout = 30,
   require(child.status == 0, "Command failed; inspect workspace and configuration");
   return out;
 }
+// Project stored model context into user-facing text without changing model input.
+static std::string visible_user_message(const std::string &value) {
+  const std::string environment_end = "</environment_context>";
+  const bool contextual = value.rfind("# Available skills\n", 0) == 0 ||
+                          value.rfind("<environment_context>\n", 0) == 0;
+  if (contextual) {
+    auto end = value.find(environment_end);
+    if (end != std::string::npos) {
+      end += environment_end.size();
+      if (value.compare(end, std::string("\n\n<current_goal>").size(), "\n\n<current_goal>") == 0) {
+        auto goal_end = value.find("</current_goal>", end + std::string("\n\n<current_goal>").size());
+        if (goal_end == std::string::npos) return value;
+        end = goal_end + std::string("</current_goal>").size();
+      }
+      if (value.compare(end, 2, "\n\n") == 0) return value.substr(end + 2);
+    }
+  }
+  // Older sessions used the workspace/sandbox text wrapper.
+  if (value.rfind("Workspace root:", 0) == 0) {
+    const std::string marker = "\nUser task:\n";
+    auto task = value.find(marker);
+    if (task != std::string::npos) return value.substr(task + marker.size());
+  }
+  return value;
+}
 struct App {
   Workspace workspace;
   fs::path binary, home, auth_home, state_path, registry_path;
@@ -1031,9 +1083,7 @@ struct App {
         else
           for (auto &p : content.items)
             value += text(p, "text");
-        auto pos = value.rfind("\n\nUser task:\n");
-        if (role == "user" && pos != std::string::npos)
-          value = value.substr(pos + 13);
+        if (role == "user") value = visible_user_message(value);
         if (!value.empty())
           rows.push_back(obj({{"k", str(role)}, {"text", str(value)}}));
       } else if (kind == "function_call") {
@@ -1042,11 +1092,15 @@ struct App {
                             {"id", field(*item, "call_id")},
                             {"name", field(*item, "name")},
                             {"args", str(text(*item, "arguments").substr(0, 30000))},
+                            {"args_truncated", boolean(text(*item, "arguments").size() > 30000)},
                             {"output", J{}}}));
       } else if (kind == "function_call_output") {
         auto found = calls.find(text(*item, "call_id"));
-        if (found != calls.end())
-          rows[found->second].fields["output"] = str(text(*item, "output").substr(0, 12000));
+        if (found != calls.end()) {
+          auto output = text(*item, "output");
+          rows[found->second].fields["output"] = str(output.substr(0, 12000));
+          rows[found->second].fields["output_truncated"] = boolean(output.size() > 12000);
+        }
       }
     }
     if (rows.size() > 400)
@@ -1089,9 +1143,7 @@ struct App {
               if (content.kind == J::Array)
                 for (auto &part : content.items)
                   value += text(part, "text");
-              auto task = value.rfind("\n\nUser task:\n");
-              if (task != std::string::npos)
-                value = value.substr(task + 13);
+              value = visible_user_message(value);
               title = value.substr(0, value.find('\n')).substr(0, 72);
               if (!title.empty())
                 title_cache[id] = title;
@@ -1282,6 +1334,27 @@ struct App {
       return obj({{"projects", arr({str("local")})}});
     if (op == "snapshot")
       return snapshot();
+    if (op == "tool_log") {
+      require(!sid.empty() && text(request, "session_id") == sid, "Session changed; reopen the tool log");
+      auto call_id = text(request, "call_id");
+      require(!call_id.empty() && call_id.size() <= 256, "Invalid tool call ID");
+      // Read only the current App's journal, preserving hosted scope/membership checks.
+      std::istringstream input(workspace.read(".codex_cpp/sessions/" + sid + ".items.jsonl", true));
+      std::string line;
+      J result = obj();
+      bool found = false;
+      while (std::getline(input, line)) {
+        auto item = parse_json(line);
+        if (!item || text(*item, "call_id") != call_id) continue;
+        auto kind = text(*item, "type");
+        if (kind == "function_call") {
+          result = obj({{"name", field(*item, "name")}, {"arguments", field(*item, "arguments")}, {"output", J{}}});
+          found = true;
+        } else if (kind == "function_call_output" && found) result.fields["output"] = field(*item, "output");
+      }
+      require(found, "Tool call not found in the current session");
+      return result;
+    }
     if (op == "status")
       return obj({{"workspace", str(workspace.root.u8string())}, {"mode", str("local")}});
     if (op == "send") {
@@ -1358,30 +1431,7 @@ struct App {
       return workspace.write(text(request, "path"), value->str(), text(request, "base"));
     }
     if (op == "diff") {
-#ifdef CODEX_WITH_LIBGIT2
       return git_review(workspace.root);
-#else
-      auto root = workspace.root.u8string();
-      lock.unlock();
-      std::vector<std::string> git = {"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                                      "-C",  root};
-      auto invoke = [&](std::vector<std::string> tail) {
-        auto args = git;
-        args.insert(args.end(), tail.begin(), tail.end());
-        return command(args);
-      };
-      auto diff = invoke({"diff", "HEAD", "--no-ext-diff", "--no-textconv"});
-      auto untracked = invoke({"ls-files", "--others", "--exclude-standard", "-z"});
-      std::vector<J> names;
-      std::istringstream stream(untracked);
-      std::string name;
-      while (std::getline(stream, name, '\0'))
-        names.push_back(str(name));
-      return obj({{"head", str(trim(invoke({"rev-parse", "HEAD"})))},
-                  {"diff", str(diff.substr(0, 524288))},
-                  {"untracked", arr(names)},
-                  {"truncated", boolean(diff.size() > 524288)}});
-#endif
     }
     if (op == "providers") {
       std::vector<J> result = {provider("codex")};
@@ -1572,7 +1622,20 @@ void reply(Socket fd, int code, const std::string &body,
 void response(Socket fd, int code, const J &data, const std::string &cookie = "") {
   reply(fd, code, json_dump(data), "application/json; charset=utf-8", cookie);
 }
+static std::atomic<bool> stopping_service{false};
 Request request(Socket fd) {
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+  auto bounded_receive=[&](char* bytes,size_t size){
+    for(;;){
+      require(!stopping_service,"Service is stopping");
+      require(std::chrono::steady_clock::now()<deadline,"HTTP request deadline exceeded");
+      fd_set readers;FD_ZERO(&readers);FD_SET(fd,&readers);timeval tick{0,100000};
+      const int ready=::select(static_cast<int>(fd)+1,&readers,nullptr,nullptr,&tick);
+      if(ready>0)break;
+      require(ready>=0,"Cannot wait for HTTP request");
+    }
+    return ::recv(fd,bytes,static_cast<int>(size),0);
+  };
 #if defined(_WIN32)
   DWORD timeout = 10000;
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char *>(&timeout), sizeof timeout);
@@ -1586,7 +1649,7 @@ Request request(Socket fd) {
   char buffer[8192];
   size_t end;
   while ((end = data.find("\r\n\r\n")) == std::string::npos) {
-    auto n = ::recv(fd, buffer, sizeof buffer, 0);
+    auto n = bounded_receive(buffer, sizeof buffer);
     require(n > 0, "Incomplete HTTP request");
     data.append(buffer, static_cast<size_t>(n));
     require(data.size() <= 65536, "HTTP headers too large");
@@ -1618,7 +1681,7 @@ Request request(Socket fd) {
   require(length <= 2 * 1024 * 1024, "HTTP body too large");
   result.body = data.substr(end + 4);
   while (result.body.size() < length) {
-    auto n = ::recv(fd, buffer, sizeof buffer, 0);
+    auto n = bounded_receive(buffer, sizeof buffer);
     require(n > 0, "Incomplete HTTP body");
     result.body.append(buffer, static_cast<size_t>(n));
   }
@@ -1632,7 +1695,7 @@ struct WebSession {
   std::string user, csrf;
   std::time_t expires = 0;
 };
-static std::atomic<bool> stopping_service{false};
+
 static_assert(std::atomic<bool>::is_always_lock_free, "Signal flag must be lock-free");
 void stop_service(int) {
   stopping_service = 1;
@@ -1641,6 +1704,7 @@ struct Service {
   fs::path binary, web, home;
   std::string origin, host = "127.0.0.1", authority;
   int port = 8765;
+  bool direct_access = false;
   std::unique_ptr<App> local;
   std::recursive_mutex mutex;
   std::map<std::string, WebSession> sessions;
@@ -1667,8 +1731,9 @@ struct Service {
         local->child->terminate();
     }
   }
+  std::string cookie_name() const {return (hosted()?"codex_session_":"codex_local_session_")+std::to_string(port);}
   std::string cookie(const std::string &token) {
-    return "codex_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" +
+    return cookie_name()+"=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" +
            (origin.rfind("https://", 0) == 0 ? std::string("; Secure") : "");
   }
   std::pair<std::string, WebSession> authenticate(const Request &req) {
@@ -1678,8 +1743,9 @@ struct Service {
     std::string part, token;
     while (std::getline(stream, part, ';')) {
       part = trim(part);
-      if (part.rfind("codex_session=", 0) == 0)
-        token = part.substr(14);
+      auto prefix=cookie_name()+"=";
+      if (part.rfind(prefix, 0) == 0)
+        token = part.substr(prefix.size());
     }
     auto found = sessions.find(token);
     if (found != sessions.end() && found->second.expires > std::time(nullptr))
@@ -1703,9 +1769,18 @@ struct Service {
   void handle(Socket fd) {
     try {
       auto req = request(fd);
-      require(req.headers["host"] == authority, "Host refused");
+      auto allowed_origin=origin;
+      if(direct_access){
+        auto incoming=req.headers["host"];auto colon=incoming.rfind(':');
+        auto address=colon==std::string::npos?incoming:incoming.substr(0,colon);
+        auto incoming_port=colon==std::string::npos?"80":incoming.substr(colon+1);
+        require(incoming_port==std::to_string(port),"Host port refused");
+        bool local_name=address=="localhost"&&(host=="0.0.0.0"||host.rfind("127.",0)==0);
+        require(local_name||(ipv4_address(address)&&(host=="0.0.0.0"||address==host)),"Direct mode requires a listener IP; configure --origin for DNS names");
+        allowed_origin=browser_origin("http://"+incoming);
+      }else require(req.headers["host"] == authority, "Host refused");
       if (req.headers.count("origin"))
-        require(req.headers["origin"] == origin, "Origin refused");
+        require(req.headers["origin"] == allowed_origin, "Origin refused");
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
@@ -1714,7 +1789,7 @@ struct Service {
         auto mime = req.path == "/"         ? "text/html; charset=utf-8"
                     : req.path == "/app.js" ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
-        reply(fd, 200, read_bytes(web / name), mime);
+        reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;
       }
       auto authenticated = authenticate(req);
@@ -1775,7 +1850,7 @@ struct Service {
         std::lock_guard<std::recursive_mutex> lock(mutex);
         sessions.erase(authenticated.first);
         response(fd, 200, obj({{"ok", boolean(true)}}),
-                 "codex_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+                 cookie_name()+"=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
         return;
       }
       require(req.path == "/api/rpc", "Unknown route");
@@ -1831,6 +1906,7 @@ struct Service {
     ::signal(SIGTERM, stop_service);
     std::cout << "Codex.cpp native " << mode() << " web: " << origin << "\nNo Python runtime required.\n"
               << std::flush;
+    if(hosted())std::cout<<"Listening on "<<host<<":"<<port<<(direct_access?" (direct HTTP; connect using the server IP)":" (configured access origin)")<<"\n"<<std::flush;
     while (!stopping_service) {
       fd_set waiting;
       FD_ZERO(&waiting);
@@ -1886,10 +1962,9 @@ fs::path executable(const char *argv0) {
   return fs::canonical(argv0);
 #endif
 }
-#ifdef CODEX_WITH_LIBGIT2
 #include "codex_agent_git.inc"
-#endif
 #include "codex_web_multi.inc"
+#include "codex_web_team.inc"
 void child_mode(int &argc, char **&argv, std::vector<char *> &storage) {
 #if defined(__linux__)
   if (argc > 2 && std::string(argv[1]) == "--native-child") {
@@ -1927,19 +2002,19 @@ int main(int argc, char **argv) {
     argv = native_pointers.data();
 #endif
     std::string override_root;
-    std::string operation = argc > 1 ? argv[1] : "web", host = "127.0.0.1", origin, add_user, revoke_user;
+    std::string operation = argc > 1 ? argv[1] : "web", host, origin, add_user, revoke_user;
     int port = 8765;
     auto self = executable(argv[0]);
-    fs::path home = own_auth_path().parent_path(), state, assets = self.parent_path() / "web";
+    fs::path home = own_auth_path().parent_path(), state, assets;
     std::vector<std::string> arguments = {argv[0]};
     bool explicit_options = false;
     for (int i = 2; i < argc; ++i) {
       std::string arg = argv[i];
       if (arg == "--help" || arg == "-h") {
         std::cout << "Native web: codex-cpp web [--root DIR] [--port 8765] [provider options]\nHosted web: "
-                     "codex-cpp serve --state-dir DIR --origin https://host [--host 127.0.0.1]\nAccounts: "
-                     "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. Keep web/ "
-                     "beside the binary.\n";
+                     "codex-cpp serve --state-dir DIR [--host 0.0.0.0] [--port 8765] [--origin URL]\nAccounts: "
+                     "codex-cpp serve --state-dir DIR --add-user USER\nNo Python runtime required. WebUI "
+                     "is embedded; --web-dir DIR overrides it.\n";
         return 0;
       }
       if (arg == "--port" || arg == "--host" || arg == "--origin" || arg == "--state-dir" ||
@@ -1992,7 +2067,8 @@ int main(int argc, char **argv) {
     ::signal(SIGPIPE, SIG_IGN);
 #endif
     require(port >= 1 && port <= 65535, "Port must be 1..65535");
-    require(host == "127.0.0.1", "Bind loopback and use an HTTPS reverse proxy for remote access");
+    if(host.empty())host=operation=="serve"&&origin.empty()?"0.0.0.0":"127.0.0.1";
+    require(ipv4_address(host),"Use a numeric IPv4 listen address");
     std::unique_ptr<Service> service;
     if (operation == "serve") {
       require(!explicit_options, "Configure hosted providers per project or personal context in the page");
@@ -2009,12 +2085,11 @@ int main(int argc, char **argv) {
         std::cout << "Account revoked\n";
         return 0;
       }
-      require(origin.rfind("https://", 0) == 0,
-              "Hosted mode requires an HTTPS browser origin and reverse proxy");
+      hosted->direct_access=origin.empty();
       service = std::move(hosted);
     } else {
       require(host == "127.0.0.1", "Local mode only binds loopback");
-      service = std::make_unique<Service>();
+      service = std::make_unique<LocalService>();
       service->home = home;
       service->local = std::make_unique<App>(opt.root, self, home, opt, explicit_options);
     }
@@ -2023,10 +2098,8 @@ int main(int argc, char **argv) {
     service->web = assets;
     service->host = host;
     service->port = port;
-    if (origin.empty())
-      origin = "http://" + host + ":" + std::to_string(port);
-    while (!origin.empty() && origin.back() == '/')
-      origin.pop_back();
+    if (origin.empty())origin = "http://"+(host=="0.0.0.0"?std::string("127.0.0.1"):host)+":"+std::to_string(port);
+    origin=browser_origin(origin);
     auto start = origin.find("://");
     require(start != std::string::npos, "Invalid browser origin");
     service->authority = origin.substr(start + 3);
@@ -2034,9 +2107,8 @@ int main(int argc, char **argv) {
                 service->authority.find_first_of("/@?#\r\n\t ") == std::string::npos,
             "Use an origin without path or credentials");
     service->origin = origin;
-    require(fs::is_regular_file(assets / "index.html") && fs::is_regular_file(assets / "app.js") &&
-                fs::is_regular_file(assets / "style.css"),
-            "Missing web/ assets beside executable");
+    require(assets.empty() || (fs::is_regular_file(assets / "index.html") && fs::is_regular_file(assets / "app.js") &&
+                fs::is_regular_file(assets / "style.css")), "Incomplete --web-dir assets");
     service->listen();
     return 0;
   } catch (const std::exception &e) {
@@ -2046,6 +2118,4 @@ int main(int argc, char **argv) {
 }
 } // namespace native_web
 
-#ifdef CODEX_WITH_LIBGIT2
 static ToolResult run_libgit_tool(const std::string &tool,const std::string &arguments,const fs::path &root,bool write,SandboxMode mode,const std::function<void()> &tick,bool watch){return native_web::run_agent_tool(tool,arguments,root,write,mode,tick,watch);}
-#endif
