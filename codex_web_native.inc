@@ -1092,11 +1092,15 @@ struct App {
                             {"id", field(*item, "call_id")},
                             {"name", field(*item, "name")},
                             {"args", str(text(*item, "arguments").substr(0, 30000))},
+                            {"args_truncated", boolean(text(*item, "arguments").size() > 30000)},
                             {"output", J{}}}));
       } else if (kind == "function_call_output") {
         auto found = calls.find(text(*item, "call_id"));
-        if (found != calls.end())
-          rows[found->second].fields["output"] = str(text(*item, "output").substr(0, 12000));
+        if (found != calls.end()) {
+          auto output = text(*item, "output");
+          rows[found->second].fields["output"] = str(output.substr(0, 12000));
+          rows[found->second].fields["output_truncated"] = boolean(output.size() > 12000);
+        }
       }
     }
     if (rows.size() > 400)
@@ -1330,6 +1334,27 @@ struct App {
       return obj({{"projects", arr({str("local")})}});
     if (op == "snapshot")
       return snapshot();
+    if (op == "tool_log") {
+      require(!sid.empty() && text(request, "session_id") == sid, "Session changed; reopen the tool log");
+      auto call_id = text(request, "call_id");
+      require(!call_id.empty() && call_id.size() <= 256, "Invalid tool call ID");
+      // Read only the current App's journal, preserving hosted scope/membership checks.
+      std::istringstream input(workspace.read(".codex_cpp/sessions/" + sid + ".items.jsonl", true));
+      std::string line;
+      J result = obj();
+      bool found = false;
+      while (std::getline(input, line)) {
+        auto item = parse_json(line);
+        if (!item || text(*item, "call_id") != call_id) continue;
+        auto kind = text(*item, "type");
+        if (kind == "function_call") {
+          result = obj({{"name", field(*item, "name")}, {"arguments", field(*item, "arguments")}, {"output", J{}}});
+          found = true;
+        } else if (kind == "function_call_output" && found) result.fields["output"] = field(*item, "output");
+      }
+      require(found, "Tool call not found in the current session");
+      return result;
+    }
     if (op == "status")
       return obj({{"workspace", str(workspace.root.u8string())}, {"mode", str("local")}});
     if (op == "send") {

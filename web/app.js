@@ -238,22 +238,78 @@ function toolDetail(name, rawArgs) {
   return rawArgs || '';
 }
 
-const exitFailed = output => /^exit_code=(?!0\b)\d+/.test(output || '');
+const toolLabels = {
+  approval: '等待批准',
+  running: '执行中',
+  queued: '等待结果',
+  returned: '已返回',
+  completed: '已完成',
+  failed: '失败',
+  denied: '已拒绝',
+  interrupted: '已中断',
+};
+function toolEventMap(snap) {
+  const events = new Map();
+  for (const event of snap.events || [])
+    if (event.type === 'tool.started' || event.type === 'tool.completed')
+      events.set(event.payload?.call_id, event);
+  return events;
+}
+function toolStatus(row, snap, events) {
+  if (snap.pending && (snap.pending.tool_call_id || snap.pending.call_id) === row.id && row.output == null)
+    return 'approval';
+  if (/^DENIED(?: by user|:)/.test(row.output || '')) return 'denied';
+  if (/^(?:Interrupted |Cancelled after interruption)/.test(row.output || '')) return 'interrupted';
+  const event = events.get(row.id);
+  const code =
+    event?.type === 'tool.completed'
+      ? event.payload.exit_code
+      : /^exit_code=(-?\d+)\b/.exec(row.output || '')?.[1];
+  if (code !== undefined && Number(code) !== 0) return 'failed';
+  if (row.output != null) return code !== undefined ? 'completed' : 'returned';
+  if (!snap.busy) return 'interrupted';
+  return event?.type === 'tool.started' ? 'running' : 'queued';
+}
+async function openToolLog(id) {
+  const session = state.snap?.session_id;
+  const result = await rpc('tool_log', { call_id: id, session_id: session });
+  if (session !== state.snap?.session_id) return;
+  const body = el('div');
+  body.append(
+    el('p', '当前会话保存的原始参数与输出。'),
+    el('pre', result.arguments, 'raw-tool-log'),
+    el('pre', result.output ?? '尚未收到工具结果', 'raw-tool-log'),
+  );
+  showDialog(result.name + ' · 完整日志', body);
+}
 
 async function decide(allow) {
-  if(state.deciding)return;state.deciding=true;
+  if (state.deciding) return;
+  state.deciding = true;
+  const trigger = document.activeElement;
   for (const b of document.querySelectorAll('[data-decide]')) b.disabled = true;
   try {
-    await rpc('approve', {approval: state.snap?.pending?.call_id, allow});
-  } catch (e) { notice(e.message); }
-  state.deciding=false;await refresh();
-  for(const b of document.querySelectorAll('[data-decide]'))b.disabled=false;
+    await rpc('approve', { approval: state.snap?.pending?.call_id, allow });
+  } catch (e) {
+    notice(e.message);
+  }
+  state.deciding = false;
+  await refresh();
+  for (const b of document.querySelectorAll('[data-decide]')) b.disabled = false;
+  if (trigger?.matches('[data-decide]') && !trigger.isConnected)
+    (document.querySelector('.conversation').inert ? $('inspector-toggle') : $('prompt')).focus({
+      preventScroll: true,
+    });
 }
 
 function approvalBar(name) {
   const bar = el('div', undefined, 'approve');
-  bar.append(el('span', name === 'apply_patch' ? '应用此补丁？' : name === 'shell' ? '运行此命令？' : '允许此操作？'), el('span', undefined, 'sp'));
-  const deny = el('button', '拒绝'), allow = el('button', '允许', 'primary');
+  bar.append(
+    el('span', name === 'apply_patch' ? '应用此补丁？' : name === 'shell' ? '运行此命令？' : '允许此操作？'),
+    el('span', undefined, 'sp'),
+  );
+  const deny = el('button', '拒绝'),
+    allow = el('button', '允许', 'primary');
   deny.dataset.decide = allow.dataset.decide = '1';
   deny.type = allow.type = 'button';
   deny.onclick = () => decide(false);
@@ -262,12 +318,27 @@ function approvalBar(name) {
   return bar;
 }
 
-function toolCard(id, name, args, output, awaiting) {
+function toolCard(
+  id,
+  name,
+  args,
+  output,
+  awaiting,
+  status = awaiting ? 'approval' : output == null ? 'queued' : 'returned',
+  truncated = false,
+) {
   const done = output !== null && output !== undefined;
-  const card = el('div', undefined, 'tool' + (done && exitFailed(output) ? ' err' : ''));
+  const failed = ['failed', 'denied', 'interrupted'].includes(status);
+  const card = el('div', undefined, 'tool' + (failed ? ' err' : ''));
+  card.dataset.toolId = id;
+  card.dataset.state = status;
   const head = el('div', undefined, 'tool-h');
-  head.append(el('span', done ? (exitFailed(output) ? '✗' : '✓') : '', done ? 'st mark' : 'st spin'),
-    el('span', name, 'name'), el('span', toolSummary(name, args), 'arg'));
+  head.append(
+    el('span', failed ? '!' : done ? '·' : '', status === 'running' ? 'st spin' : 'st mark'),
+    el('span', name, 'name'),
+    el('span', toolSummary(name, args), 'arg'),
+    el('span', toolLabels[status], 'tool-state'),
+  );
   const body = el('div', undefined, 'tool-b');
   if (name === 'apply_patch') {
     const files = parsePatch(parseArgs(args).patch || '');
@@ -276,16 +347,34 @@ function toolCard(id, name, args, output, awaiting) {
   } else {
     body.append(el('pre', toolDetail(name, args) + (done ? '\n\n' + output : '')));
   }
+  const logs = el('button', truncated ? '预览已截断 · 查看完整日志' : '查看原始参数与完整日志', 'tool-log');
+  logs.type = 'button';
+  logs.onclick = () => openToolLog(id).catch((error) => notice(error.message));
+  const actions = el('div', undefined, 'tool-actions');
+  actions.append(logs);
+  if (name === 'shell' || name === 'apply_patch') {
+    const inspect = el('button', name === 'shell' ? '在终端查看' : '查看工作区变更', 'tool-log');
+    inspect.type = 'button';
+    inspect.onclick = () => showInspector(name === 'shell' ? 'terminal' : 'changes');
+    actions.append(inspect);
+  }
+  body.append(actions);
   card.append(head, body);
   if (awaiting || state.openTools.has(id)) card.classList.add('open');
   head.setAttribute('role', 'button');
   head.tabIndex = 0;
   head.setAttribute('aria-expanded', String(card.classList.contains('open')));
-  head.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); head.click(); } };
+  head.onkeydown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      head.click();
+    }
+  };
   head.onclick = () => {
     card.classList.toggle('open');
     head.setAttribute('aria-expanded', String(card.classList.contains('open')));
-    if (card.classList.contains('open')) state.openTools.add(id); else state.openTools.delete(id);
+    if (card.classList.contains('open')) state.openTools.add(id);
+    else state.openTools.delete(id);
   };
   if (awaiting) card.append(approvalBar(name));
   return card;
@@ -307,9 +396,15 @@ function assistantMessage(text, live) {
     const copy = el('button', '复制', 'copy');
     copy.type = 'button';
     copy.onclick = async () => {
-      try { await navigator.clipboard.writeText(text); copy.textContent = '已复制'; }
-      catch { copy.textContent = '复制失败'; }
-      setTimeout(() => { copy.textContent = '复制'; }, 1500);
+      try {
+        await navigator.clipboard.writeText(text);
+        copy.textContent = '已复制';
+      } catch {
+        copy.textContent = '复制失败';
+      }
+      setTimeout(() => {
+        copy.textContent = '复制';
+      }, 1500);
     };
     node.append(copy);
   }
@@ -318,8 +413,13 @@ function assistantMessage(text, live) {
 
 const messageCache = new Map();
 const composerDrafts = new Map();
+const executionGroups = new Map();
 function loginRunning(snap) {
-  return snap.busy && ((deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) || (snap.events || []).some(event => event.type === 'login.notice'));
+  return (
+    snap.busy &&
+    ((deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) ||
+      (snap.events || []).some((event) => event.type === 'login.notice'))
+  );
 }
 function buildChat(snap) {
   const used = new Set();
@@ -337,28 +437,72 @@ function buildChat(snap) {
   const pending = snap.pending;
   const nodes = [];
   let matched = false;
+  const toolEvents = toolEventMap(snap);
+  const usedGroups = new Set();
+  let group = [];
+  const flushGroup = () => {
+    if (!group.length) return;
+    const key = group[0].key;
+    usedGroups.add(key);
+    let entry = executionGroups.get(key);
+    if (!entry) {
+      const node = el('details', undefined, 'execution');
+      const summary = el('summary');
+      const body = el('div', undefined, 'execution-tools');
+      node.append(summary, body);
+      entry = { node, summary, body };
+      executionGroups.set(key, entry);
+    }
+    const counts = new Map();
+    for (const item of group) counts.set(item.status, (counts.get(item.status) || 0) + 1);
+    const summary =
+      '工具记录 · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
+    if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
+    entry.node.dataset.attention = group.some((item) =>
+      ['failed', 'denied', 'interrupted'].includes(item.status),
+    )
+      ? 'true'
+      : 'false';
+    reconcileChildren(
+      entry.body,
+      group.map((item) => item.node),
+    );
+    nodes.push(entry.node);
+    group = [];
+  };
   for (const [index, row] of rows.entries()) {
     const key = snap.session_id + ':' + row.k + ':' + (row.id || index);
-    if (row.k === 'user') nodes.push(cached(key, row.text, () => userBubble(row.text)));
-    else if (row.k === 'assistant')
-      nodes.push(cached(key, row.text, () => assistantMessage(row.text, false)));
-    else {
-      const awaiting =
-        !!pending && (pending.tool_call_id || pending.call_id) === row.id && row.output === null;
-      matched ||= awaiting;
+    if (row.k === 'user' || row.k === 'assistant') {
+      flushGroup();
       nodes.push(
-        cached(key, [row, awaiting, row.output == null ? snap.busy : false], () =>
-          toolCard(
-            row.id,
-            row.name,
-            row.args,
-            !snap.busy && row.output === null ? '执行已中断，未收到结果' : row.output,
-            awaiting,
-          ),
+        cached(key, row.text, () =>
+          row.k === 'user' ? userBubble(row.text) : assistantMessage(row.text, false),
         ),
       );
+    } else if (row.k === 'tool') {
+      const status = toolStatus(row, snap, toolEvents);
+      const awaiting = status === 'approval';
+      matched ||= awaiting;
+      const node = cached(key, [row, status], () =>
+        toolCard(
+          row.id,
+          row.name,
+          row.args,
+          row.output,
+          awaiting,
+          status,
+          row.args_truncated || row.output_truncated,
+        ),
+      );
+      if (awaiting) {
+        flushGroup();
+        nodes.push(node);
+      } else group.push({ key, node, status });
     }
   }
+  flushGroup();
+  for (const key of executionGroups.keys()) if (!usedGroups.has(key)) executionGroups.delete(key);
+
   if (!rows.length)
     for (const [index, m] of (snap.messages || []).entries())
       nodes.push(
@@ -369,49 +513,82 @@ function buildChat(snap) {
   // 用户消息写入会话日志之前先本地回显
   const lastSent = [...(snap.messages || [])].reverse().find((m) => m.role === 'user');
   const lastShown = [...rows].reverse().find((r) => r.k === 'user');
-  if (snap.busy && lastSent && (!lastShown || !lastShown.text.includes(lastSent.content.trim())))
+  if (
+    rows.length &&
+    snap.busy &&
+    lastSent &&
+    (!lastShown || !lastShown.text.includes(lastSent.content.trim()))
+  )
     nodes.push(cached('sent', lastSent.content, () => userBubble(lastSent.content)));
   if (pending && !matched)
     nodes.push(
       cached('pending', pending, () =>
-        toolCard(pending.call_id, pending.tool, pending.arguments, null, true),
+        toolCard(pending.tool_call_id || pending.call_id, pending.tool, pending.arguments, null, true),
       ),
     );
   if (snap.busy && snap.draft)
     nodes.push(cached('draft', snap.draft, () => assistantMessage(snap.draft, true)));
-  else if (loginRunning(snap)) nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
+  else if (loginRunning(snap))
+    nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
   else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
     nodes.push(cached('thinking', true, () => el('div', '思考中…', 'message thinking')));
   for (const key of messageCache.keys()) if (!used.has(key)) messageCache.delete(key);
   return nodes;
 }
 
-function drawMessages(nodes) {
-  const box = $('messages');
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  document.querySelector('.conversation').classList.toggle('is-empty', !nodes.length);
-  let cursor = box.firstChild;
+// Reuse existing nodes, including focus and native <details> disclosure state.
+function reconcileChildren(parent, nodes) {
+  let cursor = parent.firstChild;
   for (const node of nodes) {
     if (node === cursor) cursor = cursor.nextSibling;
-    else box.insertBefore(node, cursor);
+    else parent.insertBefore(node, cursor);
   }
   while (cursor) {
     const next = cursor.nextSibling;
     cursor.remove();
     cursor = next;
   }
+}
+function captureChatView() {
+  const box = $('messages'),
+    top = box.getBoundingClientRect().top;
+  const anchor = [...box.querySelectorAll('.message, .execution > summary, .tool')].find(
+    (node) => node.getClientRects().length && node.getBoundingClientRect().bottom > top,
+  );
+  const head = document.activeElement?.closest('.tool-h');
+  return {
+    nearBottom: box.scrollHeight - box.scrollTop - box.clientHeight < 120,
+    scrollTop: box.scrollTop,
+    anchor,
+    offset: anchor?.getBoundingClientRect().top,
+    focused: head,
+    tool: head?.closest('.tool')?.dataset.toolId,
+  };
+}
+function drawMessages(nodes, view = captureChatView()) {
+  const box = $('messages');
+  document.querySelector('.conversation').classList.toggle('is-empty', !nodes.length);
+  reconcileChildren(box, nodes);
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
-    empty.querySelectorAll('[data-q]').forEach((b) => {
-      b.onclick = () => {
-        $('prompt').value = b.dataset.q;
+    empty.querySelectorAll('[data-q]').forEach((button) => {
+      button.onclick = () => {
+        $('prompt').value = button.dataset.q;
         $('composer').requestSubmit();
       };
     });
     box.append(empty);
   }
-  if (nearBottom) box.scrollTop = box.scrollHeight;
-  $('jump-bottom').hidden = nearBottom || !nodes.length;
+  if (view.tool && !view.focused.isConnected) {
+    const head = [...box.querySelectorAll('.tool')]
+      .find((node) => node.dataset.toolId === view.tool)
+      ?.querySelector('.tool-h');
+    head?.focus({ preventScroll: true });
+  }
+  if (view.nearBottom) box.scrollTop = box.scrollHeight;
+  else if (view.anchor?.isConnected) box.scrollTop += view.anchor.getBoundingClientRect().top - view.offset;
+  else box.scrollTop = view.scrollTop;
+  $('jump-bottom').hidden = view.nearBottom || !nodes.length;
 }
 
 /* ---------- 右侧面板 ---------- */
@@ -516,7 +693,10 @@ function renderTreeNode(node, host, prefix = '') {
   for (const [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
     const dirPath = prefix + name;
     const open = state.expanded.has(dirPath);
-    const row = el('div', undefined, 'row dir');
+    const row = el('button', undefined, 'row dir');
+    row.type = 'button';
+    row.dataset.path = dirPath;
+    row.setAttribute('aria-expanded', String(open));
     row.append(el('span', open ? '▾' : '▸', 'ic'), el('span', name));
     const kids = el('div', undefined, 'kids');
     kids.hidden = !open;
@@ -525,24 +705,38 @@ function renderTreeNode(node, host, prefix = '') {
       const hide = !kids.hidden;
       kids.hidden = hide;
       row.firstChild.textContent = hide ? '▸' : '▾';
-      if (hide) state.expanded.delete(dirPath); else state.expanded.add(dirPath);
+      row.setAttribute('aria-expanded', String(!hide));
+      if (hide) state.expanded.delete(dirPath);
+      else state.expanded.add(dirPath);
     };
     host.append(row, kids);
   }
   for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
-    const row = el('div', undefined, 'row file' + (f.path === state.file ? ' on' : ''));
+    const row = el('button', undefined, 'row file' + (f.path === state.file ? ' on' : ''));
+    row.type = 'button';
+    if (f.path === state.file) row.setAttribute('aria-current', 'true');
     row.dataset.path = f.path;
     row.append(el('span', undefined, 'ic'), el('span', f.name));
-    row.onclick = () => openFile(f.path).catch(e => notice(e.message));
+    row.onclick = () => openFile(f.path).catch((e) => notice(e.message));
     host.append(row);
   }
 }
 
 function renderTree() {
   const host = $('tree');
+  const focusedPath = host.contains(document.activeElement) ? document.activeElement.dataset.path : null;
+  const scrollTop = host.scrollTop;
   host.replaceChildren();
-  if (!state.fileList.length) { host.append(el('div', '工作区还没有文件', 'tree-empty')); return; }
+  if (!state.fileList.length) {
+    host.append(el('div', '工作区还没有文件', 'tree-empty'));
+    return;
+  }
   renderTreeNode(buildTree(state.fileList), host);
+  if (focusedPath)
+    [...host.querySelectorAll('[data-path]')]
+      .find((node) => node.dataset.path === focusedPath)
+      ?.focus({ preventScroll: true });
+  host.scrollTop = scrollTop;
 }
 
 async function loadFiles() {
@@ -752,6 +946,7 @@ function renderSessions(sessions, busy) {
 
 function setQueueState(text, busy) {
   $('queue-state').textContent = text;
+  $('queue-state').title = text;
   $('queue-state').dataset.busy = busy ? 'true' : 'false';
 }
 
@@ -806,13 +1001,14 @@ async function refresh() {
       snap.pending,
       snap.messages,
       snap.session_id,
+      (snap.events || []).filter(event => event.type === 'tool.started' || event.type === 'tool.completed'),
     ]);
     if (signature !== state.signature) {
       state.signature = signature;
-      drawMessages(buildChat(snap));
+      const view = captureChatView();
+      drawMessages(buildChat(snap), view);
       renderTerminal(rows);
       renderPendingDiff(snap);
-      if (snap.pending?.tool === 'apply_patch') showInspector('changes');
     }
     // 工具完成数变化 → 刷新文件树与 Diff
     const finished =
@@ -837,7 +1033,9 @@ async function refresh() {
     $('project-title').textContent = current?.title || '新会话';
     const queued = state.projectInfo?.jobs?.some((j) => j.status === 'queued');
     const interrupted = state.projectInfo?.blocked;
-    const runningTool = rows.some((r) => r.k === 'tool' && r.output === null);
+    const toolEvents = toolEventMap(snap);
+    const runningTool = rows.some(row => row.k === 'tool' && toolStatus(row, snap, toolEvents) === 'running');
+    const waitingTool = rows.some(row => row.k === 'tool' && toolStatus(row, snap, toolEvents) === 'queued');
     setQueueState(
       interrupted
         ? '需要检查后恢复'
@@ -848,7 +1046,7 @@ async function refresh() {
           : snap.busy
             ? runningTool
               ? '工具执行中'
-              : '模型处理中'
+              : waitingTool && !snap.draft ? '等待工具结果' : '模型处理中'
             : queued
               ? '任务排队'
               : state.projectInfo?.busy
@@ -1120,7 +1318,7 @@ document.addEventListener('mousedown', event => {
   if (pop.kind && !event.target.closest('#popover, .chip')) closePopover();
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && pop.kind) { closePopover(); $('prompt').focus(); }
+  if (event.key === 'Escape' && pop.kind) { event.preventDefault(); closePopover(); $('prompt').focus(); }
 });
 
 /* ---------- 斜杠命令 ---------- */
@@ -1316,7 +1514,7 @@ async function fillProviders() {
   const list = el('div', undefined, 'prov-list');
   const act = (label, fn, cls) => {
     const b = el('button', label, cls); b.type = 'button';
-    b.onclick = async () => { try { await fn(); await fillProviders(); await refresh(); } catch (e) { $('dialog-error').textContent = e.message; } };
+    b.onclick = async () => { try { await fn(); if (fn !== startDeviceLogin) await fillProviders(); await refresh(); } catch (e) { $('dialog-error').textContent = e.message; } };
     return b;
   };
   for (const p of data.providers) {
@@ -1370,38 +1568,89 @@ onClick('new-chat', newChat);
 /* ---------- 侧栏与检查器开关 ---------- */
 
 const narrowScreen = matchMedia('(max-width: 760px)');
-const panels={desktop:{sidebar:true,inspector:true},mobile:{sidebar:false,inspector:false}};
-try{Object.assign(panels.desktop,JSON.parse(localStorage.getItem('codex.panels')||'{}'));}catch{}
-function rememberPanel(key,value){panels[narrowScreen.matches?'mobile':'desktop'][key]=value;try{localStorage.setItem('codex.panels',JSON.stringify(panels.desktop));}catch{}}
+const overlayInspector = matchMedia('(max-width: 1100px)');
+const panels = { desktop: { sidebar: true, inspector: false }, mobile: { sidebar: false, inspector: false } };
+try {
+  const saved = JSON.parse(localStorage.getItem('codex.layout.v2') || '{}');
+  for (const key of ['sidebar', 'inspector'])
+    if (typeof saved[key] === 'boolean') panels.desktop[key] = saved[key];
+} catch {}
+function rememberPanel(key, value) {
+  panels[narrowScreen.matches ? 'mobile' : 'desktop'][key] = value;
+  try {
+    localStorage.setItem('codex.layout.v2', JSON.stringify(panels.desktop));
+  } catch {}
+}
 function setSidebar(open, restoreFocus = false) {
-  rememberPanel('sidebar',open);
+  const sidebar = $('navigation-sidebar');
+  const hadFocus = sidebar.contains(document.activeElement);
+  if (open && narrowScreen.matches) setInspector(false);
+  rememberPanel('sidebar', open);
   $('sidebar-toggle').setAttribute('aria-pressed', String(open));
+  $('sidebar-toggle').setAttribute('aria-expanded', String(open));
   $('workspace').classList.toggle('sidebar-collapsed', !open);
   $('workspace').classList.toggle('sidebar-open', open);
-  if (narrowScreen.matches) {
-    document.querySelector('main').inert = open;
-    if (open) document.querySelector('.sidebar a').focus();
-    else if (restoreFocus) $('sidebar-toggle').focus();
-  } else document.querySelector('main').inert = false;
+  document.querySelector('main').inert = narrowScreen.matches && open;
+  if (narrowScreen.matches && open) sidebar.querySelector('a').focus();
+  else if (!open && (restoreFocus || hadFocus)) $('sidebar-toggle').focus();
 }
-setSidebar(panels[narrowScreen.matches?'mobile':'desktop'].sidebar);
-narrowScreen.addEventListener('change', () => {setSidebar(panels[narrowScreen.matches?'mobile':'desktop'].sidebar);setInspector(panels[narrowScreen.matches?'mobile':'desktop'].inspector);});
+function setInspector(open) {
+  const inspector = $('workspace-inspector');
+  if (open) {
+    closePopover();
+    closeMenu();
+  }
+  const hadFocus = inspector.contains(document.activeElement);
+  rememberPanel('inspector', open);
+  $('inspector-toggle').setAttribute('aria-pressed', String(open));
+  $('inspector-toggle').setAttribute('aria-expanded', String(open));
+  document.querySelector('.workspace-body').classList.toggle('no-inspector', !open);
+  document.querySelector('.conversation').inert = overlayInspector.matches && open;
+  if (!open && hadFocus) $('inspector-toggle').focus();
+  else if (open && overlayInspector.matches) $('inspector-close').focus();
+}
+setSidebar(panels[narrowScreen.matches ? 'mobile' : 'desktop'].sidebar);
+setInspector(panels[narrowScreen.matches ? 'mobile' : 'desktop'].inspector);
+narrowScreen.addEventListener('change', () => {
+  const mode = panels[narrowScreen.matches ? 'mobile' : 'desktop'];
+  setSidebar(mode.sidebar);
+  setInspector(mode.inspector);
+});
+overlayInspector.addEventListener('change', () =>
+  setInspector($('inspector-toggle').getAttribute('aria-pressed') === 'true'),
+);
 onClick('sidebar-toggle', () => setSidebar($('sidebar-toggle').getAttribute('aria-pressed') !== 'true'));
 onClick('sidebar-backdrop', () => setSidebar(false, true));
-document.querySelector('.sidebar').addEventListener('click', event => {
-  if (narrowScreen.matches && event.target.closest('#projects button, #new-chat')) setSidebar(false);
+onClick('inspector-toggle', () =>
+  setInspector($('inspector-toggle').getAttribute('aria-pressed') !== 'true'),
+);
+onClick('inspector-close', () => setInspector(false));
+document.querySelector('.sidebar').addEventListener('click', (event) => {
+  if (narrowScreen.matches && event.target.closest('#projects button, #new-chat, .row.file'))
+    setSidebar(false);
 });
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && narrowScreen.matches && $('workspace').classList.contains('sidebar-open')) setSidebar(false, true);
+document.addEventListener('keydown', (event) => {
+  // Let native dialogs handle their own Escape and focus restoration.
+  if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+  if (event.key === 'Escape') {
+    if (narrowScreen.matches && $('workspace').classList.contains('sidebar-open')) setSidebar(false, true);
+    else if ($('inspector-toggle').getAttribute('aria-pressed') === 'true') setInspector(false);
+  }
+  if (event.key === 'Tab' && narrowScreen.matches && $('workspace').classList.contains('sidebar-open')) {
+    const focusable = [
+      ...$('navigation-sidebar').querySelectorAll('a, button, select, summary, [tabindex="0"]'),
+    ].filter((node) => !node.disabled && node.getClientRects().length);
+    const first = focusable[0],
+      last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
 });
-
-function setInspector(open) {
-  rememberPanel('inspector',open);
-  $('inspector-toggle').setAttribute('aria-pressed', String(open));
-  document.querySelector('.workspace-body').classList.toggle('no-inspector', !open);
-}
-setInspector(panels[narrowScreen.matches?'mobile':'desktop'].inspector);
-onClick('inspector-toggle', () => setInspector($('inspector-toggle').getAttribute('aria-pressed') !== 'true'));
 
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
@@ -1441,6 +1690,7 @@ function resetContext(clearRoot = false) {
   editor.baseline = '';
   editor.revision++;
   messageCache.clear();
+  executionGroups.clear();
   state.signature = '';
   state.toolSignature = '';
   state.snap = null;
