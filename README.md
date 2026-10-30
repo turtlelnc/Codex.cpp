@@ -90,7 +90,7 @@ HTTP 不加密传输内容；需要加密时可选用 HTTPS 代理。HTTPS 证�
 校验 Host、Origin、SameSite Cookie 和 CSRF。可以用 `--port` 改端口，或用 `--web-dir` 指定静态资源目录。
 在 CMake 构建目录使用 `./build/codex-cpp`（Windows 使用对应 `.exe` 路径）。
 
-网页左侧是会话与文件树，中间是对话和工具审批，右侧是编辑器、Diff 与终端输出。
+网页默认以对话和工具审批为主，侧栏用于会话与项目导航，项目文件可折叠。编辑器、Diff 与终端通过右上角检查器按需打开，连续工具记录可展开查看原始参数和日志。
 编辑器支持 Ctrl/⌘+S；只能保存已有普通文件，单文件上限 1 MiB，不提供新建、删除或重命名。
 符号链接、硬链接、特殊文件和内部状态目录会被拒绝；二进制和无效 UTF-8 文件只读。
 保存时校验 SHA-256，文件被其他人或 Agent 修改后，需要重新载入再保存。
@@ -236,3 +236,5 @@ node tests/team_service_test.cjs ./build/codex-cpp
 GitHub Actions 配置包含 Linux/macOS/Windows 构建与基础冒烟测试，以及 Linux 集成测试。
 
 WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量说明](docs/WEBUI_QUALITY.md)。
+
+对话优先布局、真实工具摘要及完整日志接口的实现与验证边界见 [WebUI 对话布局说明](docs/WEBUI_CONVERSATION.md)。
