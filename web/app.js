@@ -388,10 +388,148 @@ function userBubble(text) {
   return node;
 }
 
+// Only the newly appended tail animates: at most 64 graphemes / 16 small spans.
+const streamReducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const streamSegmenter =
+  typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+function streamMarkup(text) {
+  const body = markdown(text),
+    walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const leaves = [];
+  let leaf,
+    offset = 0;
+  while ((leaf = walker.nextNode())) leaves.push(leaf);
+  for (const textNode of leaves) {
+    const span = el('span', undefined, 'stream-text');
+    span._offset = offset;
+    offset += textNode.length;
+    textNode.replaceWith(span);
+    span.append(textNode);
+  }
+  return body;
+}
+function settleStreamLeaf(leaf) {
+  leaf._finishTail?.();
+  const selection = getSelection();
+  if (
+    !selection ||
+    selection.isCollapsed ||
+    (!leaf.contains(selection.anchorNode) && !leaf.contains(selection.focusNode))
+  )
+    leaf.normalize();
+}
+function appendStreamText(leaf, delta, budget, offset) {
+  if (!delta) return;
+  // Formatting changes may create new elements around existing text. Never replay it.
+  const existing = Math.min(delta.length, Math.max(0, budget.oldLength - offset));
+  if (existing) leaf.append(document.createTextNode(delta.slice(0, existing)));
+  delta = delta.slice(existing);
+  if (!delta) return;
+  if (
+    !budget.remaining ||
+    budget.groups >= 16 ||
+    /^(?:\p{Mark}|\p{Emoji_Modifier}|\p{Regional_Indicator}|[\uDC00-\uDFFF\u200D\uFE0E\uFE0F])/u.test(delta)
+  ) {
+    leaf.append(document.createTextNode(delta));
+    return;
+  }
+  let sample = Math.max(0, delta.length - 256);
+  if (sample && /[\uDC00-\uDFFF]/.test(delta[sample])) sample--;
+  const segments = [...streamSegmenter.segment(delta.slice(sample))].map((part) => part.segment);
+  const characters = segments
+    .slice(sample ? 1 : 0)
+    .slice(-Math.min(budget.remaining, (16 - budget.groups) * 4));
+  const tailText = characters.join(''),
+    plain = delta.slice(0, delta.length - tailText.length);
+  if (plain) leaf.append(document.createTextNode(plain));
+  budget.remaining -= characters.length;
+  const tail = el('span', undefined, 'stream-tail');
+  for (let i = 0; i < characters.length; i += 4) {
+    const part = el('span', characters.slice(i, i + 4).join(''), 'stream-char');
+    part.style.setProperty('--stream-delay', budget.groups++ * 8 + 'ms');
+    tail.append(part);
+  }
+  if (!tail.childNodes.length) return;
+  const finish = () => {
+    if (leaf._finishTail !== finish) return;
+    const selection = getSelection();
+    if (selection && !selection.isCollapsed && selection.containsNode(tail, true)) return;
+    leaf._finishTail = null;
+    tail.replaceWith(document.createTextNode(tailText));
+    settleStreamLeaf(leaf);
+  };
+  leaf._finishTail = finish;
+  tail.addEventListener('animationend', (event) => {
+    if (event.target === tail.lastElementChild) finish();
+  });
+  tail.addEventListener('animationcancel', finish);
+  leaf.append(tail);
+}
+function patchStreamMarkup(current, next, budget) {
+  if (current.classList.contains('stream-text')) {
+    settleStreamLeaf(current);
+    const before = current.textContent,
+      after = next.textContent;
+    if (after.startsWith(before))
+      appendStreamText(current, after.slice(before.length), budget, next._offset + before.length);
+    else if (before !== after) current.textContent = after;
+    return;
+  }
+  let cursor = current.firstElementChild;
+  for (const child of [...next.children]) {
+    const following = cursor?.nextElementSibling;
+    if (cursor && cursor.tagName === child.tagName && cursor.className === child.className)
+      patchStreamMarkup(cursor, child, budget);
+    else {
+      for (const leaf of child.matches('.stream-text') ? [child] : child.querySelectorAll('.stream-text')) {
+        const text = leaf.textContent;
+        leaf.textContent = '';
+        appendStreamText(leaf, text, budget, leaf._offset);
+      }
+      if (cursor) cursor.replaceWith(child);
+      else current.append(child);
+    }
+    cursor = following;
+  }
+  while (cursor) {
+    const following = cursor.nextElementSibling;
+    cursor.remove();
+    cursor = following;
+  }
+}
+function updateLiveMessage(node, text) {
+  if (node._text === text) return;
+  const body = node.querySelector('.md'),
+    next = streamMarkup(text),
+    box = $('messages');
+  const canAnimate =
+    text.startsWith(node._text) &&
+    next.textContent.startsWith(body.textContent) &&
+    streamSegmenter &&
+    !streamReducedMotion.matches &&
+    !document.hidden &&
+    getSelection()?.isCollapsed !== false &&
+    box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  patchStreamMarkup(body, next, {
+    remaining: canAnimate ? 64 : 0,
+    groups: 0,
+    oldLength: body.textContent.length,
+  });
+  node._text = text;
+}
+function settleStreamAnimations() {
+  for (const leaf of $('messages').querySelectorAll('.stream-text')) settleStreamLeaf(leaf);
+}
+streamReducedMotion.addEventListener('change', () => {
+  if (streamReducedMotion.matches) settleStreamAnimations();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) settleStreamAnimations();
+});
 function assistantMessage(text, live) {
   const node = el('div', undefined, 'message assistant' + (live ? ' live' : ''));
   node._text = text;
-  node.append(markdown(text));
+  node.append(live ? streamMarkup(text) : markdown(text));
   if (!live) {
     const copy = el('button', '复制', 'copy');
     copy.type = 'button';
@@ -526,8 +664,16 @@ function buildChat(snap) {
         toolCard(pending.tool_call_id || pending.call_id, pending.tool, pending.arguments, null, true),
       ),
     );
-  if (snap.busy && snap.draft)
-    nodes.push(cached('draft', snap.draft, () => assistantMessage(snap.draft, true)));
+  if (snap.busy && snap.draft) {
+    used.add('draft');
+    let entry = messageCache.get('draft');
+    if (!entry) {
+      entry = { node: assistantMessage('', true) };
+      messageCache.set('draft', entry);
+    }
+    updateLiveMessage(entry.node, snap.draft);
+    nodes.push(entry.node);
+  }
   else if (loginRunning(snap))
     nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
   else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
