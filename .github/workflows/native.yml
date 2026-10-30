@@ -1,5 +1,9 @@
 name: Native web runtime
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches-ignore: ['build/macos-*']
+  pull_request:
+  workflow_dispatch:
 jobs:
   embedded-git:
     runs-on: ubuntu-22.04

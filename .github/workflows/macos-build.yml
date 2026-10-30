@@ -1,0 +1,53 @@
+name: macOS test binaries (artifacts only)
+on:
+  push:
+    branches: ['build/macos-*']
+    paths: ['.github/workflows/macos-build.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, arch: arm64, platform: macos-arm64}
+          - {os: macos-15-intel, arch: x86_64, platform: macos-x64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compile single executable
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$BUILD_ARCH"
+          cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="$BUILD_ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          cmake --build build-macos --target codex-cpp --parallel 3
+          strip build-macos/codex-cpp
+          codesign --force --sign - build-macos/codex-cpp
+      - name: Check executable and package
+        env:
+          BUILD_PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          build-macos/codex-cpp --help > /dev/null
+          node tests/runtime_dependencies.cjs build-macos/codex-cpp
+          mkdir -p dist
+          cp build-macos/codex-cpp "dist/codex-cpp-$BUILD_PLATFORM"
+          node scripts/package-posix-release.cjs dist "$BUILD_PLATFORM"
+          printf 'Codex.cpp macOS test build\nSource: %s\nPlatform: %s\nExtract the inner ZIP to preserve executable permissions.\nAd-hoc signed; not Apple-notarized.\n' "$GITHUB_SHA" "$BUILD_PLATFORM" > dist/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cpp-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/DOWNLOADS_SHA256SUMS.txt
+            dist/BUILD.txt
+          if-no-files-found: error
+          retention-days: 14
