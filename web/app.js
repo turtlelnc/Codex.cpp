@@ -409,7 +409,10 @@ function streamMarkup(text) {
   return body;
 }
 function settleStreamLeaf(leaf) {
-  leaf._finishTail?.();
+  for (const finish of [...(leaf._streamFinishes || [])]) finish();
+  normalizeStreamLeaf(leaf);
+}
+function normalizeStreamLeaf(leaf) {
   const selection = getSelection();
   if (
     !selection ||
@@ -447,14 +450,14 @@ function appendStreamText(leaf, delta, budget, offset) {
   }
   if (!tail.childNodes.length) return;
   const finish = () => {
-    if (leaf._finishTail !== finish) return;
+    if (!leaf._streamFinishes?.has(finish)) return;
     const selection = getSelection();
     if (selection && !selection.isCollapsed && selection.containsNode(tail, true)) return;
-    leaf._finishTail = null;
+    leaf._streamFinishes.delete(finish);
     tail.replaceWith(document.createTextNode(tailText));
-    settleStreamLeaf(leaf);
+    normalizeStreamLeaf(leaf);
   };
-  leaf._finishTail = finish;
+  (leaf._streamFinishes ||= new Set()).add(finish);
   tail.addEventListener('animationend', (event) => {
     if (event.target === tail.lastElementChild) finish();
   });
@@ -466,10 +469,9 @@ function patchStreamMarkup(current, next, budget) {
     const before = current.textContent,
       after = next.textContent;
     if (after === before) return;
-    settleStreamLeaf(current);
     if (after.startsWith(before))
       appendStreamText(current, after.slice(before.length), budget, next._offset + before.length);
-    else if (before !== after) current.textContent = after;
+    else if (before !== after) { settleStreamLeaf(current); current.textContent = after; }
     return;
   }
   let cursor = current.firstElementChild;
@@ -507,9 +509,11 @@ function updateLiveMessage(node, text) {
     !document.hidden &&
     getSelection()?.isCollapsed !== false &&
     box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  if (!canAnimate) for (const leaf of body.querySelectorAll('.stream-text')) settleStreamLeaf(leaf);
+  const activeGroups = body.querySelectorAll('.stream-char').length;
   patchStreamMarkup(body, next, {
     remaining: canAnimate ? 1 : 0,
-    groups: 0,
+    groups: Math.max(0, activeGroups - 16),
     oldLength: body.textContent.length,
   });
   for (const leaf of body.querySelectorAll('.stream-end')) leaf.classList.remove('stream-end');
