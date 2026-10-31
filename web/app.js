@@ -209,12 +209,26 @@ function markdown(text) {
   const box = el('div', undefined, 'md');
   text.split(/```[\w+-]*\n?/).forEach((chunk, i) => {
     if (i % 2) { box.append(el('pre', chunk.replace(/\n$/, ''))); return; }
-    for (const para of chunk.split(/\n{2,}/)) {
-      if (!para.trim()) continue;
+    let lines = [];
+    const flushParagraph = () => {
+      if (!lines.length) return;
       const p = el('p');
-      inline(p, para.replace(/^\n+|\n+$/g, ''));
+      inline(p, lines.join('\n'));
       box.append(p);
+      lines = [];
+    };
+    for (const line of chunk.split(/\r?\n/)) {
+      // ATX headings: up to three leading spaces, 1–6 hashes, then whitespace.
+      const heading = line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/);
+      if (heading) {
+        flushParagraph();
+        const node = el('h' + heading[1].length);
+        inline(node, (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '').trim());
+        box.append(node);
+      } else if (!line.trim()) flushParagraph();
+      else lines.push(line);
     }
+    flushParagraph();
   });
   return box;
 }

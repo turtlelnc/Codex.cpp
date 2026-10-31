@@ -279,6 +279,24 @@ function snapshot() {
         document.querySelector('.row.file[data-path="b.txt"]') !== oldTreeFile &&
         document.activeElement === document.querySelector('.row.file[data-path="b.txt"]'),
     );
+    const headingMarkdown = '# 一级\n正文紧邻标题\n### **三级加粗标题**\n后续正文\n## 二级 ##\n#### 四级\n##### 五级\n###### 六级\n###没有空格\n####### 七个井号\n\n' + '```text\n### 代码里的标题\n```\n\n### <img src=x onerror=alert(1)>';
+    snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: headingMarkdown }] };
+    await wait(async () => (await page.locator('.md h3 b').textContent()) === '三级加粗标题');
+    for (const level of [1, 2, 3, 4, 5, 6]) assert(await page.locator('.md h' + level).count());
+    assert.equal(await page.locator('.md h2').textContent(), '二级');
+    assert((await page.locator('.md p').allTextContents()).some(text => text.includes('###没有空格')));
+    assert((await page.locator('.md p').allTextContents()).some(text => text.includes('####### 七个井号')));
+    assert.equal(await page.locator('.md pre').textContent(), '### 代码里的标题');
+    assert.equal(await page.locator('.md img').count(), 0);
+    assert((await page.locator('.md h3').last().textContent()).includes('<img'));
+    snap = { ...snap, busy: true, draft: '### **流式标', timeline: [] };
+    await wait(async () => (await page.locator('.message.live h3').textContent()).includes('流式标'));
+    snap.draft += '题**\n流式正文';
+    await wait(async () => (await page.locator('.message.live h3 b').textContent()) === '流式标题');
+    assert.equal(await page.locator('.message.live p').textContent(), '流式正文');
+    snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: '### **流式标题**\n流式正文' }] };
+    await wait(async () => (await page.locator('.message.assistant:not(.live) h3 b').textContent()) === '流式标题');
+
     snap = {
       ...snap,
       busy: true,
