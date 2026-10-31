@@ -39,8 +39,12 @@ jobs:
         run: cmake --build build --config Release --parallel 2 2>&1 | tee native-build.log
       - if: runner.os != 'Windows'
         run: node tests/native_smoke.cjs build/codex-cpp
+      - if: runner.os != 'Windows'
+        run: node tests/chat_stream_test.cjs build/codex-cpp
       - if: runner.os == 'Windows'
         run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+      - if: runner.os == 'Windows'
+        run: node tests/chat_stream_test.cjs build/Release/codex-cpp.exe
       - if: runner.os != 'Windows'
         run: node tests/direct_team_test.cjs build/codex-cpp
       - if: runner.os == 'Windows'

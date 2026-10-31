@@ -22,6 +22,23 @@ ApiClient stream_client;stream_client.chatgpt_auth=true;auto streamed=stream_cli
   "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"output\":null}}\n\n",parse_err);
 check(streamed && streamed->calls.size()==1 && streamed->calls[0].call_id=="c1","Codex SSE tool result");
 check(!stream_client.parse_codex_stream("data: {\"type\":\"response.in_progress\"}\n",parse_err),"incomplete Codex SSE rejected");
+ChatStreamDecoder chat_stream;std::string live_chat,live_reasoning;
+chat_stream.on_reasoning=[&](const std::string& text){live_reasoning+=text;};
+chat_stream.on_delta=[&](const std::string& text){live_chat+=text;};
+std::string chat_events=
+ R"(data: {"choices":[{"index":0,"delta":{"reasoning_content":"private reasoning"}}]})" "\r\n\r\n"
+ R"(data:{"choices":[{"index":0,"delta":{"content":"你好"}}]})" "\r\n\r\n"
+ R"(data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call1","function":{"name":"read_file","arguments":"{\"path\":"}}]}}]})" "\n\n"
+ R"(data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.txt\"}"}}]},"finish_reason":"tool_calls"}]})" "\n\n"
+ "data: [DONE]\n\n";
+for(char byte:chat_events)chat_stream.feed(&byte,1);
+auto chat_result=chat_stream.finish(parse_err);
+check(chat_result && live_reasoning=="private reasoning" && live_chat=="你好" && chat_result->calls.size()==1 && chat_result->calls[0].arguments==R"({"path":"a.txt"})","Chat SSE byte chunks, UTF-8, reasoning isolation and tool assembly");
+ChatStreamDecoder incomplete_chat;incomplete_chat.feed("data: [DONE]\n\n",14);
+check(!incomplete_chat.finish(parse_err),"Chat SSE rejects incomplete stream");
+Session reasoning_history;reasoning_history.items={R"({"type":"codex_reasoning","text":"inspect first"})",R"({"type":"function_call","name":"read_file","call_id":"r1","arguments":"{}"})",R"({"type":"function_call_output","call_id":"r1","output":"done"})"};
+auto reasoning_messages=chat_history(reasoning_history,"test");
+check(reasoning_messages.size()==3 && json_string_field(reasoning_messages[1],"reasoning_content")==std::optional<std::string>("inspect first"),"Chat tool continuation retains provider reasoning");
 check(json_string_field(R"({"outer":{"path":"decoy"},"path":"right"})","path")==std::optional<std::string>("right"),"JSON fields stay in scope");
 ToolRouter router;router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 check(router.find("shell")!= nullptr && router.find("nope")== nullptr,"ToolRouter lookup"); check(router.specs_json().find("\"read_file\"")!= std::string::npos,"tool schema generation");

@@ -388,11 +388,157 @@ function userBubble(text) {
   return node;
 }
 
+// Only new text animates, with at most 16 groups per update.
+const streamReducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const streamSegmenter =
+  typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+function streamMarkup(text) {
+  const body = markdown(text),
+    walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const leaves = [];
+  let leaf,
+    offset = 0;
+  while ((leaf = walker.nextNode())) leaves.push(leaf);
+  for (const textNode of leaves) {
+    const span = el('span', undefined, 'stream-text');
+    span._offset = offset;
+    offset += textNode.length;
+    textNode.replaceWith(span);
+    span.append(textNode);
+  }
+  return body;
+}
+function settleStreamLeaf(leaf) {
+  leaf._finishTail?.();
+  const selection = getSelection();
+  if (
+    !selection ||
+    selection.isCollapsed ||
+    (!leaf.contains(selection.anchorNode) && !leaf.contains(selection.focusNode))
+  )
+    leaf.normalize();
+}
+function appendStreamText(leaf, delta, budget, offset) {
+  if (!delta) return;
+  // Formatting changes may create new elements around existing text. Never replay it.
+  const existing = Math.min(delta.length, Math.max(0, budget.oldLength - offset));
+  if (existing) leaf.append(document.createTextNode(delta.slice(0, existing)));
+  delta = delta.slice(existing);
+  if (!delta) return;
+  if (
+    !budget.remaining ||
+    budget.groups >= 16 ||
+    /^(?:\p{Mark}|\p{Emoji_Modifier}|\p{Regional_Indicator}|[\uDC00-\uDFFF\u200D\uFE0E\uFE0F])/u.test(delta)
+  ) {
+    leaf.append(document.createTextNode(delta));
+    return;
+  }
+  // Cover the entire new delta, rather than making a large prefix appear instantly.
+  // Large chunks fade as one unit; normal chunks use up to 16 grapheme-safe groups.
+  const characters = delta.length <= 4096
+    ? [...streamSegmenter.segment(delta)].map(part => part.segment) : [delta];
+  const tailText = delta;
+  const tail = el('span', undefined, 'stream-tail');
+  const stride = Math.max(1, Math.ceil(characters.length / (16 - budget.groups)));
+  for (let i = 0; i < characters.length; i += stride) {
+    const part = el('span', characters.slice(i, i + stride).join(''), 'stream-char');
+    part.style.setProperty('--stream-delay', budget.groups++ * 18 + 'ms');
+    tail.append(part);
+  }
+  if (!tail.childNodes.length) return;
+  const finish = () => {
+    if (leaf._finishTail !== finish) return;
+    const selection = getSelection();
+    if (selection && !selection.isCollapsed && selection.containsNode(tail, true)) return;
+    leaf._finishTail = null;
+    tail.replaceWith(document.createTextNode(tailText));
+    settleStreamLeaf(leaf);
+  };
+  leaf._finishTail = finish;
+  tail.addEventListener('animationend', (event) => {
+    if (event.target === tail.lastElementChild) finish();
+  });
+  tail.addEventListener('animationcancel', finish);
+  leaf.append(tail);
+}
+function patchStreamMarkup(current, next, budget) {
+  if (current.classList.contains('stream-text')) {
+    const before = current.textContent,
+      after = next.textContent;
+    if (after === before) return;
+    settleStreamLeaf(current);
+    if (after.startsWith(before))
+      appendStreamText(current, after.slice(before.length), budget, next._offset + before.length);
+    else if (before !== after) current.textContent = after;
+    return;
+  }
+  let cursor = current.firstElementChild;
+  for (const child of [...next.children]) {
+    const following = cursor?.nextElementSibling;
+    if (cursor && cursor.tagName === child.tagName && cursor.className === child.className)
+      patchStreamMarkup(cursor, child, budget);
+    else {
+      for (const leaf of child.matches('.stream-text') ? [child] : child.querySelectorAll('.stream-text')) {
+        const text = leaf.textContent;
+        leaf.textContent = '';
+        appendStreamText(leaf, text, budget, leaf._offset);
+      }
+      if (cursor) cursor.replaceWith(child);
+      else current.append(child);
+    }
+    cursor = following;
+  }
+  while (cursor) {
+    const following = cursor.nextElementSibling;
+    cursor.remove();
+    cursor = following;
+  }
+}
+function updateLiveMessage(node, text) {
+  if (node._text === text) return;
+  const body = node.querySelector('.md'),
+    next = streamMarkup(text),
+    box = $('messages');
+  const canAnimate =
+    text.startsWith(node._text) &&
+    next.textContent.startsWith(body.textContent) &&
+    streamSegmenter &&
+    !streamReducedMotion.matches &&
+    !document.hidden &&
+    getSelection()?.isCollapsed !== false &&
+    box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  patchStreamMarkup(body, next, {
+    remaining: canAnimate ? 1 : 0,
+    groups: 0,
+    oldLength: body.textContent.length,
+  });
+  node._text = text;
+}
+function settleStreamAnimations() {
+  for (const leaf of $('messages').querySelectorAll('.stream-text')) settleStreamLeaf(leaf);
+}
+streamReducedMotion.addEventListener('change', () => {
+  if (streamReducedMotion.matches) settleStreamAnimations();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) settleStreamAnimations();
+});
+function reasoningMessage(text, live = false) {
+  const node = el('details', undefined, 'message reasoning');
+  const summary = el('summary', live ? '思考过程 · 正在生成' : '思考过程');
+  const body = el('div', text, 'reasoning-body');
+  node.append(summary, body);
+  return node;
+}
 function assistantMessage(text, live) {
   const node = el('div', undefined, 'message assistant' + (live ? ' live' : ''));
   node._text = text;
-  node.append(markdown(text));
-  if (!live) {
+  node.append(live ? streamMarkup(text) : markdown(text));
+  if (!live) addMessageCopy(node, text);
+  return node;
+}
+
+function addMessageCopy(node, text) {
     const copy = el('button', '复制', 'copy');
     copy.type = 'button';
     copy.onclick = async () => {
@@ -407,7 +553,14 @@ function assistantMessage(text, live) {
       }, 1500);
     };
     node.append(copy);
-  }
+}
+function finalAssistantMessage(text, animate) {
+  if (!animate) return assistantMessage(text, false);
+  const draft = messageCache.get('draft')?.node;
+  const node = draft && text.startsWith(draft._text) ? draft : assistantMessage('', true);
+  updateLiveMessage(node, text);
+  node.classList.remove('live');
+  addMessageCopy(node, text);
   return node;
 }
 
@@ -421,7 +574,7 @@ function loginRunning(snap) {
       (snap.events || []).some((event) => event.type === 'login.notice'))
   );
 }
-function buildChat(snap) {
+function buildChat(snap, wasBusy = false) {
   const used = new Set();
   const cached = (key, value, create) => {
     used.add(key);
@@ -472,11 +625,20 @@ function buildChat(snap) {
   };
   for (const [index, row] of rows.entries()) {
     const key = snap.session_id + ':' + row.k + ':' + (row.id || index);
-    if (row.k === 'user' || row.k === 'assistant') {
+    if (row.k === 'reasoning') {
+      flushGroup();
+      const live = messageCache.get('reasoning-draft');
+      if (!messageCache.has(key) && live && live.node.querySelector('.reasoning-body').textContent === row.text) {
+        live.node.querySelector('summary').textContent = '思考过程';
+        messageCache.set(key, { signature: JSON.stringify(row.text), node: live.node });
+        messageCache.delete('reasoning-draft');
+      }
+      nodes.push(cached(key, row.text, () => reasoningMessage(row.text)));
+    } else if (row.k === 'user' || row.k === 'assistant') {
       flushGroup();
       nodes.push(
         cached(key, row.text, () =>
-          row.k === 'user' ? userBubble(row.text) : assistantMessage(row.text, false),
+          row.k === 'user' ? userBubble(row.text) : finalAssistantMessage(row.text, wasBusy && !snap.busy && index === rows.length - 1),
         ),
       );
     } else if (row.k === 'tool') {
@@ -526,8 +688,24 @@ function buildChat(snap) {
         toolCard(pending.tool_call_id || pending.call_id, pending.tool, pending.arguments, null, true),
       ),
     );
-  if (snap.busy && snap.draft)
-    nodes.push(cached('draft', snap.draft, () => assistantMessage(snap.draft, true)));
+  if (snap.busy && snap.reasoning_draft && !rows.some(row => row.k === 'reasoning' && row.text === snap.reasoning_draft)) {
+    used.add('reasoning-draft');
+    let entry = messageCache.get('reasoning-draft');
+    if (!entry) { entry = { node: reasoningMessage('', true) }; messageCache.set('reasoning-draft', entry); }
+    const body = entry.node.querySelector('.reasoning-body');
+    if (body.textContent !== snap.reasoning_draft) body.textContent = snap.reasoning_draft;
+    nodes.push(entry.node);
+  }
+  if (snap.busy && snap.draft) {
+    used.add('draft');
+    let entry = messageCache.get('draft');
+    if (!entry) {
+      entry = { node: assistantMessage('', true) };
+      messageCache.set('draft', entry);
+    }
+    updateLiveMessage(entry.node, snap.draft);
+    nodes.push(entry.node);
+  }
   else if (loginRunning(snap))
     nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
   else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
@@ -988,6 +1166,7 @@ async function refresh() {
             : '无排队任务';
     }
     if (generation !== state.generation) return;
+    const wasBusy = state.snap?.session_id === snap.session_id && state.snap?.busy;
     state.snap = snap;
     renderDeviceLogin(snap);
     const composerKey = JSON.stringify([state.project, state.scope, snap.session_id]);
@@ -997,6 +1176,7 @@ async function refresh() {
     const signature = JSON.stringify([
       rows,
       snap.draft,
+      snap.reasoning_draft,
       snap.busy,
       snap.pending,
       snap.messages,
@@ -1006,7 +1186,7 @@ async function refresh() {
     if (signature !== state.signature) {
       state.signature = signature;
       const view = captureChatView();
-      drawMessages(buildChat(snap), view);
+      drawMessages(buildChat(snap, wasBusy), view);
       renderTerminal(rows);
       renderPendingDiff(snap);
     }
@@ -1671,7 +1851,7 @@ async function initialize() {
 }
 
 function loop() {
-  setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 400 : 1200);
+  setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 200 : 1200);
 }
 
 async function hostProjects(preferred) {

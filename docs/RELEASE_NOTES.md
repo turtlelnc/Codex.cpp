@@ -1,3 +1,23 @@
+Provider-exposed reasoning now has a separate collapsible WebUI section, with
+streaming updates and persisted history. New answer text fades across the whole
+delta in up to 16 groups instead of appearing instantly except for its last tail.
+
+Chat Completions agents (including DeepSeek-compatible providers) now request SSE
+streaming and forward text deltas to WebUI, TUI and JSON events. Tool-call fragments
+are assembled before execution; incomplete/error streams fail explicitly. Servers
+returning ordinary JSON remain supported. Reasoning-only deltas are not shown as
+answer text. Background text-only calls remain non-streaming.
+
+Conversation-first WebUI: the inspector is closed by default, the file tree is
+collapsible, and consecutive tool calls have expandable, event-based summaries.
+Approvals remain inline. Full stored tool arguments/output are available on demand,
+with the existing project, membership and personal-session boundaries preserved.
+
+Streaming replies now reveal new text with a short fade and 1px
+blur, reusing existing message/Markdown nodes. Animation is disabled for reduced
+motion, hidden pages, text selection and history reading; temporary spans are
+removed after the reveal. No new runtime dependencies or model calls are added.
+
 WebUI reliability update: preserve edits made during file saves, reject stale
 file/project/session responses, reuse historical message DOM, and fix sidebar
 collapse layout across desktop and mobile widths. Add connection recovery,

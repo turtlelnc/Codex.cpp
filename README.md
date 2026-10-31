@@ -22,11 +22,42 @@ cmake --build build --config Release --parallel 2
 Linux/macOS/Termux 产物通常是 `build/codex-cpp`；Windows 可使用 Visual Studio 或 MinGW，
 Visual Studio 产物通常是 `build/Release/codex-cpp.exe`。
 首次配置会下载固定版本 libgit2、libcurl 并校验 SHA-256，之后复用缓存；
-离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 指定已取得的依赖源码。
+离线构建可加 `-DFETCHCONTENT_SOURCE_DIR_CODEX_LIBGIT2=/path/to/libgit2` 和
+`-DFETCHCONTENT_SOURCE_DIR_CODEX_CURL=/path/to/curl` 指定已取得的依赖源码。
 
 后端开关和系统 Git 回退实现已移除；旧缓存中的关闭选项也不会再禁用内置 Git。
 不需要任何启用宏或后端选择参数。CMake 会自动编译、链接依赖。
-若手动使用 g++，仍需提供 libgit2 的头文件与链接参数；单独编译 codex.cpp 已不再是完整构建方式。
+
+### 使用 g++（GCC）编译
+
+在项目根目录执行，使用新的构建目录，避免复用其他编译器的 CMake 缓存：
+
+```sh
+cmake -S . -B build-gcc -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+cmake --build build-gcc --config Release --parallel 2
+./build-gcc/codex-cpp --help
+```
+
+Linux/Unix 下产物为 `build-gcc/codex-cpp`。启动本地网页：
+
+```sh
+./build-gcc/codex-cpp web --root /path/to/project
+```
+
+打开 `http://127.0.0.1:8765`。以上命令不需要额外的内置 Git 启用宏；
+CMake 会用指定的 g++ 编译 C++17 主程序，并生成内嵌网页、构建和链接 libgit2、libcurl 等依赖。
+单独执行 `g++ codex.cpp -o codex-cpp` 不足以完成当前项目的构建。
+需要查看具体编译、链接命令时，执行 `cmake --build build-gcc --config Release --verbose`。
+
+macOS 系统自带的 `gcc` / `g++` 通常实际是 Apple Clang，可用 `g++ --version` 确认。
+若需要真正的 GNU GCC，先安装它，再将上面的编译器名称替换为实际安装的版本命令
+（例如 `gcc-15` / `g++-15`），并使用新的构建目录。
+macOS 若通过 Homebrew 安装 OpenSSL，可在配置命令中追加
+`-DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"`。
+Windows MinGW 的配置还应指定 `-G "MinGW Makefiles"`，产物为 `build-gcc/codex-cpp.exe`。
+
+### 运行依赖
 
 网页、登录、编辑文件和模型请求不需要其他语言运行时或系统 `curl`；
 上述 Git 操作不需要 Git 可执行文件，模型通过 Shell 主动运行其他 Git 命令时才需要安装它。

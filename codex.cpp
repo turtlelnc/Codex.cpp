@@ -328,9 +328,9 @@ std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
 static std::function<void(const std::string&)> session_observer;
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelReasoningDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelReasoningDelta: return "model.reasoning.delta";case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -863,11 +863,12 @@ static std::optional<Options> parse_options(int argc,char** argv,std::string& er
 }
 return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::vector<std::string> chat_history(const Session& session,const std::string& instructions){
-std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;
-auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+"}"); calls.clear(); }
+std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning;
+auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+(pending_reasoning.empty()?"":",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"")+"}"); calls.clear();pending_reasoning.clear(); }
 };
 for(const auto& item:session.items){auto j=parse_json(item);if(!j)continue;const auto type=at(&*j,"type"),role=at(&*j,"role");
-  if(type && type->str()=="function_call"){const auto name=at(&*j,"name"),id=at(&*j,"call_id"),args=at(&*j,"arguments");
+  if(type && type->str()=="codex_reasoning"){pending_reasoning=json_string_field(item,"text").value_or("");
+  }else if(type && type->str()=="function_call"){const auto name=at(&*j,"name"),id=at(&*j,"call_id"),args=at(&*j,"arguments");
   if(name&&id&&args)calls.push_back("{\"id\":\""+json_escape(id->str())+ "\",\"type\":\"function\",\"function\":{\"name\":\""+json_escape(name->str())+ "\",\"arguments\":\""+json_escape(args->str())+"\"}}");
   }else if(type && type->str()=="function_call_output"){
   flush_calls();const auto id=at(&*j,"call_id"),out=at(&*j,"output");if(id&&out)messages.push_back("{\"role\":\"tool\",\"tool_call_id\":\""+ json_escape(id->str())+"\",\"content\":\""+json_escape(out->str())+"\"}");
@@ -878,7 +879,7 @@ for(const auto& item:session.items){auto j=parse_json(item);if(!j)continue;const
       parts.push_back("{\"type\":\"image_url\",\"image_url\":{\"url\":\""+json_escape(url->str())+"\"}}");
     }
     messages.push_back("{\"role\":\"user\",\"content\":"+join_json_array(parts)+"}");
-  }else messages.push_back(item);
+  }else {messages.push_back(item);pending_reasoning.clear();}
   }
 }
 flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err){if(session.items.empty())return true;std::string summary; std::vector<std::string> recent_images;
@@ -1052,15 +1053,17 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   if(apply_steering()<0)return 3;
   if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
   }
-  std::optional<ApiResponse> response;std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
+  std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
   const bool delivery_reminder=design_mode && (!turn_policy.can_write() || (!design_review->pending && (design_review->rounds || design_review->skipped)));
   auto update_elapsed=[&](){if(frontend&&frontend->active)frontend->pump();if(tui)tui->render("working...");};if(api.style == ApiStyle::Responses){
-    auto input=session.items;append_design_delivery_reminder(input,delivery_reminder,false);const std::string input_json=join_json_array(input);response = api.call_responses(turn_instructions,input_json,router.specs_json(),err, std::nullopt,show_delta,update_elapsed,bool(tui));
+    auto input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);const std::string input_json=join_json_array(input);response = api.call_responses(turn_instructions,input_json,router.specs_json(),err, std::nullopt,show_delta,update_elapsed,bool(tui),show_reasoning);
   }else{
-    auto messages=chat_history(session,turn_instructions);append_design_delivery_reminder(messages,delivery_reminder,true);response = api.call_chat(join_json_array(messages),router.chat_specs_json(),err);
+    auto messages=chat_history(session,turn_instructions);append_design_delivery_reminder(messages,delivery_reminder,true);response = api.call_chat(join_json_array(messages),router.chat_specs_json(),err,show_delta,update_elapsed,bool(tui),show_reasoning);
   }
+if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reasoning\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
+
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
 #endif

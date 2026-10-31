@@ -327,6 +327,124 @@ function snapshot() {
     assert.equal(await page.locator("#messages").evaluate((n) => n.scrollTop), 0);
     await page.locator("#jump-bottom").click();
     assert((await page.locator("#messages").evaluate((n) => n.scrollTop)) > 0);
+
+    snap.reasoning_draft = '先检查真实接口返回的思考内容';
+    await wait(async () => (await page.locator('.reasoning summary').count()) > 0);
+    await page.locator('.reasoning summary').click();
+    await wait(async () => (await page.locator('.reasoning-body').textContent()).includes('真实接口'));
+    snap.reasoning_draft += '，再验证结果';
+    await wait(async () => (await page.locator('.reasoning-body').textContent()).endsWith('再验证结果'));
+    assert(await page.locator('.reasoning').evaluate(node => node.open));
+    snap.timeline.push({ k: 'reasoning', text: snap.reasoning_draft });
+    snap.reasoning_draft = '';
+    await wait(async () => (await page.locator('.reasoning summary').textContent()) === '思考过程');
+    assert.equal(await page.locator('.reasoning').count(), 1);
+    assert(await page.locator('.reasoning').evaluate(node => node.open));
+    snap.timeline.pop();
+    await wait(async () => (await page.locator('.reasoning').count()) === 0);
+
+    // Stream reveal changes only appended text and retains the live message itself.
+    await page.evaluate(() => {
+      getSelection().removeAllRanges();
+      window.liveBefore = document.querySelector(".message.live");
+    });
+    const revealText = " 新增文字淡入，保持已有正文稳定。🤖👨‍👩‍👧‍👦👍🏽e\u0301🇨🇳";
+    snap.draft += revealText;
+    await page.waitForFunction(
+      (text) => document.querySelector(".message.live").textContent.endsWith(text),
+      revealText,
+    );
+    const revealCount = await page.locator(".message.live .stream-char").count();
+    assert(revealCount > 0 && revealCount <= 16);
+    assert(
+      await page.evaluate(() => liveBefore === document.querySelector(".message.live")),
+    );
+    assert.equal(
+      await page.locator(".message.assistant:not(.live) .stream-char").count(),
+      0,
+    );
+    assert(
+      await page
+        .locator(".stream-char")
+        .first()
+        .evaluate((node) => getComputedStyle(node).animationName === "stream-reveal"),
+    );
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    assert.equal(await page.locator(".stream-char").count(), 0);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    assert(
+      await page
+        .locator(".stream-text")
+        .evaluateAll((nodes) => nodes.every((node) => node.childNodes.length <= 1)),
+    );
+    const bulk = "大段输出".repeat(3000);
+    snap.draft += "\n\n" + bulk;
+    await page.waitForFunction(
+      (text) => document.querySelector(".message.live").textContent.endsWith(text),
+      bulk,
+    );
+    assert((await page.locator(".stream-char").count()) <= 16);
+    await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    assert((await page.locator(".message.live span").count()) < 10);
+    snap.draft += "\n\n" + Array.from({ length: 40 }, () => "段").join("\n\n");
+    await page.waitForFunction(
+      () => document.querySelectorAll(".message.live .md p").length >= 42,
+    );
+    assert((await page.locator(".stream-char").count()) <= 16);
+    await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    // Preserve a selected prefix while new text arrives; selection suppresses animation.
+    await page.evaluate(() => {
+      window.livePrefix = document.querySelector(".message.live .stream-text").firstChild;
+      const r = document.createRange();
+      r.setStart(livePrefix, 0);
+      r.setEnd(livePrefix, 4);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    });
+    snap.draft += " selected tail";
+    await page.waitForFunction(() =>
+      document.querySelector(".message.live").textContent.endsWith(" selected tail"),
+    );
+    assert(
+      await page.evaluate(
+        () =>
+          livePrefix ===
+            document.querySelector(".message.live .stream-text").firstChild &&
+          getSelection().toString() === "BBBB",
+      ),
+    );
+    assert.equal(await page.locator(".stream-char").count(), 0);
+    await page.evaluate(() => getSelection().removeAllRanges());
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    snap.draft += " reduced motion";
+    await page.waitForFunction(() =>
+      document.querySelector(".message.live").textContent.endsWith(" reduced motion"),
+    );
+    assert.equal(await page.locator(".stream-char").count(), 0);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    // Markdown changes and partial code fences remain valid while appending.
+    snap.draft += "\n\n" + "\x60\x60\x60cpp\nint main() {\n";
+    await page.locator(".message.live pre").waitFor();
+    snap.draft += "  return 0;\n}\n" + "\x60\x60\x60";
+    await page.waitForFunction(() =>
+      document.querySelector(".message.live pre").textContent.includes("return 0;"),
+    );
+    assert(
+      !(await page.locator(".message.live pre").textContent()).includes("\x60\x60\x60"),
+    );
+    await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    await page.locator("#messages").evaluate((node) => (node.scrollTop = 0));
+    snap.draft += " history reader tail";
+    await page.waitForFunction(() =>
+      document
+        .querySelector(".message.live")
+        .textContent.endsWith(" history reader tail"),
+    );
+    assert.equal(await page.locator(".stream-char").count(), 0);
+    assert.equal(await page.locator("#messages").evaluate((node) => node.scrollTop), 0);
+    await page.locator("#jump-bottom").click();
     failSnapshot = true;
     await page.getByText("连接中断", { exact: true }).first().waitFor();
     failSnapshot = false;
@@ -748,7 +866,7 @@ function snapshot() {
       });
     assert.deepEqual(errors, []);
     console.log(
-      "PASS WebUI layout breakpoints, save/edit race, out-of-order file reads, stable 600-message DOM/selection/tools/scroll, equal-length streaming updates, connection recovery, duplicate submit/input preservation, stale session responses, reload recovery, approval retry, stop, idempotent send retry project/scope isolation, execution summaries, inline patch/deny, full logs, tool focus scaled viewports, 1200-line diff, 200-call burst and device login",
+      "PASS WebUI layout breakpoints, save/edit race, out-of-order file reads, stable 600-message DOM/selection/tools/scroll, equal-length streaming updates, connection recovery, duplicate submit/input preservation, stale session responses, reload recovery, approval retry, stop, idempotent send retry project/scope isolation, execution summaries, inline patch/deny, full logs, tool focus scaled viewports, 1200-line diff, 200-call burst, device login and bounded streaming reveal",
     );
   } finally {
     if (browser) await browser.close();
