@@ -4,6 +4,8 @@ const { chromium } = require("playwright"),
   fs = require("fs"),
   path = require("path"),
   assert = require("assert/strict");
+
+const artifactDir = process.env.CODEX_ARTIFACT_DIR || path.join(require('node:os').tmpdir(), 'codex-webui-artifacts');
 let browser,
   server,
   savedWrite,
@@ -160,7 +162,7 @@ function snapshot() {
           return reply({ result });
         }
         const name = req.url === "/" ? "index.html" : req.url.slice(1);
-        if (!["index.html", "app.js", "style.css"].includes(name)) {
+        if (!["index.html", "app.js", "style.css", "penguin.js"].includes(name)) {
           res.writeHead(404);
           return res.end();
         }
@@ -279,6 +281,24 @@ function snapshot() {
         document.querySelector('.row.file[data-path="b.txt"]') !== oldTreeFile &&
         document.activeElement === document.querySelector('.row.file[data-path="b.txt"]'),
     );
+    const headingMarkdown = '# 一级\n正文紧邻标题\n### **三级加粗标题**\n后续正文\n## 二级 ##\n#### 四级\n##### 五级\n###### 六级\n###没有空格\n####### 七个井号\n\n' + '```text\n### 代码里的标题\n```\n\n### <img src=x onerror=alert(1)>';
+    snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: headingMarkdown }] };
+    await wait(async () => (await page.locator('.md h3 b').textContent()) === '三级加粗标题');
+    for (const level of [1, 2, 3, 4, 5, 6]) assert(await page.locator('.md h' + level).count());
+    assert.equal(await page.locator('.md h2').textContent(), '二级');
+    assert((await page.locator('.md p').allTextContents()).some(text => text.includes('###没有空格')));
+    assert((await page.locator('.md p').allTextContents()).some(text => text.includes('####### 七个井号')));
+    assert.equal(await page.locator('.md pre').textContent(), '### 代码里的标题');
+    assert.equal(await page.locator('.md img').count(), 0);
+    assert((await page.locator('.md h3').last().textContent()).includes('<img'));
+    snap = { ...snap, busy: true, draft: '### **流式标', timeline: [] };
+    await wait(async () => (await page.locator('.message.live h3').textContent()).includes('流式标'));
+    snap.draft += '题**\n流式正文';
+    await wait(async () => (await page.locator('.message.live h3 b').textContent()) === '流式标题');
+    assert.equal(await page.locator('.message.live p').textContent(), '流式正文');
+    snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: '### **流式标题**\n流式正文' }] };
+    await wait(async () => (await page.locator('.message.assistant:not(.live) h3 b').textContent()) === '流式标题');
+
     snap = {
       ...snap,
       busy: true,
@@ -348,6 +368,20 @@ function snapshot() {
       getSelection().removeAllRanges();
       window.liveBefore = document.querySelector(".message.live");
     });
+    // Capture the real application-created animation before its first painted frame.
+    await page.evaluate(() => {
+      window.revealCapture = null;
+      const observer = new MutationObserver(() => {
+        const tail = document.querySelector('.message.live .stream-tail');
+        if (!tail) return;
+        const animations = tail.getAnimations({ subtree: true });
+        if (!animations.length) return;
+        observer.disconnect();
+        for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
+        window.revealCapture = { tail, animations };
+      });
+      observer.observe(document.getElementById('messages'), { childList: true, subtree: true });
+    });
     const revealText = " 新增文字淡入，保持已有正文稳定。🤖👨‍👩‍👧‍👦👍🏽e\u0301🇨🇳";
     snap.draft += revealText;
     await page.waitForFunction(
@@ -356,6 +390,14 @@ function snapshot() {
     );
     const revealCount = await page.locator(".message.live .stream-char").count();
     assert(revealCount > 0 && revealCount <= 16);
+    assert.equal(await page.locator('.message.live .stream-end').count(), 1);
+    assert(await page.locator('.message.live').evaluate(node => {
+      const leaves = node.querySelectorAll('.stream-text');
+      return leaves[leaves.length - 1].classList.contains('stream-end');
+    }));
+    assert(await page.locator('.message.live .stream-char').evaluateAll(nodes =>
+      nodes.every(node => getComputedStyle(node).animationDelay === '0s' && Number(getComputedStyle(node).opacity) > 0)
+    ));
     assert(
       await page.evaluate(() => liveBefore === document.querySelector(".message.live")),
     );
@@ -369,6 +411,26 @@ function snapshot() {
         .first()
         .evaluate((node) => getComputedStyle(node).animationName === "stream-reveal"),
     );
+    await page.waitForFunction(() => window.revealCapture);
+    const revealFrames = [];
+    fs.mkdirSync(artifactDir, { recursive: true });
+    for (const ms of [0, 140, 279]) {
+      const frame = await page.evaluate(ms => {
+        const { tail, animations } = window.revealCapture;
+        for (const animation of animations) animation.currentTime = ms;
+        const style = getComputedStyle(tail.firstElementChild);
+        return { ms, opacity: Number(style.opacity), filter: style.filter };
+      }, ms);
+      revealFrames.push(frame);
+      await page.locator('.message.live .stream-tail').first().screenshot({ path: path.join(artifactDir, 'reveal-' + ms + '.png') });
+    }
+    assert(revealFrames[0].opacity < .15);
+    assert(revealFrames[1].opacity > .45 && revealFrames[1].opacity < .65);
+    assert(revealFrames[2].opacity > .98);
+    assert(!fs.readFileSync(path.join(artifactDir, 'reveal-0.png')).equals(fs.readFileSync(path.join(artifactDir, 'reveal-140.png'))));
+    assert(!fs.readFileSync(path.join(artifactDir, 'reveal-140.png')).equals(fs.readFileSync(path.join(artifactDir, 'reveal-279.png'))));
+    fs.writeFileSync(path.join(artifactDir, 'reveal-frames.json'), JSON.stringify(revealFrames, null, 2));
+    console.log('PASS painted stream reveal frames:', JSON.stringify(revealFrames));
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.waitForFunction(() => !document.querySelector(".stream-char"));
     assert.equal(await page.locator(".stream-char").count(), 0);

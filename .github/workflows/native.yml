@@ -37,6 +37,16 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - shell: bash
         run: cmake --build build --config Release --parallel 2 2>&1 | tee native-build.log
+      - name: Build Penguin module and registry regression
+        run: cmake --build build --config Release --target penguin-runtime-test penguin-demo --parallel 2
+      - if: runner.os != 'Windows'
+        run: ./build/penguin-runtime-test
+      - if: runner.os == 'Windows'
+        run: ./build/Release/penguin-runtime-test.exe
+      - if: runner.os != 'Windows'
+        run: node tests/penguin_integration.cjs build/codex-cpp build/penguin-demo/penguin.json
+      - if: runner.os == 'Windows'
+        run: node tests/penguin_integration.cjs build/Release/codex-cpp.exe build/penguin-demo/Release/penguin.json
       - if: runner.os != 'Windows'
         run: node tests/native_smoke.cjs build/codex-cpp
       - if: runner.os != 'Windows'
@@ -103,3 +113,29 @@ jobs:
           "$RUNNER_TEMP/webui-tests/node_modules/.bin/playwright" install --with-deps chromium
       - name: Run WebUI race, layout and rendering regressions
         run: NODE_PATH="$RUNNER_TEMP/webui-tests/node_modules" node tests/webui_quality_test.cjs
+  penguin-browser:
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build native host and example module
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target codex-cpp penguin-demo --parallel 2
+      - name: Install Chromium
+        run: |
+          npm install --prefix "$RUNNER_TEMP/penguin-tests" playwright@1.62.1
+          "$RUNNER_TEMP/penguin-tests/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify native and WebUI module lifecycle
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/penguin-browser
+        run: NODE_PATH="$RUNNER_TEMP/penguin-tests/node_modules" node tests/penguin_browser_test.cjs build/codex-cpp build/penguin-demo/penguin.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: penguin-browser
+          path: ${{ runner.temp }}/penguin-browser
+          if-no-files-found: ignore

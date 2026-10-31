@@ -206,15 +206,34 @@ function inline(parent, text) {
 }
 
 function markdown(text) {
+  const node = Penguin.call('markdown.render', { text });
+  if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Penguin Markdown renderer must return an .md element');
+  return node;
+}
+function markdownBuiltin(text) {
   const box = el('div', undefined, 'md');
   text.split(/```[\w+-]*\n?/).forEach((chunk, i) => {
     if (i % 2) { box.append(el('pre', chunk.replace(/\n$/, ''))); return; }
-    for (const para of chunk.split(/\n{2,}/)) {
-      if (!para.trim()) continue;
+    let lines = [];
+    const flushParagraph = () => {
+      if (!lines.length) return;
       const p = el('p');
-      inline(p, para.replace(/^\n+|\n+$/g, ''));
+      inline(p, lines.join('\n'));
       box.append(p);
+      lines = [];
+    };
+    for (const line of chunk.split(/\r?\n/)) {
+      // ATX headings: up to three leading spaces, 1–6 hashes, then whitespace.
+      const heading = line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/);
+      if (heading) {
+        flushParagraph();
+        const node = el('h' + heading[1].length);
+        inline(node, (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '').trim());
+        box.append(node);
+      } else if (!line.trim()) flushParagraph();
+      else lines.push(line);
     }
+    flushParagraph();
   });
   return box;
 }
@@ -318,7 +337,8 @@ function approvalBar(name) {
   return bar;
 }
 
-function toolCard(
+function toolCard(...args) { return Penguin.call('tool.card', { args }); }
+function toolCardBuiltin(
   id,
   name,
   args,
@@ -382,7 +402,8 @@ function toolCard(
 
 /* ---------- 对话渲染 ---------- */
 
-function userBubble(text) {
+function userBubble(text) { return Penguin.call('message.user', { text }); }
+function userBubbleBuiltin(text) {
   const node = el('div', undefined, 'message user');
   node.append(document.createTextNode(text));
   return node;
@@ -409,7 +430,10 @@ function streamMarkup(text) {
   return body;
 }
 function settleStreamLeaf(leaf) {
-  leaf._finishTail?.();
+  for (const finish of [...(leaf._streamFinishes || [])]) finish();
+  normalizeStreamLeaf(leaf);
+}
+function normalizeStreamLeaf(leaf) {
   const selection = getSelection();
   if (
     !selection ||
@@ -442,19 +466,19 @@ function appendStreamText(leaf, delta, budget, offset) {
   const stride = Math.max(1, Math.ceil(characters.length / (16 - budget.groups)));
   for (let i = 0; i < characters.length; i += stride) {
     const part = el('span', characters.slice(i, i + stride).join(''), 'stream-char');
-    part.style.setProperty('--stream-delay', budget.groups++ * 18 + 'ms');
+    budget.groups++;
     tail.append(part);
   }
   if (!tail.childNodes.length) return;
   const finish = () => {
-    if (leaf._finishTail !== finish) return;
+    if (!leaf._streamFinishes?.has(finish)) return;
     const selection = getSelection();
     if (selection && !selection.isCollapsed && selection.containsNode(tail, true)) return;
-    leaf._finishTail = null;
+    leaf._streamFinishes.delete(finish);
     tail.replaceWith(document.createTextNode(tailText));
-    settleStreamLeaf(leaf);
+    normalizeStreamLeaf(leaf);
   };
-  leaf._finishTail = finish;
+  (leaf._streamFinishes ||= new Set()).add(finish);
   tail.addEventListener('animationend', (event) => {
     if (event.target === tail.lastElementChild) finish();
   });
@@ -466,16 +490,15 @@ function patchStreamMarkup(current, next, budget) {
     const before = current.textContent,
       after = next.textContent;
     if (after === before) return;
-    settleStreamLeaf(current);
     if (after.startsWith(before))
       appendStreamText(current, after.slice(before.length), budget, next._offset + before.length);
-    else if (before !== after) current.textContent = after;
+    else if (before !== after) { settleStreamLeaf(current); current.textContent = after; }
     return;
   }
   let cursor = current.firstElementChild;
   for (const child of [...next.children]) {
     const following = cursor?.nextElementSibling;
-    if (cursor && cursor.tagName === child.tagName && cursor.className === child.className)
+    if (cursor && cursor.tagName === child.tagName && (cursor.className === child.className || (cursor.classList.contains('stream-text') && child.classList.contains('stream-text'))))
       patchStreamMarkup(cursor, child, budget);
     else {
       for (const leaf of child.matches('.stream-text') ? [child] : child.querySelectorAll('.stream-text')) {
@@ -507,11 +530,16 @@ function updateLiveMessage(node, text) {
     !document.hidden &&
     getSelection()?.isCollapsed !== false &&
     box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  if (!canAnimate) for (const leaf of body.querySelectorAll('.stream-text')) settleStreamLeaf(leaf);
+  const activeGroups = body.querySelectorAll('.stream-char').length;
   patchStreamMarkup(body, next, {
     remaining: canAnimate ? 1 : 0,
-    groups: 0,
+    groups: Math.max(0, activeGroups - 16),
     oldLength: body.textContent.length,
   });
+  for (const leaf of body.querySelectorAll('.stream-end')) leaf.classList.remove('stream-end');
+  const leaves = body.querySelectorAll('.stream-text');
+  leaves[leaves.length - 1]?.classList.add('stream-end');
   node._text = text;
 }
 function settleStreamAnimations() {
@@ -531,6 +559,12 @@ function reasoningMessage(text, live = false) {
   return node;
 }
 function assistantMessage(text, live) {
+  const node = Penguin.call('message.assistant', { text, live });
+  if (!(node instanceof HTMLElement) || !node.querySelector('.md')) throw Error('Penguin assistant renderer must include .md');
+  node._text = text;
+  return node;
+}
+function assistantMessageBuiltin(text, live) {
   const node = el('div', undefined, 'message assistant' + (live ? ' live' : ''));
   node._text = text;
   node.append(live ? streamMarkup(text) : markdown(text));
@@ -1832,6 +1866,15 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+onClick('penguin-button', async () => {
+  const rows = await http('/api/penguins');
+  const body = $('penguin-services'); body.replaceChildren();
+  for (const service of [...rows, ...Penguin.inspect()]) {
+    const row = el('p'); row.append(el('code', service.service), document.createTextNode(' → ' + service.owner)); body.append(row);
+  }
+  $('penguin-dialog').showModal();
+});
+onClick('penguin-close', () => $('penguin-dialog').close());
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
 $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
@@ -1839,6 +1882,7 @@ $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scro
 
 async function initialize() {
   state.user = await http('/api/me');
+  await Penguin.load(state.user.penguins, { rpc, element: el });
   document.body.dataset.mode = state.user.mode;
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
@@ -1849,6 +1893,14 @@ async function initialize() {
   $('team-button').disabled=false;
   if(!state.loopStarted){state.loopStarted=true;loop();}
 }
+
+Penguin.mount({ id: 'builtin.web', services: {
+  'markdown.render': { handler: ({ text }) => markdownBuiltin(text) },
+  'message.user': { handler: ({ text }) => userBubbleBuiltin(text) },
+  'message.assistant': { handler: ({ text, live }) => assistantMessageBuiltin(text, live) },
+  'tool.card': { handler: ({ args }) => toolCardBuiltin(...args) },
+}});
+addEventListener('penguin:changed', () => { messageCache.clear(); executionGroups.clear(); state.signature = ''; });
 
 function loop() {
   setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 200 : 1200);

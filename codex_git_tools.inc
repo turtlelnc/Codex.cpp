@@ -3,6 +3,7 @@ class GitToolBase : public ToolRuntime {
   bool write_;
 
 public:
+ToolResult execute(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick,bool watch)override{return run_with_policy(args,root,mode,tick,watch);}
   explicit GitToolBase(bool write) : write_(write) {}
   std::string name() const override {
     return write_ ? "git_write" : "git_read";

@@ -40,7 +40,7 @@ return 32; } struct SlashCommandDef{const char* name;const char* description; };
   {"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
   {"/auth","show ChatGPT login status"},{"/team","configure team service, accounts and connection"},
   {"/permissions","choose what Codex is allowed to do"},
-  {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},
+  {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},{"/penguin","inspect active native module services"},
   {"/review","review my current changes and find issues"},
   {"/rename","rename the current thread"},{"/clear(new)","start a new chat and reset context"},{"/archive","archive this session and exit"},
   {"/delete","permanently delete this session and exit"},{"/resume","resume a saved chat"},{"/fork","fork the current chat"},
