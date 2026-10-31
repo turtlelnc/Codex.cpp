@@ -328,6 +328,21 @@ function snapshot() {
     await page.locator("#jump-bottom").click();
     assert((await page.locator("#messages").evaluate((n) => n.scrollTop)) > 0);
 
+    snap.reasoning_draft = '先检查真实接口返回的思考内容';
+    await wait(async () => (await page.locator('.reasoning summary').count()) > 0);
+    await page.locator('.reasoning summary').click();
+    await wait(async () => (await page.locator('.reasoning-body').textContent()).includes('真实接口'));
+    snap.reasoning_draft += '，再验证结果';
+    await wait(async () => (await page.locator('.reasoning-body').textContent()).endsWith('再验证结果'));
+    assert(await page.locator('.reasoning').evaluate(node => node.open));
+    snap.timeline.push({ k: 'reasoning', text: snap.reasoning_draft });
+    snap.reasoning_draft = '';
+    await wait(async () => (await page.locator('.reasoning summary').textContent()) === '思考过程');
+    assert.equal(await page.locator('.reasoning').count(), 1);
+    assert(await page.locator('.reasoning').evaluate(node => node.open));
+    snap.timeline.pop();
+    await wait(async () => (await page.locator('.reasoning').count()) === 0);
+
     // Stream reveal changes only appended text and retains the live message itself.
     await page.evaluate(() => {
       getSelection().removeAllRanges();

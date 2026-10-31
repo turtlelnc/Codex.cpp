@@ -920,7 +920,7 @@ struct App {
   std::thread worker;
   std::unique_ptr<Child> child;
   bool busy = false, stopping = false;
-  std::string sid, error, draft, permission = "workspace", active = "codex", pending_id;
+  std::string sid, error, draft, reasoning_draft, permission = "workspace", active = "codex", pending_id;
   J pending, events = arr(), messages = arr(), submissions = obj(),
              registry = obj({{"providers", arr()}, {"active", str("codex")}});
   Options options;
@@ -1075,7 +1075,9 @@ struct App {
       if (!item)
         continue;
       auto role = text(*item, "role"), kind = text(*item, "type");
-      if (role == "user" || role == "assistant") {
+      if (kind == "codex_reasoning") {
+        rows.push_back(obj({{"k", str("reasoning")}, {"text", field(*item, "text")}}));
+      } else if (role == "user" || role == "assistant") {
         auto content = field(*item, "content");
         std::string value;
         if (content.kind == J::String)
@@ -1170,6 +1172,7 @@ struct App {
                 {"busy", boolean(busy)},
                 {"timeline", journal()},
                 {"draft", str(draft)},
+                {"reasoning_draft", str(reasoning_draft)},
                 {"messages", messages},
                 {"events", events},
                 {"pending", pending},
@@ -1195,6 +1198,7 @@ struct App {
     events = arr();
     pending = J{};
     draft.clear();
+      reasoning_draft.clear();
     if (!login) {
       submissions.fields[rid] = str(digest(prompt));
       while (submissions.fields.size() > 1000)
@@ -1269,10 +1273,11 @@ struct App {
                 sid = id;
               auto kind = text(*event, "type");
               auto payload = field(*event, "payload", obj());
+              if (kind == "model.reasoning.delta")
+                reasoning_draft += text(payload, "text");
               if (kind == "model.delta")
                 draft += text(payload, "text");
-              if (kind == "model.output")
-                draft.clear();
+              if (kind == "model.output") { draft.clear(); reasoning_draft.clear(); }
               if (kind == "approval.requested") {
                 pending = payload;
                 pending.fields["tool_call_id"] = field(payload, "call_id");
@@ -1315,6 +1320,7 @@ struct App {
       pending = J{};
       pending_id.clear();
       draft.clear();
+      reasoning_draft.clear();
       auto rows = journal();
       messages = arr();
       for (auto &row : rows.items)
@@ -1537,6 +1543,7 @@ struct App {
       messages = arr();
       events = arr();
       draft.clear();
+      reasoning_draft.clear();
       error.clear();
       save();
       return obj({{"selected", boolean(true)}});

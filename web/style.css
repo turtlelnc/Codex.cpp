@@ -145,8 +145,8 @@ header h1 { font-size: 14px; font-weight: 600; margin: 0; max-width: 40vw; overf
 .message.live .md > :last-child::after { content: ""; display: inline-block; width: 7px; height: 15px; background: var(--accent); vertical-align: -2px; margin-left: 3px; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 /* Brief reveal on a bounded new tail; no permanent layers or per-character timers. */
-.stream-char { animation: stream-reveal 160ms cubic-bezier(.22, 1, .36, 1) both; animation-delay: var(--stream-delay, 0ms); }
-@keyframes stream-reveal { from { opacity: .3; filter: blur(1px); } to { opacity: 1; filter: blur(0); } }
+.stream-char { animation: stream-reveal 240ms cubic-bezier(.22, 1, .36, 1) both; animation-delay: var(--stream-delay, 0ms); }
+@keyframes stream-reveal { from { opacity: 0; filter: blur(1px); } to { opacity: 1; filter: blur(0); } }
 .message .copy { display: block; margin-top: 2px; padding: 2px 8px; font-size: 11px; border-color: transparent; background: transparent; color: var(--muted); opacity: 0; }
 .message.assistant:hover .copy, .message .copy:focus-visible { opacity: 1; }
 
@@ -412,3 +412,7 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 #device-login-dialog { width: min(520px, calc(100vw - 28px)); overflow-wrap: anywhere; }
 #device-login-code { display: block; width: 100%; margin: 8px 0; font: 22px var(--mono); letter-spacing: .12em; }
 #device-login-details { white-space: pre-wrap; max-height: 180px; overflow: auto; }
+
+.reasoning { color: var(--muted, #746f65); font-size: .9em; }
+.reasoning summary { cursor: pointer; padding: 8px 0; }
+.reasoning-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 8px 0 12px; }
