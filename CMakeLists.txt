@@ -66,7 +66,7 @@ target_include_directories(codex-resources PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 add_library(codex-runtime INTERFACE)
 target_compile_features(codex-runtime INTERFACE cxx_std_17)
 target_include_directories(codex-runtime INTERFACE "${codex_libgit2_SOURCE_DIR}/include")
-target_link_libraries(codex-runtime INTERFACE Threads::Threads libgit2package CURL::libcurl codex-resources)
+target_link_libraries(codex-runtime INTERFACE Threads::Threads libgit2package CURL::libcurl codex-resources ${CMAKE_DL_LIBS})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(codex-runtime INTERFACE -static-libstdc++ -static-libgcc)
 endif()
@@ -90,3 +90,20 @@ add_custom_target(codex-web-assets ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/web $<TARGET_FILE_DIR:codex-cpp>/web
   DEPENDS codex-cpp
   VERBATIM)
+
+# Optional development modules/tests are never built or shipped by default.
+add_executable(penguin-runtime-test EXCLUDE_FROM_ALL tests/penguin_runtime_test.cpp)
+target_compile_features(penguin-runtime-test PRIVATE cxx_std_17)
+target_link_libraries(penguin-runtime-test PRIVATE Threads::Threads)
+add_library(penguin-demo MODULE EXCLUDE_FROM_ALL examples/penguin/native.cpp)
+target_compile_features(penguin-demo PRIVATE cxx_std_17)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+  target_sources(penguin-demo PRIVATE examples/penguin/native.def)
+endif()
+set_target_properties(penguin-demo PROPERTIES PREFIX "" OUTPUT_NAME "penguin-demo" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/penguin-demo" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/penguin-demo")
+if(APPLE)
+  set_target_properties(penguin-demo PROPERTIES SUFFIX ".dylib")
+endif()
+add_custom_command(TARGET penguin-demo POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/penguin/penguin.json $<TARGET_FILE_DIR:penguin-demo>/penguin.json
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/penguin/client.js $<TARGET_FILE_DIR:penguin-demo>/client.js)
