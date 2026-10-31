@@ -442,7 +442,7 @@ function appendStreamText(leaf, delta, budget, offset) {
   const stride = Math.max(1, Math.ceil(characters.length / (16 - budget.groups)));
   for (let i = 0; i < characters.length; i += stride) {
     const part = el('span', characters.slice(i, i + stride).join(''), 'stream-char');
-    part.style.setProperty('--stream-delay', budget.groups++ * 18 + 'ms');
+    budget.groups++;
     tail.append(part);
   }
   if (!tail.childNodes.length) return;
@@ -475,7 +475,7 @@ function patchStreamMarkup(current, next, budget) {
   let cursor = current.firstElementChild;
   for (const child of [...next.children]) {
     const following = cursor?.nextElementSibling;
-    if (cursor && cursor.tagName === child.tagName && cursor.className === child.className)
+    if (cursor && cursor.tagName === child.tagName && (cursor.className === child.className || (cursor.classList.contains('stream-text') && child.classList.contains('stream-text'))))
       patchStreamMarkup(cursor, child, budget);
     else {
       for (const leaf of child.matches('.stream-text') ? [child] : child.querySelectorAll('.stream-text')) {
@@ -512,6 +512,9 @@ function updateLiveMessage(node, text) {
     groups: 0,
     oldLength: body.textContent.length,
   });
+  for (const leaf of body.querySelectorAll('.stream-end')) leaf.classList.remove('stream-end');
+  const leaves = body.querySelectorAll('.stream-text');
+  leaves[leaves.length - 1]?.classList.add('stream-end');
   node._text = text;
 }
 function settleStreamAnimations() {

@@ -356,6 +356,14 @@ function snapshot() {
     );
     const revealCount = await page.locator(".message.live .stream-char").count();
     assert(revealCount > 0 && revealCount <= 16);
+    assert.equal(await page.locator('.message.live .stream-end').count(), 1);
+    assert(await page.locator('.message.live').evaluate(node => {
+      const leaves = node.querySelectorAll('.stream-text');
+      return leaves[leaves.length - 1].classList.contains('stream-end');
+    }));
+    assert(await page.locator('.message.live .stream-char').evaluateAll(nodes =>
+      nodes.every(node => getComputedStyle(node).animationDelay === '0s' && Number(getComputedStyle(node).opacity) > 0)
+    ));
     assert(
       await page.evaluate(() => liveBefore === document.querySelector(".message.live")),
     );
