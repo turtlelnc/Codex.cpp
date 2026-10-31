@@ -348,6 +348,20 @@ function snapshot() {
       getSelection().removeAllRanges();
       window.liveBefore = document.querySelector(".message.live");
     });
+    // Capture the real application-created animation before its first painted frame.
+    await page.evaluate(() => {
+      window.revealCapture = null;
+      const observer = new MutationObserver(() => {
+        const tail = document.querySelector('.message.live .stream-tail');
+        if (!tail) return;
+        const animations = tail.getAnimations({ subtree: true });
+        if (!animations.length) return;
+        observer.disconnect();
+        for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
+        window.revealCapture = { tail, animations };
+      });
+      observer.observe(document.getElementById('messages'), { childList: true, subtree: true });
+    });
     const revealText = " 新增文字淡入，保持已有正文稳定。🤖👨‍👩‍👧‍👦👍🏽e\u0301🇨🇳";
     snap.draft += revealText;
     await page.waitForFunction(
@@ -377,6 +391,26 @@ function snapshot() {
         .first()
         .evaluate((node) => getComputedStyle(node).animationName === "stream-reveal"),
     );
+    await page.waitForFunction(() => window.revealCapture);
+    const revealFrames = [];
+    fs.mkdirSync('/workspace/artifacts', { recursive: true });
+    for (const ms of [0, 140, 279]) {
+      const frame = await page.evaluate(ms => {
+        const { tail, animations } = window.revealCapture;
+        for (const animation of animations) animation.currentTime = ms;
+        const style = getComputedStyle(tail.firstElementChild);
+        return { ms, opacity: Number(style.opacity), filter: style.filter };
+      }, ms);
+      revealFrames.push(frame);
+      await page.locator('.message.live .stream-tail').first().screenshot({ path: '/workspace/artifacts/reveal-' + ms + '.png' });
+    }
+    assert(revealFrames[0].opacity < .15);
+    assert(revealFrames[1].opacity > .45 && revealFrames[1].opacity < .65);
+    assert(revealFrames[2].opacity > .98);
+    assert(!fs.readFileSync('/workspace/artifacts/reveal-0.png').equals(fs.readFileSync('/workspace/artifacts/reveal-140.png')));
+    assert(!fs.readFileSync('/workspace/artifacts/reveal-140.png').equals(fs.readFileSync('/workspace/artifacts/reveal-279.png')));
+    fs.writeFileSync('/workspace/artifacts/reveal-frames.json', JSON.stringify(revealFrames, null, 2));
+    console.log('PASS painted stream reveal frames:', JSON.stringify(revealFrames));
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.waitForFunction(() => !document.querySelector(".stream-char"));
     assert.equal(await page.locator(".stream-char").count(), 0);

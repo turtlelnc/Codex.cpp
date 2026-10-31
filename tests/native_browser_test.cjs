@@ -11,12 +11,31 @@ async function start(args,port){let logs='';service=spawn(binary,[...args,'--por
  const messages=JSON.parse(body).messages,done=messages.some(message=>message.role==='tool');
  res.setHeader('Content-Type','text/event-stream');
  res.write('data: '+JSON.stringify({choices:[{index:0,delta:{reasoning_content:'检查文件，然后执行任务。'}}]})+'\n\n');
- return setTimeout(()=>{const delta=done?{content:'DONE'}:{tool_calls:[{index:0,id:'write-once',function:{name:'write_file',arguments:JSON.stringify({path:'written.txt',content:'native'})}}]};res.end('data: '+JSON.stringify({choices:[{index:0,delta,finish_reason:done?'stop':'tool_calls'}]})+'\n\ndata: [DONE]\n\n');},700);
+ return setTimeout(()=>{if(done){res.write('data: '+JSON.stringify({choices:[{index:0,delta:{content:'流式渐显检查：这段文字应当从浅色逐渐变深。'}}]})+'\n\n');for(let i=1;i<=8;i++)setTimeout(()=>res.write('data: '+JSON.stringify({choices:[{index:0,delta:{content:' 继续输出'+i}}]})+'\n\n'),i*100);return setTimeout(()=>res.end('data: '+JSON.stringify({choices:[{index:0,delta:{content:'DONE'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n'),1000);}const delta=done?{content:'DONE'}:{tool_calls:[{index:0,id:'write-once',function:{name:'write_file',arguments:JSON.stringify({path:'written.txt',content:'native'})}}]};res.end('data: '+JSON.stringify({choices:[{index:0,delta,finish_reason:done?'stop':'tool_calls'}]})+'\n\ndata: [DONE]\n\n');},700);
  }const input=JSON.parse(body).input||[],index=input.map(x=>x.role).lastIndexOf('user'),done=input.slice(index+1).some(x=>x.type==='function_call_output');res.end(JSON.stringify({id:'fixture',output:done?[{type:'message',role:'assistant',content:[{type:'output_text',text:'DONE'}]}]:[{type:'function_call',call_id:'write-once',name:'write_file',arguments:JSON.stringify({path:'written.txt',content:'native'})}]}));});});await new Promise(r=>model.listen(0,'127.0.0.1',r));
  const project=path.join(base,'project');fs.mkdirSync(project);fs.writeFileSync(path.join(project,'hello.txt'),'hello');let port=await unused();await start(['web','--root',project,'--api','chat','--provider','custom','--model','fixture','--base-url','http://127.0.0.1:'+model.address().port,'--no-api-key'],port);
- browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox']});let page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+port);await page.locator('#project-files summary').click();await page.locator('.row.file[data-path="hello.txt"]').click();await page.locator('#editor-text').fill('saved in C++');await page.locator('#editor-save').click();await wait(()=>fs.readFileSync(path.join(project,'hello.txt'),'utf8')==='saved in C++');
+ browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox']});let page=await browser.newPage({viewport:{width:1440,height:1000}});await page.addInitScript(() => {
+ window.revealSamples = [];
+ document.addEventListener('animationstart', event => {
+   if (!event.target.classList.contains('stream-char') || window.revealSamples.length >= 16) return;
+   const node = event.target, sample = [];
+   window.revealSamples.push(sample);
+   const start = performance.now();
+   const frame = () => {
+     if (!node.isConnected) return;
+     sample.push({ ms: performance.now() - start, opacity: Number(getComputedStyle(node).opacity), active: document.querySelectorAll('.stream-char').length });
+     if (performance.now() - start < 270) requestAnimationFrame(frame);
+   };
+   frame();
+ });
+});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+port);await page.locator('#project-files summary').click();await page.locator('.row.file[data-path="hello.txt"]').click();await page.locator('#editor-text').fill('saved in C++');await page.locator('#editor-save').click();await wait(()=>fs.readFileSync(path.join(project,'hello.txt'),'utf8')==='saved in C++');
  await page.locator('#model-chip').click();await page.getByRole('button',{name:'选择模型',exact:true}).click();await page.getByRole('button',{name:'刷新模型列表',exact:true}).waitFor();await page.keyboard.press('Escape');
  await page.locator('#prompt').fill('Write a native file');await page.locator('#send').click();await page.getByRole('button',{name:'允许',exact:true}).waitFor({timeout:20000});assert.equal(await page.locator('.tool .name').filter({hasText:'write_file'}).count(),1);await page.getByRole('button',{name:'允许',exact:true}).click();await page.waitForFunction(()=>document.getElementById('messages').textContent.includes('DONE'));assert.equal(fs.readFileSync(path.join(project,'written.txt'),'utf8'),'native');
+ const samples = await page.evaluate(() => window.revealSamples);
+ assert(samples.some(sample => sample.some(frame => frame.opacity < .3) && sample.some(frame => frame.opacity > .93)), 'real backend stream must paint low and high opacity frames');
+ assert(samples.flat().every(frame => frame.active <= 32), 'active reveal groups must stay bounded');
+ fs.mkdirSync('/workspace/artifacts', {recursive:true});fs.writeFileSync('/workspace/artifacts/native-reveal-frames.json', JSON.stringify(samples,null,2));
+ console.log('PASS real SSE -> C++ -> snapshot -> DOM reveal frame progression');
  await wait(async()=>await page.locator('.reasoning').count()===2);
  await page.reload();await page.locator('.reasoning summary').first().waitFor();await page.locator('.reasoning summary').first().click();assert((await page.locator('.reasoning-body').first().textContent()).includes('检查文件'));
 
