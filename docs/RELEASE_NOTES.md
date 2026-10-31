@@ -1,3 +1,9 @@
+Chat Completions agents (including DeepSeek-compatible providers) now request SSE
+streaming and forward text deltas to WebUI, TUI and JSON events. Tool-call fragments
+are assembled before execution; incomplete/error streams fail explicitly. Servers
+returning ordinary JSON remain supported. Reasoning-only deltas are not shown as
+answer text. Background text-only calls remain non-streaming.
+
 Conversation-first WebUI: the inspector is closed by default, the file tree is
 collapsible, and consecutive tool calls have expandable, event-based summaries.
 Approvals remain inline. Full stored tool arguments/output are available on demand,

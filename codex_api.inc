@@ -25,6 +25,35 @@ auto request=[&](){std::vector<std::string> h={"Authorization: Bearer "+a->acces
 auto r=request();if(r.status==401 && renew && refresh_auth(*a,err))r=request();
 if(r.status!=200 || !r.error.empty()){err="Quota query failed (HTTP "+std::to_string(r.status)+")";return{};}
 auto q=parse_codex_quota(r.body,epoch_now());if(!q)err="Invalid quota response";return q; }
+// Incremental SSE decoder; TCP chunks need not coincide with UTF-8 or event boundaries.
+struct ChatStreamDecoder{
+  ApiResponse result;std::map<int,FunctionCall> calls;std::string line,data,error;bool finished=false,done=false;
+  std::function<void(const std::string&)> on_delta;
+  void event(){if(data.empty())return;auto payload=std::move(data);data.clear();if(payload=="[DONE]"){done=true;return;}
+    auto doc=parse_json(payload);if(!doc){error="Invalid Chat Completions stream event";return;}
+    if(doc->get("error")){error="Chat Completions stream reported an API error";return;}
+    if(auto id=doc->get("id"))result.id=id->str();auto choices=doc->get("choices");if(!choices || choices->kind!=Json::Array)return;
+    for(const auto& choice:choices->items){auto index=choice.get("index");if(index && index->value!="0")continue;
+      auto delta=choice.get("delta");if(auto content=at(delta,"content");content && content->kind==Json::String){
+        result.text=result.text.value_or("")+content->value;if(on_delta && !content->value.empty())on_delta(content->value);}
+      if(auto tools=at(delta,"tool_calls");tools && tools->kind==Json::Array)for(const auto& tool:tools->items){
+        auto idx=tool.get("index");if(!idx || idx->kind!=Json::Other){error="Missing streamed tool index";continue;}
+        int n;try{n=std::stoi(idx->value);}catch(...){error="Invalid streamed tool index";continue;}
+        if(n<0 || n>1024){error="Invalid streamed tool index";continue;}auto& call=calls[n];
+        if(auto id=tool.get("id"))call.call_id+=id->str();auto fn=tool.get("function");
+        if(auto name=at(fn,"name"))call.name+=name->str();if(auto args=at(fn,"arguments"))call.arguments+=args->str();
+      }
+      if(auto reason=choice.get("finish_reason");reason && reason->kind==Json::String){
+        if(reason->str()=="stop" || reason->str()=="tool_calls")finished=true;else error="Chat Completions stopped: "+reason->str();}
+    }
+  }
+  void feed(const char* bytes,size_t size){for(size_t i=0;i<size;++i){if(bytes[i]!='\n'){line+=bytes[i];if(line.size()>1'000'000)throw std::runtime_error("Chat stream line exceeded 1 MB");continue;}
+    if(!line.empty() && line.back()=='\r')line.pop_back();if(line.empty())event();else if(line.rfind("data:",0)==0){auto part=line.substr(5);if(!part.empty()&&part[0]==' ')part.erase(0,1);if(!data.empty())data+='\n';data+=part;}line.clear();}}
+  std::optional<ApiResponse> finish(std::string& err){if(!error.empty()){err=error;return{};}if(!done || !finished){err="Chat Completions stream ended before completion";return{};}
+    for(const auto& entry:calls){const auto& call=entry.second;if(call.name.empty()||call.call_id.empty()||!parse_json(call.arguments)){err="Incomplete streamed tool call";return{};}result.calls.push_back(call);}
+    if(!result.text && result.calls.empty()){err="Chat Completions stream contained neither text nor tool calls";return{};}return result;
+  }
+};
 struct ApiClient{std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
 ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
 std::optional<std::string> post_codex(const std::string& body,std::string& err,const std::function<void(const std::string&)>& on_delta ={}, const std::function<void()>& on_tick ={},bool watch_escape = false)const{
@@ -115,9 +144,18 @@ std::optional<ApiResponse> call_responses(const std::string& instructions,const 
   body += "}";if(chatgpt_auth){auto stream = post_codex(body,err,on_delta,on_tick,watch_escape); return stream ? parse_codex_stream(*stream,err): std::nullopt; }
   auto raw = post("/v1/responses",body,err);if(!raw)return std::nullopt;return parse_api_response(*raw,false,err);
 }
-std::optional<ApiResponse> call_chat(const std::string& messages_json,const std::string& tools_json,std::string& err)const{ if(chatgpt_auth){err = "ChatGPT login requires the Responses backend";return std::nullopt; }
-  std::string body = "{\"model\":\"" + json_escape(model)+ "\",\"messages\":" + messages_json + ",\"tools\":" + tools_json + ",\"tool_choice\":\"auto\",\"stream\":false}";
-  auto raw = post("/chat/completions",body,err);if(!raw)return std::nullopt;return parse_api_response(*raw,true,err);
+std::optional<ApiResponse> call_chat(const std::string& messages_json,const std::string& tools_json,std::string& err,
+ const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& on_tick={},bool watch_escape=false)const{
+  if(chatgpt_auth){err="ChatGPT login requires the Responses backend";return{};}
+  if(!no_api_key && api_key.empty()){err="API key is not set";return{};}
+  std::string body="{\"model\":\""+json_escape(model)+"\",\"messages\":"+messages_json+",\"tools\":"+tools_json+",\"tool_choice\":\"auto\",\"stream\":true}";
+  std::vector<std::string> headers={"Content-Type: application/json","Accept: text/event-stream"};if(!no_api_key)headers.push_back("Authorization: Bearer "+api_key);
+  ChatStreamDecoder decoder;decoder.on_delta=on_delta;
+  auto reply=native_http(base_url+"/chat/completions",body,headers,false,[&](const char* data,size_t size){decoder.feed(data,size);},on_tick,watch_escape);
+  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
+  // Some compatible servers ignore stream=true and return a complete JSON response.
+  if(parse_json(reply.body)){auto response=parse_api_response(reply.body,true,err);if(response && response->text && on_delta)on_delta(*response->text);return response;}
+  return decoder.finish(err);
 }
 };
 // ---------- model catalog ----------

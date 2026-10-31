@@ -1059,7 +1059,7 @@ auto run_turn =[&](const std::string& raw_prompt,bool review_only = false,bool c
   auto update_elapsed=[&](){if(frontend&&frontend->active)frontend->pump();if(tui)tui->render("working...");};if(api.style == ApiStyle::Responses){
     auto input=session.items;append_design_delivery_reminder(input,delivery_reminder,false);const std::string input_json=join_json_array(input);response = api.call_responses(turn_instructions,input_json,router.specs_json(),err, std::nullopt,show_delta,update_elapsed,bool(tui));
   }else{
-    auto messages=chat_history(session,turn_instructions);append_design_delivery_reminder(messages,delivery_reminder,true);response = api.call_chat(join_json_array(messages),router.chat_specs_json(),err);
+    auto messages=chat_history(session,turn_instructions);append_design_delivery_reminder(messages,delivery_reminder,true);response = api.call_chat(join_json_array(messages),router.chat_specs_json(),err,show_delta,update_elapsed,bool(tui));
   }
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
