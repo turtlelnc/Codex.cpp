@@ -2,6 +2,8 @@
 const {chromium}=require('playwright'),{spawn,execFileSync}=require('child_process');
 const fs=require('fs'),os=require('os'),path=require('path'),http=require('http'),https=require('https'),net=require('net'),assert=require('assert/strict');
 const root=path.resolve(__dirname,'..'),binary=path.resolve(process.argv[2]),base=fs.mkdtempSync(path.join(os.tmpdir(),'native-browser-'));let service,browser,proxy,model;
+
+const artifactDir = process.env.CODEX_ARTIFACT_DIR || path.join(require('node:os').tmpdir(), 'codex-webui-artifacts');
 async function unused(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 async function wait(fn){for(let i=0;i<300;i++){if(await fn())return;await new Promise(r=>setTimeout(r,30));}throw Error('Readiness timeout');}
 async function stop(){if(service&&service.exitCode===null){const p=service;service.kill('SIGTERM');await new Promise(resolve=>p.once('exit',resolve));}service=null;}
@@ -35,7 +37,7 @@ async function start(args,port){let logs='';service=spawn(binary,[...args,'--por
  const samples = await page.evaluate(() => window.revealSamples);
  assert(samples.some(sample => sample.some(frame => frame.opacity < .3) && sample.some(frame => frame.opacity > .93)), 'real backend stream must paint low and high opacity frames');
  assert(samples.flat().every(frame => frame.active <= 32), 'active reveal groups must stay bounded');
- fs.mkdirSync('/workspace/artifacts', {recursive:true});fs.writeFileSync('/workspace/artifacts/native-reveal-frames.json', JSON.stringify(samples,null,2));
+ fs.mkdirSync(artifactDir, {recursive:true});fs.writeFileSync(path.join(artifactDir, 'native-reveal-frames.json'), JSON.stringify(samples,null,2));
  console.log('PASS real SSE -> C++ -> snapshot -> DOM reveal frame progression');
  await wait(async()=>await page.locator('.reasoning').count()===2);
  await page.reload();await page.locator('.message.assistant h3 b').waitFor();assert.equal(await page.locator('.message.assistant h3 b').textContent(), '流式渐显检查');await page.locator('.reasoning summary').first().waitFor();await page.locator('.reasoning summary').first().click();assert((await page.locator('.reasoning-body').first().textContent()).includes('检查文件'));
@@ -52,5 +54,5 @@ async function start(args,port){let logs='';service=spawn(binary,[...args,'--por
  await page.locator('#prompt').fill('Personal native task');await page.locator('#send').click();await page.getByRole('button',{name:'允许',exact:true}).waitFor({timeout:20000});
  await page.locator('#prompt').fill('Queued while busy');await page.getByRole('button',{name:'加入任务队列',exact:true}).click();await page.waitForFunction(()=>document.getElementById('host-jobs').textContent.includes('排队任务')&&document.getElementById('host-jobs').textContent!=='无排队任务');
  await page.getByRole('button',{name:'允许',exact:true}).click();await page.getByRole('button',{name:'允许',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length>=2);const cookies=await context.cookies();assert(cookies.some(c=>c.name.startsWith('codex_session_')&&c.secure&&c.httpOnly&&c.sameSite==='Strict'));
- await page.screenshot({path:'/workspace/artifacts/native-hosted-browser.png',fullPage:true});await page.locator('#host-logout').click();await page.locator('#host-login').waitFor({state:'visible'});assert.deepEqual(errors,[]);console.log('PASS native local browser editor, model menu, single inline approval, real Agent write, mobile; HTTPS hosted login, project creation/invitation, personal provider/task, Secure cookies and logout');
+ await page.screenshot({path:path.join(artifactDir, 'native-hosted-browser.png'),fullPage:true});await page.locator('#host-logout').click();await page.locator('#host-login').waitFor({state:'visible'});assert.deepEqual(errors,[]);console.log('PASS native local browser editor, model menu, single inline approval, real Agent write, mobile; HTTPS hosted login, project creation/invitation, personal provider/task, Secure cookies and logout');
  }finally{if(browser)await browser.close();await stop();if(proxy)await new Promise(r=>proxy.close(r));if(model)await new Promise(r=>model.close(r));fs.rmSync(base,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -206,6 +206,11 @@ function inline(parent, text) {
 }
 
 function markdown(text) {
+  const node = Penguin.call('markdown.render', { text });
+  if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Penguin Markdown renderer must return an .md element');
+  return node;
+}
+function markdownBuiltin(text) {
   const box = el('div', undefined, 'md');
   text.split(/```[\w+-]*\n?/).forEach((chunk, i) => {
     if (i % 2) { box.append(el('pre', chunk.replace(/\n$/, ''))); return; }
@@ -332,7 +337,8 @@ function approvalBar(name) {
   return bar;
 }
 
-function toolCard(
+function toolCard(...args) { return Penguin.call('tool.card', { args }); }
+function toolCardBuiltin(
   id,
   name,
   args,
@@ -396,7 +402,8 @@ function toolCard(
 
 /* ---------- 对话渲染 ---------- */
 
-function userBubble(text) {
+function userBubble(text) { return Penguin.call('message.user', { text }); }
+function userBubbleBuiltin(text) {
   const node = el('div', undefined, 'message user');
   node.append(document.createTextNode(text));
   return node;
@@ -552,6 +559,12 @@ function reasoningMessage(text, live = false) {
   return node;
 }
 function assistantMessage(text, live) {
+  const node = Penguin.call('message.assistant', { text, live });
+  if (!(node instanceof HTMLElement) || !node.querySelector('.md')) throw Error('Penguin assistant renderer must include .md');
+  node._text = text;
+  return node;
+}
+function assistantMessageBuiltin(text, live) {
   const node = el('div', undefined, 'message assistant' + (live ? ' live' : ''));
   node._text = text;
   node.append(live ? streamMarkup(text) : markdown(text));
@@ -1853,6 +1866,15 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+onClick('penguin-button', async () => {
+  const rows = await http('/api/penguins');
+  const body = $('penguin-services'); body.replaceChildren();
+  for (const service of [...rows, ...Penguin.inspect()]) {
+    const row = el('p'); row.append(el('code', service.service), document.createTextNode(' → ' + service.owner)); body.append(row);
+  }
+  $('penguin-dialog').showModal();
+});
+onClick('penguin-close', () => $('penguin-dialog').close());
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
 $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
@@ -1860,6 +1882,7 @@ $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scro
 
 async function initialize() {
   state.user = await http('/api/me');
+  await Penguin.load(state.user.penguins, { rpc, element: el });
   document.body.dataset.mode = state.user.mode;
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
@@ -1870,6 +1893,14 @@ async function initialize() {
   $('team-button').disabled=false;
   if(!state.loopStarted){state.loopStarted=true;loop();}
 }
+
+Penguin.mount({ id: 'builtin.web', services: {
+  'markdown.render': { handler: ({ text }) => markdownBuiltin(text) },
+  'message.user': { handler: ({ text }) => userBubbleBuiltin(text) },
+  'message.assistant': { handler: ({ text, live }) => assistantMessageBuiltin(text, live) },
+  'tool.card': { handler: ({ args }) => toolCardBuiltin(...args) },
+}});
+addEventListener('penguin:changed', () => { messageCache.clear(); executionGroups.clear(); state.signature = ''; });
 
 function loop() {
   setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 200 : 1200);

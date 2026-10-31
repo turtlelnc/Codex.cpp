@@ -250,6 +250,12 @@ Linux 设置父进程退出信号，Windows 使用 Job Object 管理原生子进
 HTTP 使用固定线程池和有界队列；不提供 WebSocket 实时共同光标，页面通过轮询同步。
 Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本版不自动迁移旧 Python 多人服务数据库。
 
+## Everything is a Penguin（实验性）
+
+内置模型、Agent 回合、提示词、工具执行、会话写入和网页渲染已接入可替换服务。默认仍为单文件；C/C++ 原生模组通过启动前缀 `--penguin /绝对路径/penguin.json` 显式加载。使用 `codex-cpp penguin inspect`、TUI `/penguin` 或网页左下角“模组”查看当前提供者。
+
+示例、C ABI、服务契约、权限及平台限制见 [Penguin 开发指南](docs/PENGUIN.md)。原生模组是完全可信代码；现有 Linux musl 全静态 Release 不能加载动态库，Linux 原生模组需使用正常 glibc 构建。默认功能与纯网页扩展不受此限制。
+
 ## 验证
 
 Node.js 仅用作测试运行器，正式运行不需要它：

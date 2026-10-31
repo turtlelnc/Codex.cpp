@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>Codex.cpp Workspace</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/penguin.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -19,6 +20,7 @@
     <button id="new-chat" class="nav-item"><span aria-hidden="true">＋</span> 新会话</button>
     <div class="sidebar-heading"><span>会话</span></div>
     <nav id="projects" aria-label="会话"></nav>
+    <div id="penguin-sidebar"></div>
     <details id="project-files" class="file-browser">
       <summary>项目文件</summary>
       <div class="files-actions"><button id="refresh-files" aria-label="刷新文件" title="刷新文件">刷新文件</button></div>
@@ -26,6 +28,7 @@
     </details>
     <div class="sidebar-footer">
       <span id="connection" role="status" data-state="pending">连接中</span>
+      <button type="button" id="penguin-button">模组</button>
       <button type="button" id="retry-connection" hidden>重新连接</button>
     </div>
   </aside>
@@ -51,7 +54,8 @@
         <div id="messages" aria-live="polite"></div>
         <button type="button" id="jump-bottom" hidden>↓ 返回最新消息</button>
 
-        <form id="composer">
+        <div id="penguin-composer"></div>
+      <form id="composer">
           <div id="popover" role="menu" hidden></div>
           <div id="slash-menu" role="listbox" aria-label="斜杠命令" hidden></div>
           <label class="sr-only" for="prompt">任务内容</label>
@@ -76,6 +80,7 @@
           <button type="button" id="inspector-close" aria-label="关闭检查器" title="关闭检查器（Esc）">×</button>
         </div>
 
+        <div id="penguin-inspector"></div>
         <section id="code-panel" class="panel">
           <div id="file-view"><div class="none"><b>未打开文件</b>在左侧“项目文件”中选择一个文件，即可在这里查看和编辑</div></div>
           <div id="editor" hidden>
@@ -159,6 +164,11 @@
   <label>访问令牌<input id="team-token" type="password" readonly autocomplete="off" spellcheck="false"></label>
   <div class="actions"><button id="team-token-show" type="button" aria-pressed="false">显示令牌</button><button id="team-token-copy" type="button">复制令牌</button><button id="team-token-close" type="button" class="primary">已保存，关闭</button></div>
   <p id="team-token-feedback" role="status"></p>
+</dialog>
+<dialog id="penguin-dialog" aria-labelledby="penguin-title">
+  <div class="dialog-heading"><h2 id="penguin-title">Penguin 模组</h2><button id="penguin-close" type="button" aria-label="关闭模组窗口">×</button></div>
+  <p>原生模组由服务启动者加载；更改加载项需要重启。</p>
+  <div id="penguin-services"></div>
 </dialog>
 </body>
 </html>

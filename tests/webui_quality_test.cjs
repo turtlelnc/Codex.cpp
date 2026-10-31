@@ -4,6 +4,8 @@ const { chromium } = require("playwright"),
   fs = require("fs"),
   path = require("path"),
   assert = require("assert/strict");
+
+const artifactDir = process.env.CODEX_ARTIFACT_DIR || path.join(require('node:os').tmpdir(), 'codex-webui-artifacts');
 let browser,
   server,
   savedWrite,
@@ -160,7 +162,7 @@ function snapshot() {
           return reply({ result });
         }
         const name = req.url === "/" ? "index.html" : req.url.slice(1);
-        if (!["index.html", "app.js", "style.css"].includes(name)) {
+        if (!["index.html", "app.js", "style.css", "penguin.js"].includes(name)) {
           res.writeHead(404);
           return res.end();
         }
@@ -411,7 +413,7 @@ function snapshot() {
     );
     await page.waitForFunction(() => window.revealCapture);
     const revealFrames = [];
-    fs.mkdirSync('/workspace/artifacts', { recursive: true });
+    fs.mkdirSync(artifactDir, { recursive: true });
     for (const ms of [0, 140, 279]) {
       const frame = await page.evaluate(ms => {
         const { tail, animations } = window.revealCapture;
@@ -420,14 +422,14 @@ function snapshot() {
         return { ms, opacity: Number(style.opacity), filter: style.filter };
       }, ms);
       revealFrames.push(frame);
-      await page.locator('.message.live .stream-tail').first().screenshot({ path: '/workspace/artifacts/reveal-' + ms + '.png' });
+      await page.locator('.message.live .stream-tail').first().screenshot({ path: path.join(artifactDir, 'reveal-' + ms + '.png') });
     }
     assert(revealFrames[0].opacity < .15);
     assert(revealFrames[1].opacity > .45 && revealFrames[1].opacity < .65);
     assert(revealFrames[2].opacity > .98);
-    assert(!fs.readFileSync('/workspace/artifacts/reveal-0.png').equals(fs.readFileSync('/workspace/artifacts/reveal-140.png')));
-    assert(!fs.readFileSync('/workspace/artifacts/reveal-140.png').equals(fs.readFileSync('/workspace/artifacts/reveal-279.png')));
-    fs.writeFileSync('/workspace/artifacts/reveal-frames.json', JSON.stringify(revealFrames, null, 2));
+    assert(!fs.readFileSync(path.join(artifactDir, 'reveal-0.png')).equals(fs.readFileSync(path.join(artifactDir, 'reveal-140.png'))));
+    assert(!fs.readFileSync(path.join(artifactDir, 'reveal-140.png')).equals(fs.readFileSync(path.join(artifactDir, 'reveal-279.png'))));
+    fs.writeFileSync(path.join(artifactDir, 'reveal-frames.json'), JSON.stringify(revealFrames, null, 2));
     console.log('PASS painted stream reveal frames:', JSON.stringify(revealFrames));
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.waitForFunction(() => !document.querySelector(".stream-char"));
