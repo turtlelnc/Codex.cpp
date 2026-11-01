@@ -102,3 +102,7 @@ export default ({ register, attach, element, onDispose }) => {
 - `tests/penguin_integration.cjs` 用实际动态库验证模型、Agent、工具、默认回退、错误清单与只读拦截。
 - `tests/penguin_browser_test.cjs` 用实际 C++ 服务验证模块传给 Agent 子进程、UI 替换/移除、认证资源和刷新恢复。
 - 原有浏览器布局、文件保存竞态、Markdown 标题、渐显逐帧、工具审批与多人流程继续回归。
+
+## Agent 制作插件
+
+内置 Creator Skill、SDK 模板及制作/构建/静态检查/隔离探测流程见 [Penguin Creator](PENGUIN_CREATOR.md)。测试不会向当前服务启用插件；实际加载仍由用户或服务器管理员显式重启。

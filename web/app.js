@@ -337,6 +337,37 @@ function approvalBar(name) {
   return bar;
 }
 
+function creatorReport(row) {
+  if (!['penguin_check', 'penguin_test'].includes(row.name) || typeof row.output !== 'string') return null;
+  try {
+    const data = JSON.parse(row.output);
+    return data.creator === true && typeof data.id === 'string' && typeof data.manifest === 'string' ? data : null;
+  } catch { return null; }
+}
+function creatorReviewCard(data, probe) {
+  const node = el('section', undefined, 'message creator-review');
+  node.setAttribute('aria-label', '插件审阅：' + data.id);
+  node.append(el('strong', 'Penguin · ' + data.id));
+  const probed = probe?.status === 'native_probe_passed' && JSON.stringify(probe.sha256) === JSON.stringify(data.sha256);
+  const status = data.kind === 'native'
+    ? !data.built ? '等待构建 · 未启用' : probed ? '隔离加载测试通过 · 功能仍待验证 · 未启用' : '静态结构检查通过 · 尚未测试原生加载'
+    : '静态结构检查通过 · 界面行为尚未验证 · 未启用';
+  node.append(el('p', data.enabled ? status.replace('未启用', '同 ID 模组已加载，更改需重启') : status), el('p', data.kind === 'native' ? '原生插件拥有宿主权限；请审阅源代码和实际功能，再手动重启启用。多人服务由管理员配置。' : '网页插件可访问当前会话；请审阅并验证界面，再手动重启启用。多人服务由管理员配置。'));
+  if (data.review_sha256) node.append(el('p', '审阅指纹 ' + data.review_sha256.slice(0, 16) + '… · 启动时校验 · 不代表安全审查或启用授权'));
+  const actions = el('div', undefined, 'creator-actions');
+  const inspect = el('button', '查看清单'); inspect.type = 'button';
+  inspect.onclick = () => openFile(data.manifest_relative).catch(error => notice(error.message));
+  actions.append(inspect);
+  const details = el('details'); details.append(el('summary', '本地示例启动命令'), el('pre', data.launch_command || ''));
+  if (data.kind === 'web' || data.built) {
+    const copy = el('button', '复制手动启用命令'); copy.type = 'button';
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(data.launch_command); copy.textContent = '已复制 · 未执行'; } catch { notice('复制失败，请展开命令手动复制'); } };
+    actions.append(copy);
+  }
+  node.append(actions, details);
+  return node;
+}
+
 function toolCard(...args) { return Penguin.call('tool.card', { args }); }
 function toolCardBuiltin(
   id,
@@ -622,6 +653,20 @@ function buildChat(snap, wasBusy = false) {
   };
   const rows = snap.timeline || [];
   const pending = snap.pending;
+  const creatorChecks = new Map(), creatorProbes = new Map();
+  for (const [index, row] of rows.entries()) {
+    if (row.name === 'penguin_build') {
+      // Even an identical rebuild needs a fresh check/probe; a failed build
+      // may have removed its previous artifact. Do not advertise old results.
+      creatorChecks.clear(); creatorProbes.clear();
+    }
+    const data = creatorReport(row);
+    if (data && row.name === 'penguin_check') creatorChecks.set(data.manifest, index);
+    if (row.name === 'penguin_test' && row.output != null) {
+      if (data) creatorProbes.set(data.manifest, data);
+      else creatorProbes.clear(); // Never reuse a success after a failed/unreadable probe.
+    }
+  }
   const nodes = [];
   let matched = false;
   const toolEvents = toolEventMap(snap);
@@ -694,6 +739,12 @@ function buildChat(snap, wasBusy = false) {
         flushGroup();
         nodes.push(node);
       } else group.push({ key, node, status });
+      const report = creatorReport(row);
+      if (report && row.name === 'penguin_check' && creatorChecks.get(report.manifest) === index) {
+        flushGroup();
+        const probe = creatorProbes.get(report.manifest);
+        nodes.push(cached(key + ':creator', [report, probe], () => creatorReviewCard(report, probe)));
+      }
     }
   }
   flushGroup();

@@ -118,6 +118,7 @@ return "cd " + shell_quote(root.string())+ " && ";
 #endif
 }
 static std::optional<std::string> external_hardlink_risk(const fs::path& root);
+static bool within_root(const fs::path& root,const fs::path& target);
 #include "codex_process.inc"
 static fs::path temp_path_in(const fs::path& dir,const char* stem){for(int attempt=0;attempt<10;++attempt){ fs::path p=dir/(std::string(stem)+"-"+random_id("tmp"));
 #if !defined(_WIN32)
@@ -173,6 +174,7 @@ static bool within_root(const fs::path& root,const fs::path& target){std::error_
 if(fs::exists(target,ec))t = fs::weakly_canonical(target,ec);else t = fs::weakly_canonical(target.parent_path(),ec)/ target.filename();if(ec)return false;
 auto ri = r.begin(),ti = t.begin();for(;ri != r.end();++ri,++ti)if(ti == t.end()|| *ri != *ti)return false;return true; }
 static bool sensitive_path(const fs::path& path){const auto home=fs::path(getenv_or("HOME",getenv_or("USERPROFILE")));std::vector<fs::path> denied={execution.private_dir,home/".ssh",home/".aws",home/".codex/auth.json",home/"Library/Keychains",fs::path(getenv_or("CODEX_CPP_HOME",(home/".codex-cpp").string()))/"auth.json"};
+  denied.insert(denied.end(),process_protected_paths.begin(),process_protected_paths.end());
   for(const auto& base:denied)if(!base.empty()&&within_root(base,path))return true;return false;}
 // A path-only sandbox can permit writes through a hardlink in the workspace
 // whose other name lives outside it. Count all names of each inode in the
@@ -471,7 +473,7 @@ const std::vector<fs::path> bases={fs::path(getenv_or("HOME"))/".codex"/"skills"
 }
 for(const auto& plugin:plugins.entries)if(plugin.enabled){auto base=plugin.dir/"skills";std::error_code ec;if(!fs::is_directory(base,ec))continue;
   for(const auto& e:fs::directory_iterator(base,ec)){const auto name=e.path().filename().string();const auto file=e.path()/"SKILL.md";if(plugin_id(name)&&fs::is_regular_file(file,ec)&&within_root(plugin.dir,file))found[plugin.id+":"+name]=file;}}
-return{found.begin(),found.end()}; } static std::string skills_manifest(const fs::path& root){std::ostringstream out;for(const auto&[name,path]:available_skills(root)){
+return{found.begin(),found.end()}; } static std::string skills_manifest(const fs::path& root){std::ostringstream out;out<<"penguin-creator: Create, build and verify Penguin C/C++ or WebUI plugins; read this skill when asked to make a plugin.\n";for(const auto&[name,path]:available_skills(root)){
   std::string body=slurp(path,4096),description;std::istringstream in(body);std::string line; while(std::getline(in,line))if(line.rfind("description:",0)==0){description=trim(line.substr(12));break; }
   out<<name<<": "<<description<<'\n';
 }
@@ -479,6 +481,7 @@ return out.str(); } class ReadSkillTool final : public ToolRuntime{public: std::
   return one_arg_tool_spec("read_skill","Read an available project or user skill by name. The skill list is in the session context.","name");
 }
 ToolResult run(const std::string& args,const fs::path& root)override{auto wanted=json_string_field(args,"name");if(!wanted)return{2,"ERROR: missing name"};
+  if(*wanted=="penguin-creator")return{0,std::string(codex_resource("penguin-creator/SKILL.md"))};
   for(const auto&[name,path]:available_skills(root))if(name==*wanted)return{0,slurp(path,100000)}; return{2,"ERROR: skill not found: "+*wanted};
 }
 };
@@ -798,7 +801,10 @@ Usage:
 
 Penguin modules (before the command/options):
   --penguin /absolute/penguin.json  load a trusted native/WebUI bundle; repeatable
+  --penguin-reviewed /absolute/penguin.json SHA256  verify Creator review and load a private snapshot
   penguin inspect                  show active service owners and replacement layers
+  penguin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
+  penguin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
 
 Provider/API options:
   --provider codex|openai|deepseek|custom
@@ -948,6 +954,7 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_web.inc"
 #include "codex_team_client.inc"
 #include "codex_team_tui.inc"
+#include "codex_penguin_creator.inc"
 int main(int argc,char** argv){
 #if defined(_WIN32)
   // Native module paths, like WebUI paths, must not depend on the ANSI code page.
@@ -961,10 +968,10 @@ int main(int argc,char** argv){
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
   std::vector<char*> penguin_arguments_storage;
-  try{penguin_arguments(argc,argv,penguin_arguments_storage);penguin_boot();
+  try{penguin_arguments(argc,argv,penguin_arguments_storage);penguin_creator_self=native_web::executable(argv[0]);penguin_boot();
     if(argc>1 && std::string(argv[1])=="penguin"){
-      if(argc!=3 || std::string(argv[2])!="inspect")throw std::runtime_error("Usage: codex-cpp [--penguin /absolute/penguin.json] penguin inspect");
-      std::cout<<penguin_inspect()<<'\n';return 0;
+      if(argc==3 && std::string(argv[2])=="inspect"){std::cout<<penguin_inspect()<<'\n';return 0;}
+      return penguin_creator_cli(argc,argv);
     }
   }catch(const std::exception& e){std::cerr<<"Penguin startup: "<<e.what()<<'\n';return 2;}
   if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
@@ -993,6 +1000,7 @@ plugins.load();
 Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std::cerr << err << '\n';return 2;}std::string project_memory=load_project_memory(opt.root);ToolRouter router;
 if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p){return p.enabled&&p.manifest.get("ui");}))router.add<PluginUiTool>();router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 router.add<GitReadTool>();router.add<GitWriteTool>();
+router.add<PenguinScaffoldTool>();router.add<PenguinCheckTool>();router.add<PenguinBuildTool>();router.add<PenguinTestTool>();
 for(const auto& tool:penguin_tools)router.add_dynamic(std::make_unique<PenguinTool>(tool));
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
