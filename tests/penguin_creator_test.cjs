@@ -115,7 +115,11 @@ try {
     );
     assert(source.includes("return 73"), "probe fixture must include a forbidden read");
     fs.writeFileSync(path.join(root, "native-demo", "plugin.cpp"), source);
-    run(["build", "native-demo"]);
+    // Force an old mtime: verification must compile edited bytes even on
+    // filesystems/build tools that cannot distinguish rapid timestamp changes.
+    fs.utimesSync(path.join(root, "native-demo", "plugin.cpp"), new Date(1000), new Date(1000));
+    const changed=JSON.parse(run(["build", "native-demo"]).stdout);
+    assert.notEqual(changed.sha256[changed.library], data.sha256[data.library]);
     run(["check", "native-demo"]);
     assert(!fs.existsSync(marker));
     env.CREATOR_PRIVATE_SENTINEL = "must-not-be-inherited";
@@ -131,7 +135,9 @@ try {
         "  std::this_thread::sleep_for(std::chrono::seconds(15));\n  module->version=1;",
       );
     fs.writeFileSync(path.join(root, "native-demo", "plugin.cpp"), source);
-    run(["build", "native-demo"]);
+    fs.utimesSync(path.join(root, "native-demo", "plugin.cpp"), new Date(1000), new Date(1000));
+    const hanging=JSON.parse(run(["build", "native-demo"]).stdout);
+    assert.notEqual(hanging.sha256[hanging.library], changed.sha256[changed.library]);
     const began = Date.now();
     run(["test", "native-demo"], 124);
     assert(
