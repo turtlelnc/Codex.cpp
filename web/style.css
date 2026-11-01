@@ -422,3 +422,8 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .reasoning { color: var(--muted, #746f65); font-size: .9em; }
 .reasoning summary { cursor: pointer; padding: 8px 0; }
 .reasoning-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 8px 0 12px; }
+
+.creator-review { border-left: 2px solid var(--line); padding: 8px 16px; }
+.creator-review p { margin: 6px 0; font-size: 13px; color: var(--muted); }
+.creator-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.creator-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 180px; overflow: auto; }

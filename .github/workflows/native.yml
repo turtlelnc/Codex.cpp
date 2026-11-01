@@ -47,6 +47,12 @@ jobs:
         run: node tests/penguin_integration.cjs build/codex-cpp build/penguin-demo/penguin.json
       - if: runner.os == 'Windows'
         run: node tests/penguin_integration.cjs build/Release/codex-cpp.exe build/penguin-demo/Release/penguin.json
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - if: runner.os != 'Windows'
+        run: node tests/penguin_creator_test.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/penguin_creator_test.cjs build/Release/codex-cpp.exe
       - if: runner.os != 'Windows'
         run: node tests/native_smoke.cjs build/codex-cpp
       - if: runner.os != 'Windows'
@@ -129,10 +135,16 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/penguin-tests" playwright@1.62.1
           "$RUNNER_TEMP/penguin-tests/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Install Creator sandbox backend
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Verify native and WebUI module lifecycle
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/penguin-browser
         run: NODE_PATH="$RUNNER_TEMP/penguin-tests/node_modules" node tests/penguin_browser_test.cjs build/codex-cpp build/penguin-demo/penguin.json
+      - name: Verify Agent plugin Creator workflow
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/penguin-browser
+        run: NODE_PATH="$RUNNER_TEMP/penguin-tests/node_modules" node tests/penguin_creator_browser_test.cjs build/codex-cpp
       - uses: actions/upload-artifact@v4
         if: always()
         with:

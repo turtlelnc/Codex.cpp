@@ -1,0 +1,24 @@
+---
+name: penguin-creator
+description: Create, modify, build and verify Penguin native C/C++ or WebUI plugins for Codex.cpp. Use when the user asks for a plugin, mod, custom tool or interface extension.
+---
+
+Use the existing workspace, permissions and tools. Ask only questions that change the desired behavior; prefer a small plugin over changing Codex.cpp itself.
+
+1. Inspect the requested workflow. Choose `web` for browser-only widgets; choose `native` for C/C++ services/tools. Native scaffolds also include a WebUI entry. Do not replace model/Agent services unless the user requested it.
+2. Call `penguin_scaffold` with a new workspace-relative path, a unique lower-case id and kind. It never overwrites an existing directory. The embedded C ABI header is included; no checkout of Codex.cpp or download is needed.
+3. Read the generated files. Implement the user's actual feature using normal read/write/apply_patch tools. Do not deliver unchanged scaffolding as if it implemented the request. Keep generated SDK and unrelated project files intact.
+4. Native plugins: call `penguin_build`. It configures/builds the local standalone CMake project inside the existing OS sandbox, requires a compiler and CMake, and does not install anything. Report compiler or sandbox absence; never silently disable isolation. Windows currently lacks the required OS sandbox: provide manual build commands instead of claiming an automatic build passed.
+5. Call `penguin_check` for static manifest/file review. This does NOT execute native code, check JavaScript semantics or prove the feature works.
+6. Native plugins: call `penguin_test` after building. It loads the ABI in a separate read-only, network-isolated process with sanitized environment and a short deadline. Success only verifies native initialization/registration, NOT tool or UI behavior. A timeout, crash, denied sandbox or malformed ABI is a failed/unverified test, never success. It never loads the plugin into the current Agent/server.
+7. Verify actual feature behavior using available tests and browser tools/MCP if present. For a web widget test the main controls, narrow screen and disposal. If browser tools are unavailable, explicitly report UI behavior as unverified. Do not require Python, Node.js or a frontend build system just to run the plugin; optional developer test tools are acceptable.
+8. Call `penguin_check` again after final edits so the report describes the delivered files. Summarize changed files, actual build/probe/functional verification, and remaining gaps.
+9. Give the user the review card/manual activation command. Explain that it starts a new instance and requires stopping the previous instance on that port. Native code is fully trusted application code; the user/server administrator reviews and explicitly starts it. Never execute activation in an unsandboxed service, auto-edit startup configuration, claim the plugin is enabled, or install it globally.
+
+## ABI and UI
+
+The generated `native.h` is the public contract. Export `codex_penguin_init_v1`, register exactly the manifest's services, and match the id. All buffers/next/poll callbacks are borrowed only during a call; emit one final JSON `result`; no exceptions across C ABI; poll during long work. Service replacements explicitly name the previous owner. C/C++ tool callbacks return `{"exit_code":0,"output":"..."}`. Tools marked `mutates` still pass through host authorization; native code itself is privileged when enabled.
+
+Web entry exports default setup({register,attach,element,onDispose,rpc}). `attach` supports sidebar/composer/inspector and is cleaned up on unload. Register timers/listeners with `onDispose`; keep resources and state per plugin instance. Use DOM/textContent for user/model text. Rendering overrides call next(request) when decorating; markdown.render must return .md, and message.assistant must contain .md. Default owner is builtin.web. Plugins are not automatically shared across users or activated by conversation messages.
+
+The existing Linux fully static musl release cannot dlopen native libraries; normal glibc builds, macOS and Windows use native loaders. A web-only plugin has no C++ compiler/runtime requirement. A saved probe report describes one test run, not a signature or guarantee that future modified code is safe.
