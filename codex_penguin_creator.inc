@@ -83,9 +83,9 @@ static CommandResult creator_process(const std::vector<std::string>& command,con
 }
 static ToolResult creator_build(const fs::path& root,const std::string& path,const std::function<void()>& tick={},bool watch=false){try{
   auto report=creator_check(root,path);if(penguin_text(report,"kind")!="native")return {2,"Web-only plugins have no native build step"};if(penguin_flag(report,"enabled"))return {2,"Native plugin id is already loaded; stop the active instance before rebuilding it"};auto source=fs::u8path(penguin_text(report,"manifest")).parent_path();if(!fs::is_regular_file(source/"CMakeLists.txt"))return {2,"CMakeLists.txt missing"};
-  auto build=source/"build";if(!within_root(source,build)||!within_root(root,build))return {2,"Build directory escapes plugin"};auto policy=ProcessPolicy::tool(root,true);policy.reads.push_back("/usr/include");policy.reads.push_back("/usr/local/include");policy.reads.push_back("/usr/libexec");policy.reads.push_back("/usr/local/libexec");
+  auto build=source/"build";if(!within_root(source,build)||!within_root(root,build))return {2,"Build directory escapes plugin"};auto policy=ProcessPolicy::tool(root,true);policy.reads.push_back("/usr/include");policy.reads.push_back("/usr/local/include");policy.reads.push_back("/usr/local/share");policy.reads.push_back("/usr/libexec");policy.reads.push_back("/usr/local/libexec");
 #if defined(__APPLE__)
-  for(const auto& path:{"/usr/local/Cellar","/usr/local/share","/usr/local/opt","/Applications/CMake.app/Contents"})policy.reads.push_back(path);
+  for(const auto& path:{"/usr/local/Cellar","/usr/local/opt","/Applications/CMake.app/Contents"})policy.reads.push_back(path);
 #endif
   std::vector<std::string> configure={"cmake","-S",source.u8string(),"-B",build.u8string(),"-DCMAKE_BUILD_TYPE=Release"};
 #if defined(__APPLE__) && defined(__aarch64__)
