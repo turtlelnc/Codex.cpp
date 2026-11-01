@@ -289,6 +289,10 @@ function snapshot() {
     await wait(async () => (await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
     snap.timeline.splice(1, 0, { k: 'tool', id: 'probe-failed', name: 'penguin_test', args: '{}', output: 'Creator process timed out' });
     await wait(async () => !(await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
+    snap.timeline.splice(1, 1, { k: 'tool', id: 'rebuild', name: 'penguin_build', args: '{}', output: 'build failed' });
+    await wait(async () => !(await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
+    snap.timeline.push({ k: 'tool', id: 'rebuild-after-check', name: 'penguin_build', args: '{}', output: 'build failed' });
+    await wait(async () => (await page.locator('.creator-review').count()) === 0);
 
     const headingMarkdown = '# 一级\n正文紧邻标题\n### **三级加粗标题**\n后续正文\n## 二级 ##\n#### 四级\n##### 五级\n###### 六级\n###没有空格\n####### 七个井号\n\n' + '```text\n### 代码里的标题\n```\n\n### <img src=x onerror=alert(1)>';
     snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: headingMarkdown }] };

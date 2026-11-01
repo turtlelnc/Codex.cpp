@@ -1,5 +1,5 @@
 const { chromium } = require("playwright"),
-  { spawn } = require("node:child_process"),
+  { spawn, spawnSync } = require("node:child_process"),
   fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path"),
@@ -279,11 +279,25 @@ async function stop() {
       path: path.join(artifactDir, "creator-review-mobile.png"),
     });
     // Only the test/user's explicit new process enables the generated plugin.
+    const checked = spawnSync(binary, ["penguin", "check", "created-plugin"], {
+      cwd: root,
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(checked.status, 0, checked.stderr);
+    const review = JSON.parse(checked.stdout);
+    assert.equal(review.launch_args[1], "--penguin-reviewed");
     await stop();
-    await start([
-      "--penguin",
-      path.join(root, "created-plugin", "penguin.json"),
-    ]);
+    await start(review.launch_args.slice(1, 4));
+    // After startup, changing originals must never change reviewed resources.
+    fs.writeFileSync(
+      path.join(root, "created-plugin", "client.js"),
+      "throw new Error('mutable original executed');",
+    );
+    fs.writeFileSync(
+      path.join(root, "created-plugin", review.library),
+      "invalid replacement native bytes",
+    );
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(origin);
     const widget = page.getByRole("region", { name: "Creator 点击计数器" });

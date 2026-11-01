@@ -1,8 +1,11 @@
 #include "codex_resources.h"
 // The only OS process launcher. Child policy is chosen by trusted host code, never RPC.
 enum class ProcessRole{Probe,Helper,Tool,Extension,Frontend,Network,Clipboard};
+// Inherited reviewed snapshots may belong to the parent WebUI process rather
+// than this worker's execution context. Workspace grants must not expose them.
+static std::vector<fs::path> process_protected_paths;
 struct ProcessPolicy{
-  ProcessRole role=ProcessRole::Helper;fs::path workspace;bool writable=false,unsafe=false;
+  ProcessRole role=ProcessRole::Helper;fs::path workspace;bool writable=false,unsafe=false,no_fork=false;
   std::vector<fs::path> reads,writes;
   static ProcessPolicy tool(const fs::path& root,bool write,bool unrestricted=false){ProcessPolicy p;p.role=ProcessRole::Tool;p.workspace=root;p.writable=write;p.unsafe=unrestricted;return p;}
   static ProcessPolicy network(){ProcessPolicy p;p.role=ProcessRole::Network;return p;}
@@ -94,10 +97,11 @@ public:
     if(!unsafe){if(!fs::exists("/usr/bin/sandbox-exec")){error="sandbox-exec missing";return false;}
       auto quote=[](const std::string& value){std::string out="\"";for(char c:value){if(c=='\\'||c=='"')out+='\\';out+=c;}return out+'"';};
       std::string profile="(version 1)(deny default)(allow process-exec)(allow sysctl-read)(allow file-read-metadata)(allow file-read-data (literal \"/\"))(allow signal (target children))";
-      if(policy.role!=ProcessRole::Frontend)profile+="(allow process-fork)";
+      if(policy.role!=ProcessRole::Frontend&&!policy.no_fork)profile+="(allow process-fork)";
       for(const auto& path:reads)if(fs::exists(path,ec)){auto real=fs::canonical(path,ec);if(!ec)profile+="(allow file-read* (subpath "+quote(real.string())+"))";}
       for(const auto& path:writes){auto real=fs::weakly_canonical(path,ec);if(!ec)profile+="(allow file-read* file-write* (subpath "+quote(real.string())+"))";}
       if(policy.role!=ProcessRole::Network)profile+="(deny file-read* file-write* (require-all (subpath "+quote(execution.private_dir.string())+") (require-not (subpath "+quote(scratch.string())+"))))";
+      for(const auto& path:process_protected_paths)profile+="(deny file-read* file-write* (subpath "+quote(path.string())+"))";
       profile+="(allow file-write-data (literal \"/dev/null\"))";
       auto protected_path=[&](const fs::path& path){auto real=fs::weakly_canonical(path);return quote(real.string());};
       const auto home=getenv_or("HOME");const auto credentials=fs::path(getenv_or("CODEX_CPP_HOME",home+"/.codex-cpp"))/"auth.json";profile+="(deny file-read* file-write* (subpath "+protected_path(credentials)+"))";for(const auto& secret:{fs::path(home)/".ssh",fs::path(home)/".aws",fs::path(home)/".codex/auth.json",fs::path(home)/".codex-cpp/auth.json",fs::path(home)/"Library/Keychains"})profile+="(deny file-read* file-write* (subpath "+protected_path(secret)+"))";
@@ -110,6 +114,7 @@ public:
       if(policy.role==ProcessRole::Network)wrapped.push_back("--share-net");
       for(const auto& path:reads)if(fs::exists(path,ec)){wrapped.insert(wrapped.end(),{"--ro-bind",path.string(),path.string()});}
       for(const auto& path:writes)wrapped.insert(wrapped.end(),{"--bind",path.string(),path.string()});
+      for(const auto& path:process_protected_paths)if(within_root(workspace,path)&&fs::exists(path,ec))wrapped.insert(wrapped.end(),{"--tmpfs",path.string(),"--remount-ro",path.string()});
       wrapped.insert(wrapped.end(),{"--chdir",cwd.string(),"--"});wrapped.insert(wrapped.end(),command.begin(),command.end());command=std::move(wrapped);}
 #elif defined(_WIN32)
     if(!unsafe){error="DENIED: Windows AppContainer backend unavailable";return false;}
@@ -189,7 +194,7 @@ public:
 #if defined(_WIN32)
     if(job){CloseHandle(job);job=nullptr;}if(process){TerminateProcess(process,1);wait(1000);}if(output){CloseHandle(output);output=nullptr;}
 #else
-    if(pid>0){::kill(-pid,SIGTERM);if(wait(200)<0&&pid>0){::kill(-pid,SIGKILL);wait(1000);}}if(output>=0){::close(output);output=-1;}
+    if(pid>0){::kill(-pid,SIGTERM);::kill(pid,SIGTERM);if(wait(200)<0&&pid>0){::kill(-pid,SIGKILL);::kill(pid,SIGKILL);wait(1000);}}if(output>=0){::close(output);output=-1;}
 #endif
     std::error_code ec;if(!scratch.empty()){fs::remove_all(scratch,ec);scratch.clear();}
   }

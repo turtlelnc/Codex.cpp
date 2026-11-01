@@ -104,7 +104,8 @@ static void penguin_load_manifest(const fs::path& path){
   penguin_runtime().mount(std::move(module));
   penguin_tools.insert(penguin_tools.end(),tools.begin(),tools.end());if(web)penguin_web_modules.push_back(*web);
 }
-static void penguin_boot(){penguin_builtins();for(const auto& path:penguin_manifests)penguin_load_manifest(fs::u8path(path));penguin_runtime().freeze();}
+static void penguin_load_reviewed(const fs::path& path,const std::string& fingerprint);
+static void penguin_boot(){penguin_builtins();for(const auto& path:penguin_manifests){auto review=penguin_reviews.find(path);if(review!=penguin_reviews.end())penguin_load_reviewed(fs::u8path(path),review->second);else penguin_load_manifest(fs::u8path(path));}penguin_runtime().freeze();}
 class PenguinTool final:public ToolRuntime{
   PenguinToolDefinition definition_;
 public:explicit PenguinTool(PenguinToolDefinition definition):definition_(std::move(definition)){}

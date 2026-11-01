@@ -350,9 +350,10 @@ function creatorReviewCard(data, probe) {
   node.append(el('strong', 'Penguin · ' + data.id));
   const probed = probe?.status === 'native_probe_passed' && JSON.stringify(probe.sha256) === JSON.stringify(data.sha256);
   const status = data.kind === 'native'
-    ? !data.built ? '等待构建 · 未启用' : probed ? '隔离加载测试通过 · 功能仍待验证 · 未启用' : '静态检查通过 · 尚未测试原生加载'
-    : '静态检查通过 · 界面行为尚未验证 · 未启用';
+    ? !data.built ? '等待构建 · 未启用' : probed ? '隔离加载测试通过 · 功能仍待验证 · 未启用' : '静态结构检查通过 · 尚未测试原生加载'
+    : '静态结构检查通过 · 界面行为尚未验证 · 未启用';
   node.append(el('p', data.enabled ? status.replace('未启用', '同 ID 模组已加载，更改需重启') : status), el('p', data.kind === 'native' ? '原生插件拥有宿主权限；请审阅源代码和实际功能，再手动重启启用。多人服务由管理员配置。' : '网页插件可访问当前会话；请审阅并验证界面，再手动重启启用。多人服务由管理员配置。'));
+  if (data.review_sha256) node.append(el('p', '审阅指纹 ' + data.review_sha256.slice(0, 16) + '… · 启动时校验 · 不代表安全审查或启用授权'));
   const actions = el('div', undefined, 'creator-actions');
   const inspect = el('button', '查看清单'); inspect.type = 'button';
   inspect.onclick = () => openFile(data.manifest_relative).catch(error => notice(error.message));
@@ -654,6 +655,11 @@ function buildChat(snap, wasBusy = false) {
   const pending = snap.pending;
   const creatorChecks = new Map(), creatorProbes = new Map();
   for (const [index, row] of rows.entries()) {
+    if (row.name === 'penguin_build') {
+      // Even an identical rebuild needs a fresh check/probe; a failed build
+      // may have removed its previous artifact. Do not advertise old results.
+      creatorChecks.clear(); creatorProbes.clear();
+    }
     const data = creatorReport(row);
     if (data && row.name === 'penguin_check') creatorChecks.set(data.manifest, index);
     if (row.name === 'penguin_test' && row.output != null) {

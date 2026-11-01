@@ -118,6 +118,7 @@ return "cd " + shell_quote(root.string())+ " && ";
 #endif
 }
 static std::optional<std::string> external_hardlink_risk(const fs::path& root);
+static bool within_root(const fs::path& root,const fs::path& target);
 #include "codex_process.inc"
 static fs::path temp_path_in(const fs::path& dir,const char* stem){for(int attempt=0;attempt<10;++attempt){ fs::path p=dir/(std::string(stem)+"-"+random_id("tmp"));
 #if !defined(_WIN32)
@@ -173,6 +174,7 @@ static bool within_root(const fs::path& root,const fs::path& target){std::error_
 if(fs::exists(target,ec))t = fs::weakly_canonical(target,ec);else t = fs::weakly_canonical(target.parent_path(),ec)/ target.filename();if(ec)return false;
 auto ri = r.begin(),ti = t.begin();for(;ri != r.end();++ri,++ti)if(ti == t.end()|| *ri != *ti)return false;return true; }
 static bool sensitive_path(const fs::path& path){const auto home=fs::path(getenv_or("HOME",getenv_or("USERPROFILE")));std::vector<fs::path> denied={execution.private_dir,home/".ssh",home/".aws",home/".codex/auth.json",home/"Library/Keychains",fs::path(getenv_or("CODEX_CPP_HOME",(home/".codex-cpp").string()))/"auth.json"};
+  denied.insert(denied.end(),process_protected_paths.begin(),process_protected_paths.end());
   for(const auto& base:denied)if(!base.empty()&&within_root(base,path))return true;return false;}
 // A path-only sandbox can permit writes through a hardlink in the workspace
 // whose other name lives outside it. Count all names of each inode in the
@@ -799,6 +801,7 @@ Usage:
 
 Penguin modules (before the command/options):
   --penguin /absolute/penguin.json  load a trusted native/WebUI bundle; repeatable
+  --penguin-reviewed /absolute/penguin.json SHA256  verify Creator review and load a private snapshot
   penguin inspect                  show active service owners and replacement layers
   penguin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
   penguin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
