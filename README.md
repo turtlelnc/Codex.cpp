@@ -260,6 +260,51 @@ Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本�
 
 内置 `plugin-creator` Skill 与脚手架、构建、检查、隔离测试工具。可以直接要求 Agent 制作 Plugin 插件；完成后在对话中审阅文件与测试结果，再手动重启启用。程序内嵌 SDK，不需要项目源码。原生构建需要 CMake/C++17；Windows 暂不支持自动沙箱构建/探测。详见 [Creator 工作流](docs/PLUGIN_CREATOR.md)。
 
+## 便携数据、更新与分享
+
+同一份数据可在不同设备间迁移；程序仍按操作系统和 CPU 分别编译，不修改可执行文件来保存账户。前缀选项必须放在子命令及其他选项之前：
+
+```sh
+./codex-cpp --portable-dir ./codex-data --portable-project my-repo
+./codex-cpp --portable-dir ./codex-data --portable-project my-repo web --port 9080
+```
+
+账户及提供商配置在数据目录的 `user/`，会话在 `projects/<ID>/`。跨设备使用相同项目 ID 可找回会话；不同项目请用不同 ID。省略 ID 时按工作区绝对路径生成标识。工程源码不包含在数据包中，需要另行复制或克隆。便携模式仅支持本地运行，多人 `serve` 继续使用独立的 `--state-dir`。
+
+```sh
+# 普通导出不包含账户及提供商配置，但会话和插件本身仍可能含敏感信息
+./codex-cpp --portable-dir ./codex-data portable export ./profile.pack
+# 设置 PACK_PASSWORD 环境变量后，导出含凭据的加密包（不要把密码写进命令行）
+./codex-cpp --portable-dir ./codex-data portable export ./private.pack --include-credentials --password-env PACK_PASSWORD
+# 导入目的目录必须不存在；错误密码、篡改或路径冲突不会覆盖已有数据
+./codex-cpp --portable-dir ./restored-data portable import ./private.pack --password-env PACK_PASSWORD
+```
+
+加密传输包使用 PBKDF2-HMAC-SHA256（600000 次）与 AES-256-GCM；运行时数据目录仍是明文，**尚未实现启动密码或磁盘静态加密**。导入会禁用插件，并把自动启动的 MCP 配置移至 `user/mcp.imported.json`，审核后再手动恢复。导出需要先停止使用此数据目录的程序；限制 4096 个文件、总计 128 MiB，不跟随链接，不覆盖已有包。请保护环境变量和解密后的目录。
+
+TUI 中 `/web` 启动本机 WebUI 并打开浏览器，`/web start` 只显示地址，`/web status` 查看状态，`/web stop` 返回终端。两者共享已保存会话；这不是正在执行任务的实时移交。网页运行期间暂停终端任务，停止后重新读取会话。
+
+```sh
+./codex-cpp --portable-dir ./codex-data update check
+./codex-cpp --portable-dir ./codex-data update download       # 可追加指定 Release tag
+./codex-cpp --portable-dir ./codex-data update status
+./codex-cpp --portable-dir ./codex-data update install --yes  # 关闭所有使用该目录的程序后执行
+./codex-cpp --portable-dir ./codex-data update rollback --yes
+```
+
+交互模式可用 `/update check`、`/update download` 在后台查询或下载，`/update status` 查看结果。下载不会执行或安装；`/update install` 需确认后退出再安装。只从官方仓库 Release 选择匹配平台、CPU 和运行库的资产，校验 HTTPS、大小及 GitHub SHA-256。**这不是独立发布者签名验证**；信任仍包括 GitHub 仓库和发布账户。旧版本若不支持便携格式握手，会拒绝安装。
+
+安装前再次校验缓存与目标，保留同目录备份，数据目录不被替换；元数据写入失败会尝试恢复旧程序，断电恢复凭据也会保留。Windows 通过退出后的辅助进程替换程序。请通过 `update status` 确认最终结果；备份和辅助程序暂不自动清理。不同设备不要同时写入同一个同步目录，文件锁不是分布式同步协议。
+
+插件可静态打包分享，不会在导入时执行或自动启用：
+
+```sh
+./codex-cpp plugin export ./my-plugin ./my-plugin.pack
+./codex-cpp plugin import ./my-plugin.pack ./imported-plugin
+```
+
+分享包校验用于完整性，不证明作者身份或安全性。原生库只能用于对应平台，其他平台需重新构建；启用原生插件仍代表信任其具有宿主进程权限。
+
 ## 验证
 
 Node.js 仅用作测试运行器，正式运行不需要它：

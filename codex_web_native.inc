@@ -380,7 +380,7 @@ struct Workspace {
 #if !defined(_WIN32)
   int open_file(const std::string &name, int mode, bool internal = false) {
     fs::path relative(name);
-    require(!relative.empty() && !relative.is_absolute() && (internal || !blocked(relative)),
+    require(!relative.empty() && !relative.is_absolute() && (internal || (!blocked(relative)&&!sensitive_path(root/relative))),
             "Workspace path denied");
     int fd = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     require(fd >= 0, "Cannot open workspace");
@@ -407,7 +407,7 @@ struct Workspace {
   HANDLE checked_handle(const std::string &name, DWORD access, DWORD share, bool internal = false) {
     auto relative = fs::u8path(name);
     require(!relative.empty() && !relative.is_absolute() && !relative.has_root_name() &&
-                (internal || !blocked(relative)),
+                (internal || (!blocked(relative)&&!sensitive_path(root/relative))),
             "Workspace path denied");
     for (const auto &part : relative)
       require(part != "..", "Workspace path denied");
@@ -544,7 +544,7 @@ struct Workspace {
         if (++visited > 10000 || names.size() >= 5000)
           break;
         auto relative = prefix + name;
-        if (blocked(fs::path(relative)))
+        if (blocked(fs::path(relative)) || sensitive_path(root/fs::u8path(relative)))
           continue;
         struct stat info{};
         if (fstatat(dirfd(dir), name.c_str(), &info, AT_SYMLINK_NOFOLLOW))
@@ -570,7 +570,7 @@ struct Workspace {
       if (ec)
         break;
       auto attributes = GetFileAttributesW(it->path().c_str());
-      if (fs::is_symlink(status) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) || blocked(rel) ||
+      if (fs::is_symlink(status) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) || blocked(rel) || sensitive_path(it->path()) ||
           it.depth() > 64) {
         it.disable_recursion_pending();
         continue;
@@ -934,7 +934,7 @@ struct App {
     private_dir(home);
     auth_home = isolated_credentials ? home / "agent-home" : home;
     private_dir(auth_home);
-    state_path = home / ("web-" + digest(workspace.root.generic_u8string()).substr(0, 24) + ".json");
+    state_path = home / ("web-" + (portable_config.root.empty()?digest(workspace.root.generic_u8string()).substr(0,24):portable_project_key(workspace.root)) + ".json");
     registry_path = home / "web-providers.json";
     auto saved = read_json(state_path);
     sid = text(saved, "session_id");
@@ -1046,13 +1046,17 @@ struct App {
       args.insert(args.end(), {"--reasoning", options.reasoning_effort});
     return args;
   }
+  std::string session_read(const std::string& name){
+    require(!name.empty()&&name.find_first_of("/\\:")==std::string::npos&&name.find("..") == std::string::npos,"Invalid session filename");
+    return portable_config.root.empty()?workspace.read(".codex_cpp/sessions/"+name,true):read_bytes(project_state_root(workspace.root)/"sessions"/fs::u8path(name));
+  }
   J journal() {
     std::vector<J> rows;
     if (sid.empty())
       return arr();
     std::string cache_key;
     std::error_code cache_error;
-    auto file = workspace.root / ".codex_cpp/sessions" / (sid + ".items.jsonl");
+    auto file = project_state_root(workspace.root) / "sessions" / (sid + ".items.jsonl");
     auto stamp = fs::last_write_time(file, cache_error);
     if (!cache_error) {
       // libc++ may use a 128-bit filesystem clock representation. Split the
@@ -1068,7 +1072,7 @@ struct App {
     }
     std::string source;
     try {
-      source = workspace.read(".codex_cpp/sessions/" + sid + ".items.jsonl", true);
+      source = session_read(sid + ".items.jsonl");
     } catch (...) {
       return arr();
     }
@@ -1119,7 +1123,7 @@ struct App {
   J sessions() {
     std::vector<J> result;
     std::error_code ec;
-    auto directory = workspace.root / ".codex_cpp/sessions";
+    auto directory = project_state_root(workspace.root) / "sessions";
     if (fs::is_symlink(directory) || fs::is_symlink(directory.parent_path()))
       return arr();
     for (fs::directory_iterator it(directory, ec), end; it != end && !ec; it.increment(ec)) {
@@ -1128,7 +1132,7 @@ struct App {
         continue;
       std::string title = id;
       try {
-        auto metadata = parse_json(workspace.read(".codex_cpp/sessions/" + id + ".meta.json", true));
+        auto metadata = parse_json(session_read(id + ".meta.json"));
         if (metadata)
           title = text(*metadata, "name", id);
       } catch (...) {
@@ -1139,7 +1143,7 @@ struct App {
           title = found->second;
         else
           try {
-            std::istringstream input(workspace.read(".codex_cpp/sessions/" + id + ".items.jsonl", true));
+            std::istringstream input(session_read(id + ".items.jsonl"));
             std::string line;
             while (std::getline(input, line)) {
               auto item = parse_json(line);
@@ -1350,7 +1354,7 @@ struct App {
       auto call_id = text(request, "call_id");
       require(!call_id.empty() && call_id.size() <= 256, "Invalid tool call ID");
       // Read only the current App's journal, preserving hosted scope/membership checks.
-      std::istringstream input(workspace.read(".codex_cpp/sessions/" + sid + ".items.jsonl", true));
+      std::istringstream input(session_read(sid + ".items.jsonl"));
       std::string line;
       J result = obj();
       bool found = false;
@@ -1543,7 +1547,7 @@ struct App {
       auto id = value.kind == J::Null ? "" : value.str();
       require(id.empty() || identifier(id), "Invalid session ID");
       if (!id.empty())
-        workspace.read(".codex_cpp/sessions/" + id + ".items.jsonl", true);
+        session_read(id + ".items.jsonl");
       sid = id;
       messages = arr();
       events = arr();
@@ -2033,9 +2037,11 @@ int main(int argc, char **argv) {
     argc = wide_count;
     argv = native_pointers.data();
 #endif
+    std::vector<char*> portable_argument_storage;portable_arguments(argc,argv,portable_argument_storage);
     plugin_arguments(argc, argv, plugin_argument_storage);
     std::string override_root;
     std::string operation = argc > 1 ? argv[1] : "web", host, origin, add_user, revoke_user;
+    require(operation!="serve"||portable_config.root.empty(),"Portable profiles are local-only; hosted services require their own state-dir");
     int port = 8765;
     auto self = executable(argv[0]);
     fs::path home = own_auth_path().parent_path(), state, assets;
