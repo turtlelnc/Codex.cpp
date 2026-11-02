@@ -311,6 +311,27 @@ function encrypted(entries, password) {
       fs.readFileSync(path.join(workspace, "share-source", "client.js"), "utf8"),
     );
     run(["plugin", "import", share, path.join(workspace, "share-import")], 2);
+    run(["plugin", "scaffold", "native-share-source", "native-share", "native"]);
+    const nativeSource = path.join(workspace, "native-share-source");
+    const nativeManifest = JSON.parse(
+      fs.readFileSync(path.join(nativeSource, "plugin.json"), "utf8"),
+    );
+    const foreign = process.platform === "linux" ? "windows" : "linux";
+    const library = nativeManifest.libraries[foreign];
+    fs.mkdirSync(path.dirname(path.join(nativeSource, library)), { recursive: true });
+    fs.writeFileSync(
+      path.join(nativeSource, library),
+      "foreign-platform-library-fixture-never-executed",
+    );
+    const nativePack = path.join(root, "native-share.pack");
+    run(["plugin", "export", nativeSource, nativePack]);
+    const nativeDest = path.join(workspace, "native-share-import");
+    run(["plugin", "import", nativePack, nativeDest]);
+    assert.equal(
+      fs.readFileSync(path.join(nativeDest, library), "utf8"),
+      "foreign-platform-library-fixture-never-executed",
+    );
+    assert.equal(JSON.parse(run(["plugin", "check", "native-share-import"]).stdout).enabled, false);
     console.log(
       "PASS real portable session relocation/locks, cross-path project identity, credentials exclusion, independent Node AES-GCM interoperability and Unicode passwords, tamper/wrong-password/path/collision/no-overwrite rejection, plugin/MCP quarantine, executable modes and non-activating Plugin sharing",
     );
