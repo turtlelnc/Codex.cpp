@@ -37,3 +37,5 @@
 - macOS 自动 Creator 构建改为固定的系统 clang++/codesign，只编译 plugin.cpp，不运行 CMake 钩子；恶意钩子后台执行测试必须不产生标记文件。不再将通用恶意脚本树清理作为自动构建安全前提。手动 shell 的通用 daemon 监管仍是原架构限制。
 - assets 显式声明额外运行资源，绑定指纹并保留相对目录；新增资源替换拒绝与探测回归。
 - Linux Release 增加 glibc native 变体，保留静态 musl 版本。Windows AppContainer 以及原生模块正式运行完整宿主权限属于仍保留的架构限制。
+
+发布构建进一步验证并修复了实际平台差异：macOS 调用 xcode-select 选定的工具链真实 clang++/SDK，跳过会初始化 IDE 插件的 /usr/bin 启动桩；隔离探测接收父进程预先打开的只读目录句柄，校验设备/inode 后按目录句柄读取，保留相对路径的 no-follow/硬链接检查，不授予 /private 等祖先目录的数据读取权限。探测子进程还必须匹配原审阅 pin，不能为已被替换的暂存文件重新计算信任。发布依赖固定使用内置 PCRE，macOS TLS 库从校验摘要的源码按 macOS 12 目标构建，而非链接面向更新宿主系统的 Homebrew 归档。

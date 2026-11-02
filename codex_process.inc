@@ -7,6 +7,7 @@ static std::vector<fs::path> process_protected_paths;
 struct ProcessPolicy{
   ProcessRole role=ProcessRole::Helper;fs::path workspace;bool writable=false,unsafe=false,no_fork=false;
   std::vector<fs::path> reads,writes;
+  fs::path pinned_directory; // Trusted Creator capability, never selected by RPC.
   static ProcessPolicy tool(const fs::path& root,bool write,bool unrestricted=false){ProcessPolicy p;p.role=ProcessRole::Tool;p.workspace=root;p.writable=write;p.unsafe=unrestricted;return p;}
   static ProcessPolicy network(){ProcessPolicy p;p.role=ProcessRole::Network;return p;}
 };
@@ -94,6 +95,9 @@ public:
 #endif
     if(policy.role==ProcessRole::Network)for(const char* key:{"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","http_proxy","https_proxy","all_proxy","no_proxy"})if(const char* value=std::getenv(key))env.push_back(std::string(key)+"="+value);
 #if defined(__APPLE__)
+    if(!policy.pinned_directory.empty())env.push_back("CODEX_CPP_CREATOR_DIRFD=3");
+#endif
+#if defined(__APPLE__)
     if(!unsafe){if(!fs::exists("/usr/bin/sandbox-exec")){error="sandbox-exec missing";return false;}
       auto quote=[](const std::string& value){std::string out="\"";for(char c:value){if(c=='\\'||c=='"')out+='\\';out+=c;}return out+'"';};
       std::string profile="(version 1)(deny default)(allow process-exec)(allow sysctl-read)(allow file-read-metadata)(allow file-read-data (literal \"/\"))(allow signal (target children))";
@@ -138,14 +142,16 @@ public:
     int incoming[2],outgoing[2];if(::pipe(incoming)!=0){error="pipe failed";return false;}if(::pipe(outgoing)!=0){::close(incoming[0]);::close(incoming[1]);error="pipe failed";return false;}
     std::vector<char*> argv,environment;for(auto& arg:command)argv.push_back(arg.data());argv.push_back(nullptr);for(auto& item:env)environment.push_back(item.data());environment.push_back(nullptr);
 #if defined(__APPLE__)
+    int directory_fd=-1;if(!policy.pinned_directory.empty()){directory_fd=::open(policy.pinned_directory.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(directory_fd<0){::close(incoming[0]);::close(incoming[1]);::close(outgoing[0]);::close(outgoing[1]);error="Cannot pin Creator directory";return false;}}
     posix_spawnattr_t attributes;posix_spawnattr_init(&attributes);posix_spawnattr_setflags(&attributes,POSIX_SPAWN_CLOEXEC_DEFAULT|POSIX_SPAWN_SETPGROUP);posix_spawnattr_setpgroup(&attributes,0);
     posix_spawn_file_actions_t actions;posix_spawn_file_actions_init(&actions);posix_spawn_file_actions_adddup2(&actions,incoming[0],STDIN_FILENO);posix_spawn_file_actions_adddup2(&actions,outgoing[1],STDOUT_FILENO);
     if(merge_stderr)posix_spawn_file_actions_adddup2(&actions,outgoing[1],STDERR_FILENO);else posix_spawn_file_actions_addopen(&actions,STDERR_FILENO,"/dev/null",O_WRONLY,0);
+    if(directory_fd>=0)posix_spawn_file_actions_adddup2(&actions,directory_fd,3);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     posix_spawn_file_actions_addchdir_np(&actions,cwd.c_str());
 #pragma clang diagnostic pop
-    const int spawned=posix_spawn(&pid,argv.front(),&actions,&attributes,argv.data(),environment.data());posix_spawn_file_actions_destroy(&actions);posix_spawnattr_destroy(&attributes);if(spawned){pid=-1;error=std::strerror(spawned);}
+    const int spawned=posix_spawn(&pid,argv.front(),&actions,&attributes,argv.data(),environment.data());if(directory_fd>=0)::close(directory_fd);posix_spawn_file_actions_destroy(&actions);posix_spawnattr_destroy(&attributes);if(spawned){pid=-1;error=std::strerror(spawned);}
 #else
     const long maximum=::sysconf(_SC_OPEN_MAX);pid=::fork();if(pid==0){::setsid();::dup2(incoming[0],STDIN_FILENO);::dup2(outgoing[1],STDOUT_FILENO);if(merge_stderr)::dup2(outgoing[1],STDERR_FILENO);else{int quiet=::open("/dev/null",O_WRONLY);if(quiet>=0)::dup2(quiet,STDERR_FILENO);}
 #ifdef SYS_close_range

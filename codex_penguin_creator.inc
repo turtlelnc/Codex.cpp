@@ -50,7 +50,13 @@ static std::string creator_read(const fs::path& root,const std::string& relative
   const int directory_flags=O_RDONLY|O_DIRECTORY|O_CLOEXEC;
 #endif
   struct Fd{int value;~Fd(){if(value>=0)::close(value);}} directory{::open("/",directory_flags)};
-  if(directory.value<0)throw std::runtime_error("Cannot open review root");std::vector<fs::path> parts;for(const auto& part:path.relative_path())parts.push_back(part);
+  if(directory.value<0)throw std::runtime_error("Cannot open review root");std::vector<fs::path> parts;bool pinned=false;
+#if defined(__APPLE__)
+  if(getenv_or("CODEX_CPP_CREATOR_DIRFD")=="3"){
+    struct stat handle{},target{};if(::fstat(3,&handle)==0&&::stat(root.c_str(),&target)==0&&S_ISDIR(handle.st_mode)&&handle.st_dev==target.st_dev&&handle.st_ino==target.st_ino){const int fd=::fcntl(3,F_DUPFD_CLOEXEC,4);if(fd<0)throw std::runtime_error("Cannot duplicate Creator directory capability");::close(directory.value);directory.value=fd;pinned=true;}
+  }
+#endif
+  for(const auto& part:pinned?fs::u8path(relative):path.relative_path())parts.push_back(part);
   for(size_t i=0;i<parts.size();++i){const bool last=i+1==parts.size();Fd next{::openat(directory.value,parts[i].c_str(),O_NOFOLLOW|(last?(O_RDONLY|O_CLOEXEC|O_NONBLOCK):directory_flags))};
     if(next.value<0)throw std::runtime_error("Cannot open review file/directory (links rejected): "+parts[i].u8string()+": "+std::strerror(errno));
     if(last){struct stat info{};if(::fstat(next.value,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||info.st_size<0||static_cast<uint64_t>(info.st_size)>limit)throw std::runtime_error("Invalid review file");
@@ -186,7 +192,7 @@ static ToolResult creator_test(const fs::path& root,const std::string& path,cons
   const auto manifest=fs::u8path(penguin_text(report,"manifest"));const auto fingerprints=report.get("sha256");
   CreatorSnapshot snapshot;const auto directory=snapshot.path;std::string error;
   for(const auto& entry:captured)if(!write_all(directory/fs::u8path(entry.first),entry.second,error))throw std::runtime_error(error);
-  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;auto tested=creator_process({penguin_creator_self.u8string(),"--penguin",(directory/manifest.filename()).u8string(),"penguin","inspect"},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==penguin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
+  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;policy.pinned_directory=fs::canonical(directory);auto tested=creator_process({penguin_creator_self.u8string(),"--penguin-reviewed",(directory/manifest.filename()).u8string(),penguin_text(report,"review_sha256"),"penguin","inspect"},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==penguin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
   if(json_dump(creator_check(root,path).fields.at("sha256"))!=json_dump(*fingerprints))throw std::runtime_error("Plugin changed during probe; rerun verification");
   report.fields["status"]=penguin_string("native_probe_passed");report.fields["native_executed"]=penguin_bool(true);report.fields["probe_scope"]=penguin_string("read-only isolated subprocess; ABI registration only");report.fields["notes"]=penguin_string("ABI registration passed in an isolated process. Tool/UI behavior remains unverified; plugin is not enabled in this service.");return {0,json_dump(report)};
 }catch(const std::exception& e){return {2,e.what()};}}
