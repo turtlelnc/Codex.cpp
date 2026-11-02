@@ -74,6 +74,7 @@ async function wait(fn) {
       return { status: response.status, body: await response.text() };
     });
     assert.equal(result.status, 400, result.body);
+    assert.match(result.body, /Workspace path denied/);
     assert(!result.body.includes("PRIVATE_TEST_SECRET"));
     await page.reload();
     await page.locator("#prompt").waitFor();
