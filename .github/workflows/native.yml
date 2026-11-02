@@ -49,8 +49,21 @@ jobs:
         run: node tests/plugin_integration.cjs build/Release/codex-cpp.exe build/plugin-demo/Release/plugin.json
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Verify portable profile and executable update lifecycle
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; fi
+          node tests/portable_data_test.cjs "$binary"
+          node tests/portable_update_test.cjs "$binary"
       - name: Build Creator lifecycle regression harness
         run: cmake --build build --config Release --target codex-self-test --parallel 2
+      - name: Verify updater HTTPS, cancellation and partial cleanup
+        shell: bash
+        run: |
+          binary=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-self-test.exe; fi
+          node tests/portable_download_test.cjs "$binary"
       - if: runner.os != 'Windows'
         run: ./build/codex-self-test --creator-process-checks "${{ runner.temp }}/creator-lifecycle"
       - if: runner.os == 'Windows'
@@ -155,6 +168,8 @@ jobs:
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/plugin_creator_browser_test.cjs build/codex-cpp
+      - name: Verify portable WebUI bridge in Chromium
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/portable_web_test.cjs build/codex-cpp
       - name: Verify manual-trust startup also freezes worker resources
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser-legacy

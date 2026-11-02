@@ -5,7 +5,7 @@ struct WebReply { long status=0; std::string body,error; std::map<std::string,st
 static WebReply native_http(const std::string& url,const std::string& body,
     const std::vector<std::string>& headers,bool get=false,
     const std::function<void(const char*,size_t)>& on_bytes={},
-    const std::function<void()>& on_tick={},bool watch_escape=false) {
+    const std::function<void()>& on_tick={},bool watch_escape=false,bool honor_interrupt=true) {
   static const bool initialized=[](){return curl_global_init(CURL_GLOBAL_DEFAULT)==CURLE_OK;}();
   WebReply reply;if(!initialized){reply.error="HTTP initialization failed";return reply;}
   auto easy=curl_easy_init();auto multi=curl_multi_init();curl_slist* list=nullptr;
@@ -56,7 +56,7 @@ static WebReply native_http(const std::string& url,const std::string& body,
   int running=0;CURLMcode code;
   do {
 #if !defined(_WIN32)
-    if(tui_interrupt_requested){reply.error="Interrupted by Ctrl+C";break;}
+    if(honor_interrupt&&tui_interrupt_requested){reply.error="Interrupted by Ctrl+C";break;}
 #endif
     if(watch_escape&&busy_input&&busy_input("",0)){reply.error="Interrupted by Esc";break;}
     code=curl_multi_perform(multi,&running);
