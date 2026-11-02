@@ -331,6 +331,7 @@ bool needs_write_approval()const{return approval == ApprovalPolicy::OnRequest &&
 std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N] ")<< std::flush;std::string s;std::getline(std::cin,s);s = trim(s);
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
 // ---------- rollout/session ----------
+namespace portable{struct Lease;}// Per-session exclusive lock; implemented with the portable data lease.
 static std::function<void(const std::string&)> session_observer;
 enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelReasoningDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
@@ -338,7 +339,7 @@ static const char* event_name(EventKind k){switch(k){case EventKind::SessionStar
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
-return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript;
+return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript;std::unique_ptr<portable::Lease> lease;void release_lock();
 std::vector<std::string> items;// Responses input items, one JSON object per journal line
 size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size();size_t pos=0;
   while((pos=item.find("data:image/",pos))!=std::string::npos){const size_t end=item.find('"',pos);if(end==std::string::npos)break;
@@ -357,7 +358,8 @@ bool record_item(const std::string& item){try{auto value=parse_json(item);if(!va
 bool replace_items(const std::vector<std::string>& compacted){try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
   auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
-    const fs::path staged=items_path.string()+".new";{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
+    // Unique staging name so concurrent writers never share a temporary file.
+    const fs::path staged=items_path.string()+"."+random_id("journal-new");{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
     std::error_code ec;fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
   });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);return true;
   }catch(...){return false;}}
@@ -386,19 +388,24 @@ bool close_unconfirmed_calls(){
   return true;
 }
 };
-static bool init_session(Session& s,const fs::path& root,bool echo_json,const std::optional<std::string>& resume,std::string& err){
+static bool lock_session(Session& s,Session* previous,std::string& err);static void unlock_session(Session& s,Session* previous);// defined after the portable lease is included
+static bool init_session(Session& s,const fs::path& root,bool echo_json,const std::optional<std::string>& resume,std::string& err,Session* previous = nullptr){
 s.items.clear();s.transcript.clear();s.root = root;s.dir = project_state_root(root) / "sessions";std::error_code ec;fs::create_directories(s.dir,ec);
 if(ec){err = "cannot create session dir: " + ec.message();return false;}s.echo_json = echo_json;s.id = resume ? *resume : random_id("session");
 s.events_path = s.dir /(s.id + ".jsonl");s.transcript_path = s.dir /(s.id + ".transcript");s.items_path = s.dir /(s.id + ".items.jsonl");
-s.meta_path = s.dir /(s.id + ".meta.json");if(resume){if(s.id.empty()|| s.id=="." || s.id==".." ||
-  s.id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos){err="invalid session ID";return false; }
-  if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;return false;}if(fs::exists(s.transcript_path))s.transcript = slurp(s.transcript_path,2'000'000);
+s.meta_path = s.dir /(s.id + ".meta.json");
+if(resume&&(s.id.empty()|| s.id=="." || s.id==".." ||
+  s.id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos)){err="invalid session ID";return false; }
+// One process owns an open session: concurrent resumes must not interleave
+// transcript rewrites or journal compaction.
+if(!lock_session(s,previous,err))return false;
+if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = slurp(s.transcript_path,2'000'000);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
-    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";return false;}s.items.push_back(line);
+    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";unlock_session(s,previous);return false;}s.items.push_back(line);
   }
-  if(!f.eof()){err="could not read session item journal";return false;} }else if(!s.transcript.empty()){
+  if(!f.eof()){err="could not read session item journal";unlock_session(s,previous);return false;} }else if(!s.transcript.empty()){
   // Upgrade old flat transcripts once; subsequent turns use typed items.
-  if(!s.record_item("{\"role\":\"user\",\"content\":\""+json_escape(s.transcript)+"\"}")){err="could not migrate session transcript";return false; } }
+  if(!s.record_item("{\"role\":\"user\",\"content\":\""+json_escape(s.transcript)+"\"}")){err="could not migrate session transcript";unlock_session(s,previous);return false; } }
   s.emit(EventKind::SessionResumed,"{\"cwd\":\"" + json_escape(root.string())+ "\"}");
 }else{
   std::ofstream meta(s.meta_path,std::ios::binary | std::ios::trunc);if(meta)meta << "{\"id\":\"" << json_escape(s.id)<< "\",\"created_at\":\""
@@ -965,6 +972,18 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_portable.inc"
 #include "codex_update.inc"
 #include "codex_local_web.inc"
+// Session locks use the portable Lease implementation, so they are defined here.
+void Session::release_lock(){lease.reset();}
+static bool lock_session(Session& s,Session* previous,std::string& err){
+  try{
+    if(previous&&previous->id==s.id&&previous->lease)s.lease=std::move(previous->lease);
+    else s.lease=std::make_unique<portable::Lease>(s.dir,true,(s.id+".lock").c_str(),"Session is in use by another process; stop it before resuming");
+    return true;
+  }catch(const std::exception& e){err=e.what();return false;}
+}
+static void unlock_session(Session& s,Session* previous){
+  if(s.lease&&previous&&previous->id==s.id)previous->lease=std::move(s.lease);else s.lease.reset();
+}
 int main(int argc,char** argv){
 #if defined(_WIN32)
   // Native module paths, like WebUI paths, must not depend on the ANSI code page.
@@ -1193,7 +1212,7 @@ if(frontend){frontend->state=[&](){const auto transcript=session.transcript.size
     return "{\"session_id\":\""+json_escape(session.id)+"\",\"model\":\""+json_escape(api.model)+"\",\"workspace\":\""+json_escape(opt.root.string())+"\",\"busy\":"+(frontend->busy?"true":"false")+",\"isolated\":"+(execution.unsafe?"false":"true")+",\"transcript\":\""+json_escape(transcript)+"\",\"columns\":"+std::to_string(terminal_columns())+",\"rows\":"+std::to_string(terminal_rows()>2?terminal_rows()-2:0)+"}";};
   frontend->dispatch=[&](const std::string& method,const Json& params)->std::string{
     if(method=="session.list"){std::string out="[";for(const auto& id:session_ids(opt.root)){if(out.size()>1)out+=",";out+="\""+json_escape(id)+"\"";}return out+"]";}
-    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why))throw std::runtime_error(why);session=std::move(next);frontend->actions.clear();frontend->steering.clear();project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
+    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why,&session))throw std::runtime_error(why);session=std::move(next);frontend->actions.clear();frontend->steering.clear();project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
     if(method=="model.select"){const auto model=plugin_string(params,"model");if(model.empty()||model.size()>128||safe_terminal_text(model)!=model)throw std::runtime_error("invalid model");const auto effort=plugin_string(params,"effort");if(!effort.empty()&&effort!="none"&&effort!="minimal"&&effort!="low"&&effort!="medium"&&effort!="high"&&effort!="xhigh"&&effort!="max"&&effort!="ultra")throw std::runtime_error("invalid reasoning effort");api.model=model;api.reasoning_effort=effort;tui->set_model(api.model,api.reasoning_effort);return frontend->state();}
     if(method=="model.list"){std::string why;auto models=read_models(api,why);if(!models)throw std::runtime_error(why);std::string out="[";for(const auto& model:*models){if(out.size()>1)out+=",";out+="\""+json_escape(model.id)+"\"";}return out+"]";}
     const std::map<std::string,std::string> files={{"fs.read","read_file"},{"fs.list","list_dir"},{"fs.write","write_file"}};auto file=files.find(method);if(file!=files.end()){
@@ -1233,7 +1252,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
   if(tui){tui->set_thread_name("");tui->reset_transcript();}plugins.event("session.started",opt.root);return true; }; if(token!="/quit"&&local_web.paused&&!local_web.running()){
     local_web.stop();std::string why;Session refreshed;
-    if(!init_session(refreshed,opt.root,opt.json,session.id,why)){say("Cannot resume terminal session: "+why,true);continue;}
+    if(!init_session(refreshed,opt.root,opt.json,session.id,why,&session)){say("Cannot resume terminal session: "+why,true);continue;}
     session=std::move(refreshed);project_memory=load_project_memory(opt.root);local_web.paused=false;
     say("Web service ended; terminal session reloaded.");
   } if(local_web.running()&&token!="/web"&&token!="/quit"&&token!="/help"&&token!="/status"&&token!="/update"){say("WebUI is active; use it, or /web stop to resume terminal tasks.");continue;}
@@ -1318,9 +1337,9 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
     quota_text=quota?quota->report:quota_err;st<<"\n"<<quota_text;quota_job={};accept_quota({std::move(quota),std::move(quota_err)});quota_tried=true;quota_at=std::chrono::steady_clock::now();}
   if(tui){quota_status_visible=true;tui->set_status_details(pin_text());tui->render();}else say(st.str());continue; }
   if(token=="/web"){
-    try{if(args=="stop"){local_web.stop();if(local_web.paused){std::string why;Session refreshed;if(init_session(refreshed,opt.root,opt.json,session.id,why))session=std::move(refreshed);else throw std::runtime_error(why);project_memory=load_project_memory(opt.root);local_web.paused=false;}say("Web service stopped; terminal session reloaded.");}
+    try{if(args=="stop"){local_web.stop();if(local_web.paused){std::string why;Session refreshed;if(init_session(refreshed,opt.root,opt.json,session.id,why,&session))session=std::move(refreshed);else throw std::runtime_error(why);project_memory=load_project_memory(opt.root);local_web.paused=false;}say("Web service stopped; terminal session reloaded.");}
     else if(args=="status")say(local_web.running()?local_web.url:"Web service stopped");
-    else if(args.empty()||args=="start"||args=="open")say(local_web.start(opt,args!="start"));else say("Usage: /web [start|open|status|stop]",true);}catch(const std::exception& e){say(e.what(),true);}continue;
+    else if(args.empty()||args=="start"||args=="open"){const std::string notice=local_web.start(opt,args!="start");session.release_lock();say(notice);}else say("Usage: /web [start|open|status|stop]",true);}catch(const std::exception& e){say(e.what(),true);}continue;
   }
   if(token=="/update"){
     try{auto words=split_words(args);if(words.empty()||words[0]=="status")say(update_job.report());else if((words[0]=="check"||words[0]=="download")&&words.size()<=2)say(update_job.start(words.size()==2?words[1]:"latest",words[0]=="download"));else if(words[0]=="install"&&words.size()==1){if(local_web.running())throw std::runtime_error("Use /web stop before installing an update");auto info=updater::status();if(plugin_string(info,"status")!="ready")throw std::runtime_error("No verified update ready");const auto question="Install "+plugin_string(info,"tag")+" ("+plugin_text(info,"sha256").substr(0,12)+") and exit? Backup and portable data are retained.";bool confirmed=tui?tui->choose(question,{"Cancel","Install and exit"})==1:approve(question,false);if(confirmed){updater::schedule(false);say("Installer scheduled; exiting to release files and data locks.");break;}}else say("Usage: /update check|download [TAG] | status | install",true);}catch(const std::exception& e){say(e.what(),true);}continue;
@@ -1390,7 +1409,7 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   if(tui)tui->set_thread_name(args);say("Thread renamed to " + args);continue; } if(token == "/new" || token == "/clear" || token == "/clear(new)"){if(fresh_session())say("Started a new chat: " + session.id);continue; }
   if(token == "/resume"){std::string id=args;
   if(id.empty()&& tui){auto ids=session_ids(opt.root);if(ids.empty()){say("No saved sessions.");continue;}int c=tui->choose("Resume a saved chat",ids,0);if(c<0)continue;id=ids[static_cast<size_t>(c)];}
-  if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err)){say(local_err,true);continue;}
+  if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err,&session)){say(local_err,true);continue;}
   session=std::move(resumed);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
   if(token == "/fork"){const std::string old=session.id;const std::string prior=session.transcript;const auto prior_items=session.items;

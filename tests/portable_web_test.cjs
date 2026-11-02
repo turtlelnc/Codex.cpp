@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const binary = path.resolve(process.argv[2]);
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "portable-web-"));
@@ -10,6 +10,32 @@ const profile = path.join(root, "private-state");
 let child,
   browser,
   output = "";
+const cleanEnv = { ...process.env, CODEX_CPP_PORTABLE_DIR: "", CODEX_CPP_PORTABLE_PROJECT: "" };
+function resumeProbe(sessionId) {
+  return spawnSync(
+    binary,
+    [
+      "--portable-dir",
+      profile,
+      "--portable-project",
+      "repo",
+      "--resume",
+      sessionId,
+      "--continue",
+      "--json",
+      "--provider",
+      "custom",
+      "--model",
+      "fixture",
+      "--base-url",
+      "http://127.0.0.1:1",
+      "--api",
+      "chat",
+      "--no-api-key",
+    ],
+    { cwd: root, env: cleanEnv, encoding: "utf8", timeout: 30000 },
+  );
+}
 async function wait(fn) {
   for (let i = 0; i < 400; i++) {
     if (await fn()) return;
@@ -57,6 +83,10 @@ async function wait(fn) {
     child.stdin.write("/web start\n");
     await wait(() => /WebUI: (http:\/\/127\.0\.0\.1:\d+)/.test(output));
     const url = output.match(/WebUI: (http:\/\/127\.0\.0\.1:\d+)/)[1];
+    // The paused terminal must not keep the session lock the WebUI agent needs.
+    const pausedResume = resumeProbe(eventFile.slice(0, -6));
+    assert.equal(pausedResume.status, 2, pausedResume.stderr);
+    assert.match(pausedResume.stderr, /No unfinished turn/);
     browser = await chromium.launch({
       headless: true,
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
@@ -107,6 +137,9 @@ async function wait(fn) {
     output = "";
     child.stdin.write("/web stop\n");
     await wait(() => output.includes("terminal session reloaded"));
+    const ownedResume = resumeProbe(eventFile.slice(0, -6));
+    assert.equal(ownedResume.status, 2, ownedResume.stderr);
+    assert.match(ownedResume.stderr, /in use by another process/);
     output = "";
     child.stdin.write("/web start\n");
     await wait(() => /WebUI: (http:\/\/127\.0\.0\.1:\d+)/.test(output));

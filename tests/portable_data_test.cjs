@@ -103,6 +103,15 @@ function encrypted(entries, password) {
     assert.equal(status.project, "repo");
     assert.equal(status.at_rest_encrypted, false);
     assert(!fs.existsSync(profile));
+    // A trailing separator must not be mistaken for the filesystem root.
+    const trailingStatus = JSON.parse(
+      run(command(profile + path.sep, "portable", "status")).stdout,
+    );
+    assert.equal(trailingStatus.project, "repo");
+    assert.equal(trailingStatus.root, status.root);
+    assert(!fs.existsSync(profile));
+    const rejectedRoot = run(command(path.parse(profile).root, "portable", "status"), 2);
+    assert.match(rejectedRoot.stderr, /filesystem root/);
     active = spawn(
       binary,
       command(
@@ -134,11 +143,56 @@ function encrypted(entries, password) {
       .filter((n) => n.endsWith(".meta.json"));
     assert.equal(sessions.length, 1);
     assert(!fs.existsSync(path.join(workspace, ".codex_cpp")));
+    // A second instance must not open a session that another process owns.
+    const sessionId = sessions[0].replace(/\.meta\.json$/, "");
+    const eventsFile = path.join(profile, "projects", "repo", "sessions", sessionId + ".jsonl");
+    const eventBytes = fs.readFileSync(eventsFile);
+    const concurrent = run(
+      command(
+        profile,
+        "--resume",
+        sessionId,
+        "--json",
+        "--provider",
+        "custom",
+        "--base-url",
+        "http://127.0.0.1:9",
+        "--model",
+        "fixture",
+        "--no-api-key",
+        "--",
+        "must not run",
+      ),
+      2,
+    );
+    assert.match(concurrent.stderr, /in use by another process/);
+    assert.deepEqual(fs.readFileSync(eventsFile), eventBytes);
     run(command(profile, "portable", "export", path.join(root, "busy.pack")), 2);
     assert(!fs.existsSync(path.join(root, "busy.pack")));
     active.stdin.write("/quit\n");
     await new Promise((r) => active.once("exit", r));
     active = null;
+    const resumable = run(
+      command(
+        profile,
+        "--resume",
+        sessionId,
+        "--continue",
+        "--json",
+        "--provider",
+        "custom",
+        "--base-url",
+        "http://127.0.0.1:9",
+        "--model",
+        "fixture",
+        "--no-api-key",
+      ),
+      2,
+    );
+    assert.match(resumable.stderr, /No unfinished turn/);
+    const slashPack = path.join(root, "slash.pack");
+    run(command(profile + path.sep, "portable", "export", slashPack));
+    assert(fs.existsSync(slashPack));
     const user = path.join(profile, "user");
     fs.mkdirSync(path.join(user, "plugins", "demo"), { recursive: true });
     fs.writeFileSync(path.join(user, "auth.json"), "account-fixture-secret");

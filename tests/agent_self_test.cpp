@@ -82,12 +82,12 @@ fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","h
   FunctionCall patch{"apply_patch","hardlink-patch",R"({"patch":""})"};check(router.invoke(patch,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard", "hardlinked apply_patch workspace refused");
   fs::remove(alias,ec);
 }else check(false,"create hardlink test fixture");
-fs::remove(guard_file,ec);Session s;check(init_session(s,troot,false,std::nullopt,err),"session creation");Session empty;check(init_session(empty,troot,false,s.id,err) && empty.items.empty(),"empty listed session can resume");s.append_transcript("abc");
+fs::remove(guard_file,ec);Session s;check(init_session(s,troot,false,std::nullopt,err),"session creation");Session locked;check(!init_session(locked,troot,false,s.id,err)&&err.find("in use by another process")!=std::string::npos,"owned session rejects a second opener");Session empty;check(init_session(empty,troot,false,s.id,err,&s) && empty.items.empty(),"empty listed session can resume");s.append_transcript("abc");
 const std::string u="{\"role\":\"user\",\"content\":\"hello\"}";const std::string a="{\"role\":\"assistant\",\"content\":\"world\"}"; check(s.record_item(u)&& s.record_item(a),"structured item journal append");
-Session s2;check(init_session(s2,troot,false,s.id,err)&& s2.transcript == "abc" && s2.items==std::vector<std::string>({u,a}),"structured session resume");
+Session s2;check(init_session(s2,troot,false,s.id,err,&empty)&& s2.transcript == "abc" && s2.items==std::vector<std::string>({u,a}),"structured session resume");
 const auto ids=session_ids(troot);check(std::find(ids.begin(),ids.end(),s.id+".items")==ids.end(),"session list excludes item journals");
 char name[]="codex-cpp",flag[]="--resume";char* missing[]={name,flag};check(!parse_options(2,missing,err),"missing resume ID is rejected before model request");
-check(!init_session(s2,troot,false,std::string("../escape"),err),"invalid session ID rejected"); check(s.replace_items({u})&& init_session(s2,troot,false,s.id,err)&& s2.items.size()==1,"atomic item journal replacement");
+Session invalid;check(!init_session(invalid,troot,false,std::string("../escape"),err),"invalid session ID rejected"); Session s3;check(s.replace_items({u})&& init_session(s3,troot,false,s.id,err,&s2)&& s3.items.size()==1,"atomic item journal replacement");
 check(matching_slash_commands("").empty()&& matching_slash_commands("hello /model").empty(),"slash popup plain-text guard"); auto slash_model = matching_slash_commands("/mo");
 check(!slash_model.empty()&& std::string(slash_model.front()->name)== "/model","slash popup prefix matching"); check(matching_slash_commands("/model high").empty(),"slash popup closes for arguments");
 write_all(troot / "AGENTS.md","Project rule: run focused tests.\n",err);write_all(troot / ".agents" / "skills" / "demo" / "SKILL.md", "---\nname: demo\ndescription: Small test skill\n---\nInstructions.\n",err);
@@ -125,7 +125,7 @@ Session recovery;check(init_session(recovery,troot,false,std::nullopt,err),"reco
 recovery.append_transcript("unfinished task\n");
 recovery.emit(EventKind::TurnStarted,"{\"task\":\"finish task\",\"sandbox\":\"read-only\"}");
 recovery.record_item(R"({"type":"function_call","call_id":"unknown","name":"shell","arguments":"{}"})");
-Session reopened;check(init_session(reopened,troot,false,recovery.id,err) && reopened.pending_turn()==std::make_pair(std::string("finish task"),std::string("read-only")),"unfinished turn survives restart with sandbox");
+Session reopened;check(init_session(reopened,troot,false,recovery.id,err,&recovery) && reopened.pending_turn()==std::make_pair(std::string("finish task"),std::string("read-only")),"unfinished turn survives restart with sandbox");
 check(reopened.close_unconfirmed_calls() && reopened.items.back().find("UNKNOWN")!=std::string::npos,"unconfirmed tool result does not replay execution");
 const auto count=reopened.items.size();check(reopened.close_unconfirmed_calls() && reopened.items.size()==count,"recovery is idempotent");
 reopened.emit(EventKind::TurnCompleted,"{\"status\":\"interrupted\"}");check(!reopened.pending_turn().first.empty(),"interrupted turn remains available to continue");

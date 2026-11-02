@@ -11,7 +11,11 @@ protected by the existing file-tool checks, Web workspace checks and restricted
 process sandbox. Native plugins remain fully trusted host code.
 
 Shared runtime leases permit Web workers; export and installation require an
-exclusive lease. Export excludes updater caches. Import validates the complete
+exclusive lease. Each open session also holds its own exclusive session lock, so
+a second process that resumes the same session ID fails with a clear message
+instead of racing transcript rewrites or journal compaction. The terminal
+releases that lock while the WebUI bridge owns the session and reacquires it when
+the bridge stops. Export excludes updater caches. Import validates the complete
 package, extracts to a private staging directory with exclusive file creation,
 and publishes only into a new directory. Imported enabled-plugin configuration
 is replaced with an empty list and MCP autostart configuration is quarantined.
@@ -35,7 +39,8 @@ cleanup remains manual; locks are local filesystem locks, not distributed locks.
 
 ## Regression coverage
 
-- `portable_data_test.cjs`: real sessions, exclusive export locks, relocation,
+- `portable_data_test.cjs`: real sessions, exclusive export locks, per-session
+  concurrent-resume rejection, trailing-separator portable roots, relocation,
   independent Node crypto interoperability in both directions, Unicode passwords,
   malformed paths/collisions, tamper, credential exclusion, imported Plugin/MCP
   quarantine, permissions and static Plugin sharing.
@@ -46,8 +51,9 @@ cleanup remains manual; locks are local filesystem locks, not distributed locks.
   incremental writes, cancellation, size bounds, untrusted CA/HTTP rejection and
   atomic cleanup. Arbitrary test origins exist only in the self-test entry point.
 - `portable_web_test.cjs`: real Chromium startup/reload, centralized sessions,
-  protected data rejection, terminal pause, restart and service shutdown. This
-  does not validate graphical desktop browser launching or a live Agent handoff.
+  protected data rejection, terminal pause with session-lock handoff, restart and
+  service shutdown. This does not validate graphical desktop browser launching or
+  a live Agent handoff.
 
 The native CI matrix runs transfer, replacement and transport tests on Linux,
 macOS and Windows; the browser job runs the portable Web bridge on Linux.
