@@ -31,8 +31,11 @@ const hash = (file) => crypto.createHash("sha256").update(fs.readFileSync(file))
   oldHash = hash(exe),
   newHash = hash(candidate);
 assert.notEqual(oldHash, newHash);
+// macOS /var is an OS-managed alias; exercise canonical profile roots on POSIX.
+const profileOption = process.platform === 'win32' ? profile : path.join(root, 'alias', 'data');
+if (process.platform !== 'win32') fs.symlinkSync(root, path.join(root, 'alias'), 'dir');
 function run(args, code = 0) {
-  const p = spawnSync(exe, ["--portable-dir", profile, ...args], {
+  const p = spawnSync(exe, ["--portable-dir", profileOption, ...args], {
     env,
     cwd: root,
     encoding: "utf8",
