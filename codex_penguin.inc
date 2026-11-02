@@ -28,11 +28,18 @@ static std::string penguin_text(const Json& object,const char* key){auto value=o
 static bool penguin_flag(const Json& object,const char* key){auto value=object.get(key);if(!value||value->kind!=Json::Other||(value->value!="true"&&value->value!="false"))throw std::runtime_error(std::string("Penguin boolean required: ")+key);return value->value=="true";}
 static int penguin_integer(const Json& object,const char* key){auto value=object.get(key);if(!value||value->kind!=Json::Other||value->value.find_first_not_of("-0123456789")!=std::string::npos)throw std::runtime_error(std::string("Penguin integer required: ")+key);size_t used=0;int n=std::stoi(value->value,&used);if(used!=value->value.size())throw std::runtime_error("Invalid Penguin integer");return n;}
 static std::vector<std::string> penguin_manifests;
+static std::map<std::string,std::string> penguin_reviews;
+// Reviewed WebUI workers inherit the parent's immutable bundle, never the
+// original writable workspace path. Legacy --penguin retains manual trust.
+static std::map<std::string,std::string> penguin_worker_manifests;
 static void penguin_arguments(int& argc,char**& argv,std::vector<char*>& storage){
-  int i=1;while(i<argc && std::string(argv[i])=="--penguin"){
+  int i=1;while(i<argc && (std::string(argv[i])=="--penguin"||std::string(argv[i])=="--penguin-reviewed")){
+    const bool reviewed=std::string(argv[i])=="--penguin-reviewed";
     if(i+1>=argc)throw std::runtime_error("--penguin requires an absolute manifest path");auto path=fs::u8path(argv[i+1]);
     if(!path.is_absolute())throw std::runtime_error("--penguin requires an absolute manifest path");
-    const auto name=path.u8string();if(std::find(penguin_manifests.begin(),penguin_manifests.end(),name)==penguin_manifests.end())penguin_manifests.push_back(name);i+=2;
+    const auto name=path.u8string();
+    if(reviewed){if(i+2>=argc)throw std::runtime_error("--penguin-reviewed requires a review SHA-256");const std::string hash=argv[i+2];if(hash.size()!=64||hash.find_first_not_of("0123456789abcdef")!=std::string::npos)throw std::runtime_error("Invalid Penguin review SHA-256");if(penguin_reviews.count(name)&&penguin_reviews.at(name)!=hash)throw std::runtime_error("Conflicting Penguin review fingerprints");penguin_reviews[name]=hash;}
+    if(std::find(penguin_manifests.begin(),penguin_manifests.end(),name)==penguin_manifests.end())penguin_manifests.push_back(name);i+=reviewed?3:2;
   }
   if(i==1)return;storage.clear();storage.push_back(argv[0]);for(;i<argc;++i)storage.push_back(argv[i]);argc=static_cast<int>(storage.size());storage.push_back(nullptr);argv=storage.data();
 }

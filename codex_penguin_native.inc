@@ -94,7 +94,7 @@ static void penguin_load_manifest(const fs::path& path){
   }else if(!declared.empty())throw std::runtime_error("Penguin services require a native library");
   if(module.contributions.size()!=declared.size())throw std::runtime_error("Penguin did not bind every declared service");
   std::vector<PenguinToolDefinition> tools;
-  if(auto definitions=manifest->get("tools")){if(definitions->kind!=Json::Array||definitions->items.size()>32)throw std::runtime_error("Invalid Penguin tools");std::set<std::string> names={"read_file","list_dir","read_skill","write_file","shell","apply_patch","git_read","git_write","design_review","plugin_ui"};for(const auto& tool:penguin_tools)names.insert(tool.name);
+  if(auto definitions=manifest->get("tools")){if(definitions->kind!=Json::Array||definitions->items.size()>32)throw std::runtime_error("Invalid Penguin tools");std::set<std::string> names={"read_file","list_dir","read_skill","write_file","shell","apply_patch","git_read","git_write","design_review","plugin_ui","penguin_scaffold","penguin_check","penguin_build","penguin_test"};for(const auto& tool:penguin_tools)names.insert(tool.name);
     for(const auto& definition:definitions->items){auto spec=definition.get("spec");if(!spec||spec->kind!=Json::Object)throw std::runtime_error("Penguin tool spec missing");auto name=penguin_text(*spec,"name");if(!plugin_id(name)||!names.insert(name).second||!declared.count("tools."+name)||!spec->get("parameters"))throw std::runtime_error("Invalid/duplicate Penguin tool definition");tools.push_back({"tools."+name,json_dump(*spec),name,penguin_flag(definition,"mutates")});}}
   std::optional<PenguinWebModule> web;
   if(auto definition=manifest->get("web")){auto entry=penguin_text(*definition,"entry");auto style=plugin_string(*definition,"style");
@@ -104,7 +104,8 @@ static void penguin_load_manifest(const fs::path& path){
   penguin_runtime().mount(std::move(module));
   penguin_tools.insert(penguin_tools.end(),tools.begin(),tools.end());if(web)penguin_web_modules.push_back(*web);
 }
-static void penguin_boot(){penguin_builtins();for(const auto& path:penguin_manifests)penguin_load_manifest(fs::u8path(path));penguin_runtime().freeze();}
+static void penguin_load_reviewed(const fs::path& path,const std::string& fingerprint);
+static void penguin_boot(){penguin_builtins();for(const auto& path:penguin_manifests){auto review=penguin_reviews.find(path);if(review!=penguin_reviews.end())penguin_load_reviewed(fs::u8path(path),review->second);else penguin_load_manifest(fs::u8path(path));}penguin_runtime().freeze();}
 class PenguinTool final:public ToolRuntime{
   PenguinToolDefinition definition_;
 public:explicit PenguinTool(PenguinToolDefinition definition):definition_(std::move(definition)){}

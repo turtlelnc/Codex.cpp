@@ -256,6 +256,10 @@ Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本�
 
 示例、C ABI、服务契约、权限及平台限制见 [Penguin 开发指南](docs/PENGUIN.md)。原生模组是完全可信代码；现有 Linux musl 全静态 Release 不能加载动态库，Linux 原生模组需使用正常 glibc 构建。默认功能与纯网页扩展不受此限制。
 
+### 让 Agent 制作插件
+
+内置 `penguin-creator` Skill 与脚手架、构建、检查、隔离测试工具。可以直接要求 Agent 制作 Penguin 插件；完成后在对话中审阅文件与测试结果，再手动重启启用。程序内嵌 SDK，不需要项目源码。原生构建需要 CMake/C++17；Windows 暂不支持自动沙箱构建/探测。详见 [Creator 工作流](docs/PENGUIN_CREATOR.md)。
+
 ## 验证
 
 Node.js 仅用作测试运行器，正式运行不需要它：

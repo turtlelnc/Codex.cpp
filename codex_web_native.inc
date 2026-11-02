@@ -1029,7 +1029,11 @@ struct App {
     std::vector<std::string> args = {binary.u8string(), "--root",         workspace.root.u8string(),
                                      "--provider",      options.provider, "--model",
                                      options.model};
-    for (auto it = penguin_manifests.rbegin(); it != penguin_manifests.rend(); ++it) args.insert(args.begin() + 1, {"--penguin", *it});
+    for (auto it = penguin_manifests.rbegin(); it != penguin_manifests.rend(); ++it) {
+      const auto frozen = penguin_worker_manifests.find(*it);
+      if(frozen == penguin_worker_manifests.end())args.insert(args.begin()+1,{"--penguin",*it});
+      else args.insert(args.begin()+1,{"--penguin-reviewed",frozen->second,penguin_reviews.at(*it)});
+    }
     if (!options.base_url.empty()) {
       args.insert(args.end(), {"--base-url", options.base_url, "--api",
                                options.api_style == ApiStyle::Responses ? "responses" : "chat"});
