@@ -11,3 +11,7 @@ file /tmp/bwrap-build/bwrap | grep -E 'statically linked|static-pie linked'
 cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static -DCODEX_BWRAP_EXECUTABLE=/tmp/bwrap-build/bwrap -DCODEX_EXTRA_LICENSE_FILES=/tmp/bubblewrap-0.11.0/COPYING
 cmake --build build-release --target codex-cpp --parallel 2
 strip build-release/codex-cpp
+
+# Reuse the verified static sandbox helper in the optional glibc/native build.
+cp /tmp/bwrap-build/bwrap build-release/bwrap
+cp /tmp/bubblewrap-0.11.0/COPYING build-release/bwrap-COPYING

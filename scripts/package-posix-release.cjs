@@ -1,13 +1,13 @@
 // Preserve executable permissions lost when browsers download bare POSIX binaries.
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto'),assert=require('assert/strict'),{execFileSync}=require('child_process');
 const directory=path.resolve(process.argv[2]||'dist');
-const platforms=['macos-x64','macos-arm64','linux-x64','linux-arm64'];
-const selected=process.argv[3]?[process.argv[3]]:platforms;
+const platforms=['macos-x64','macos-arm64','linux-x64','linux-arm64','linux-x64-native','linux-arm64-native'];
+const selected=process.argv[3]?[process.argv[3]]:platforms.filter(p=>!p.endsWith("-native")||fs.existsSync(path.join(directory,"codex-cpp-"+p)));
 assert(selected.every(p=>platforms.includes(p)),'Unknown POSIX platform');
 const hashes=[];
 for(const platform of selected){
  const name='codex-cpp-'+platform,file=path.join(directory,name),bytes=fs.readFileSync(file),mac=platform.startsWith('macos-');
- if(mac){assert.equal(bytes.subarray(0,4).toString('hex'),'cffaedfe','Expected Mach-O 64-bit executable');assert.equal(bytes.readUInt32LE(4),platform.endsWith('x64')?0x01000007:0x0100000c,'Wrong Mach-O CPU');}
+ if(mac){assert.equal(bytes.subarray(0,4).toString('hex'),'cffaedfe','Expected Mach-O 64-bit executable');assert.equal(bytes.readUInt32LE(4),platform.includes('x64')?0x01000007:0x0100000c,'Wrong Mach-O CPU');}
  else{assert.equal(bytes.subarray(0,4).toString('hex'),'7f454c46','Expected ELF executable');assert.equal(bytes[4],2,'Expected ELF64');assert.equal(bytes.readUInt16LE(18),platform.endsWith('x64')?62:183,'Wrong ELF CPU');}
  fs.chmodSync(file,0o755);
  const archive=name+(mac?'.zip':'.tar.gz'),destination=path.join(directory,archive);

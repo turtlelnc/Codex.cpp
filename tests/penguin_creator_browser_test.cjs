@@ -288,7 +288,11 @@ async function stop() {
     const review = JSON.parse(checked.stdout);
     assert.equal(review.launch_args[1], "--penguin-reviewed");
     await stop();
-    await start(review.launch_args.slice(1, 4));
+    await start(
+      process.env.CREATOR_TEST_LEGACY
+        ? ["--penguin", path.join(root, "created-plugin", "penguin.json")]
+        : review.launch_args.slice(1, 4),
+    );
     // After startup, changing originals must never change reviewed resources.
     fs.writeFileSync(
       path.join(root, "created-plugin", "client.js"),
