@@ -42,10 +42,17 @@ static std::string creator_read(const fs::path& root,const std::string& relative
       std::string data(info.nFileSizeLow,'\0');DWORD n=0;if(!ReadFile(h,data.data(),static_cast<DWORD>(data.size()),&n,nullptr)||n!=data.size())throw std::runtime_error("Cannot read review file");return data;}
   }
 #else
-  struct Fd{int value;~Fd(){if(value>=0)::close(value);}} directory{::open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC)};
+  #if defined(__APPLE__)
+  // Event-only directory handles require metadata/search, not directory listing.
+  // O_SEARCH is not supported by the macOS 12 deployment baseline.
+  const int directory_flags=O_EVTONLY|O_DIRECTORY|O_CLOEXEC;
+#else
+  const int directory_flags=O_RDONLY|O_DIRECTORY|O_CLOEXEC;
+#endif
+  struct Fd{int value;~Fd(){if(value>=0)::close(value);}} directory{::open("/",directory_flags)};
   if(directory.value<0)throw std::runtime_error("Cannot open review root");std::vector<fs::path> parts;for(const auto& part:path.relative_path())parts.push_back(part);
-  for(size_t i=0;i<parts.size();++i){const bool last=i+1==parts.size();Fd next{::openat(directory.value,parts[i].c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK|(last?0:O_DIRECTORY))};
-    if(next.value<0)throw std::runtime_error("Cannot open review file/directory (links rejected)");
+  for(size_t i=0;i<parts.size();++i){const bool last=i+1==parts.size();Fd next{::openat(directory.value,parts[i].c_str(),O_NOFOLLOW|(last?(O_RDONLY|O_CLOEXEC|O_NONBLOCK):directory_flags))};
+    if(next.value<0)throw std::runtime_error("Cannot open review file/directory (links rejected): "+parts[i].u8string()+": "+std::strerror(errno));
     if(last){struct stat info{};if(::fstat(next.value,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||info.st_size<0||static_cast<uint64_t>(info.st_size)>limit)throw std::runtime_error("Invalid review file");
       if(remove){if(::unlinkat(directory.value,parts[i].c_str(),0))throw std::runtime_error("Cannot remove old native artifact");return {};}
       std::string data;char bytes[8192];for(;;){auto n=::read(next.value,bytes,sizeof bytes);if(n<0&&errno==EINTR)continue;if(n<0)throw std::runtime_error("Cannot read review file");if(!n)return data;data.append(bytes,static_cast<size_t>(n));if(data.size()>limit)throw std::runtime_error("Review file exceeds limit");}}
@@ -147,14 +154,22 @@ static ToolResult creator_build(const fs::path& root,const std::string& path,con
 #if defined(__APPLE__)
   // Compile untrusted source with trusted system tools, never execute project
   // CMake or build hooks which could daemonize beyond process-group cleanup.
+  auto selected=creator_process({"/usr/bin/xcode-select","-p"},policy,10,tick,watch);if(selected.exit_code)return {selected.exit_code,selected.output};
+  const auto developer=fs::canonical(fs::u8path(trim(selected.output)));
+  if(developer!=fs::path("/Library/Developer/CommandLineTools")&&!(within_root("/Applications",developer)&&developer.filename()=="Developer"&&developer.parent_path().filename()=="Contents"))throw std::runtime_error("Unsupported system developer directory");
+  const bool clt=developer==fs::path("/Library/Developer/CommandLineTools");
+  const auto tools=clt?developer:developer/"Toolchains/XcodeDefault.xctoolchain";
+  const auto compiler=tools/"usr/bin/clang++",allocator=tools/"usr/bin/codesign_allocate";
+  const auto sdk=clt?developer/"SDKs/MacOSX.sdk":developer/"Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+  if(!fs::is_regular_file(compiler)||!fs::is_directory(sdk))throw std::runtime_error("System compiler or macOS SDK is missing");policy.reads.push_back(developer);
   std::error_code ec;fs::create_directories((source/artifact).parent_path(),ec);if(ec)throw std::runtime_error(ec.message());
 #if defined(__aarch64__)
   const char* arch="arm64";
 #else
   const char* arch="x86_64";
 #endif
-  auto compiled=creator_process({"/usr/bin/clang++","-std=c++17","-O2","-dynamiclib","-arch",arch,(source/"plugin.cpp").u8string(),"-o",(source/artifact).u8string()},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=compiled.output;
-  auto signed_library=creator_process({"/usr/bin/codesign","--force","--sign","-",(source/artifact).u8string()},policy,30,tick,watch);if(signed_library.exit_code)return {signed_library.exit_code,signed_library.output};log+=signed_library.output;
+  auto compiled=creator_process({compiler.u8string(),"-isysroot",sdk.u8string(),"-std=c++17","-O2","-dynamiclib","-arch",arch,(source/"plugin.cpp").u8string(),"-o",(source/artifact).u8string()},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=compiled.output;
+  auto signed_library=creator_process({"/usr/bin/env","CODESIGN_ALLOCATE="+allocator.u8string(),"/usr/bin/codesign","--force","--sign","-",(source/artifact).u8string()},policy,30,tick,watch);if(signed_library.exit_code)return {signed_library.exit_code,signed_library.output};log+=signed_library.output;
 #else
   auto configured=creator_process({"cmake","-S",source.u8string(),"-B",build.u8string(),"-DCMAKE_BUILD_TYPE=Release"},policy,120,tick,watch);if(configured.exit_code)return {configured.exit_code,configured.output};auto compiled=creator_process({"cmake","--build",build.u8string(),"--config","Release","--parallel","2","--clean-first"},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=configured.output+compiled.output;
 #endif

@@ -35,7 +35,8 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee release-build.log
+          sh scripts/build-macos-openssl.sh '${{ matrix.cmake_arch }}' "$PWD/openssl-release" 2>&1 | tee release-build.log
+          PKG_CONFIG_PATH="$PWD/openssl-release/lib/pkgconfig" PKG_CONFIG_LIBDIR="$PWD/openssl-release/lib/pkgconfig" cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$PWD/openssl-release" -DOPENSSL_INCLUDE_DIR="$PWD/openssl-release/include" -DOPENSSL_SSL_LIBRARY="$PWD/openssl-release/lib/libssl.a" -DOPENSSL_CRYPTO_LIBRARY="$PWD/openssl-release/lib/libcrypto.a" 2>&1 | tee -a release-build.log
           cmake --build build-release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
           strip build-release/codex-cpp
           codesign --force --sign - build-release/codex-cpp

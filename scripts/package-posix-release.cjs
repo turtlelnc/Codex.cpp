@@ -8,7 +8,7 @@ const hashes=[];
 for(const platform of selected){
  const name='codex-cpp-'+platform,file=path.join(directory,name),bytes=fs.readFileSync(file),mac=platform.startsWith('macos-');
  if(mac){assert.equal(bytes.subarray(0,4).toString('hex'),'cffaedfe','Expected Mach-O 64-bit executable');assert.equal(bytes.readUInt32LE(4),platform.includes('x64')?0x01000007:0x0100000c,'Wrong Mach-O CPU');}
- else{assert.equal(bytes.subarray(0,4).toString('hex'),'7f454c46','Expected ELF executable');assert.equal(bytes[4],2,'Expected ELF64');assert.equal(bytes.readUInt16LE(18),platform.endsWith('x64')?62:183,'Wrong ELF CPU');}
+ else{assert.equal(bytes.subarray(0,4).toString('hex'),'7f454c46','Expected ELF executable');assert.equal(bytes[4],2,'Expected ELF64');assert.equal(bytes.readUInt16LE(18),platform.includes('x64')?62:183,'Wrong ELF CPU');}
  fs.chmodSync(file,0o755);
  const archive=name+(mac?'.zip':'.tar.gz'),destination=path.join(directory,archive);
  fs.rmSync(destination,{force:true});
@@ -22,7 +22,7 @@ for(const platform of selected){
   const executable=path.join(extracted,name);
   assert(fs.statSync(executable).mode&0o100,'Extraction lost owner execute permission');
   assert(fs.readFileSync(executable).equals(bytes),'Packaging changed signed executable bytes');
-  const native=(mac?process.platform==='darwin':process.platform==='linux')&&process.arch===(platform.endsWith('x64')?'x64':'arm64');
+  const native=(mac?process.platform==='darwin':process.platform==='linux')&&process.arch===(platform.includes('x64')?'x64':'arm64');
   if(native){if(mac)execFileSync('codesign',['--verify','--strict',executable]);assert(execFileSync(executable,['--help'],{encoding:'utf8'}).includes('codex-cpp'));}
  }finally{fs.rmSync(extracted,{recursive:true,force:true});}
  hashes.push(crypto.createHash('sha256').update(fs.readFileSync(destination)).digest('hex')+'  '+archive);
