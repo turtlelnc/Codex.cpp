@@ -1,8 +1,10 @@
-Penguin Creator release: embedded SDK/Skill, scaffold/build/static review/isolated ABI probe, and explicit fingerprint-pinned activation. Both reviewed and manual-trust startup freeze plugin bytes for future Agent workers; changed original files cannot silently replace active code. Declared assets join the fingerprint and snapshot.
+Plugin naming update: CLI --plugin / --plugin-reviewed and plugin inspect/scaffold/check/build/test; model tools plugin_scaffold/plugin_build/plugin_check/plugin_test; manifest plugin.json; SDK plugin/native.h; native entry codex_plugin_init_v1; browser API CodexPlugin. Previously generated native modules must be rebuilt with the updated SDK and use the new manifest/arguments. Browser window.Plugin remains untouched.
+
+Plugin Creator release: embedded SDK/Skill, scaffold/build/static review/isolated ABI probe, and explicit fingerprint-pinned activation. Both reviewed and manual-trust startup freeze plugin bytes for future Agent workers; changed original files cannot silently replace active code. Declared assets join the fingerprint and snapshot.
 
 macOS automatic plugin builds compile plugin.cpp with fixed system clang++/codesign; project CMake/hooks are not run. Windows automatic isolated build/probe remains unsupported and fails closed; manual compilation and trusted loading work. Enabled native modules still have full host-account privileges, not sandboxed plugin permissions.
 
-Linux downloads now include optional -native glibc executables supporting native Penguin loading (x64: glibc >= 2.35; ARM64: glibc >= 2.39). They still embed UI, TLS/Git libraries and bubblewrap, and need no third-party shared libraries. Existing static musl executables remain available for portability but cannot dlopen native plugins. Choose the .tar.gz/.zip archive to preserve executable permissions.
+Linux downloads now include optional -native glibc executables supporting native Plugin loading (x64: glibc >= 2.35; ARM64: glibc >= 2.39). They still embed UI, TLS/Git libraries and bubblewrap, and need no third-party shared libraries. Existing static musl executables remain available for portability but cannot dlopen native plugins. Choose the .tar.gz/.zip archive to preserve executable permissions.
 
 Provider-exposed reasoning now has a separate collapsible WebUI section, with
 streaming updates and persisted history. New answer text fades across the whole

@@ -1,16 +1,16 @@
 {
   "api": 1,
-  "id": "demo-penguin",
+  "id": "demo-plugin",
   "requires": ["builtin.model", "builtin.agent", "builtin.tools"],
-  "libraries": {"linux": "penguin-demo.so", "macos": "penguin-demo.dylib", "windows": "penguin-demo.dll"},
+  "libraries": {"linux": "plugin-demo.so", "macos": "plugin-demo.dylib", "windows": "plugin-demo.dll"},
   "services": {
     "model.request": "builtin.model",
     "model.catalog": "builtin.model",
     "agent.turn": "builtin.agent",
-    "tools.penguin_status": ""
+    "tools.plugin_status": ""
   },
   "tools": [{"mutates": false, "spec": {
-    "type": "function", "name": "penguin_status", "description": "Inspect the demo Penguin tool.",
+    "type": "function", "name": "plugin_status", "description": "Inspect the demo Plugin tool.",
     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}, "strict": true
   }}],
   "web": {"entry": "client.js"}

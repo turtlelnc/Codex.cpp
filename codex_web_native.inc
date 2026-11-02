@@ -1029,10 +1029,10 @@ struct App {
     std::vector<std::string> args = {binary.u8string(), "--root",         workspace.root.u8string(),
                                      "--provider",      options.provider, "--model",
                                      options.model};
-    for (auto it = penguin_manifests.rbegin(); it != penguin_manifests.rend(); ++it) {
-      const auto frozen = penguin_worker_manifests.find(*it);
-      if(frozen == penguin_worker_manifests.end())args.insert(args.begin()+1,{"--penguin",*it});
-      else args.insert(args.begin()+1,{"--penguin-reviewed",frozen->second,penguin_reviews.at(*it)});
+    for (auto it = plugin_manifests.rbegin(); it != plugin_manifests.rend(); ++it) {
+      const auto frozen = plugin_worker_manifests.find(*it);
+      if(frozen == plugin_worker_manifests.end())args.insert(args.begin()+1,{"--plugin",*it});
+      else args.insert(args.begin()+1,{"--plugin-reviewed",frozen->second,plugin_reviews.at(*it)});
     }
     if (!options.base_url.empty()) {
       args.insert(args.end(), {"--base-url", options.base_url, "--api",
@@ -1796,10 +1796,10 @@ struct Service {
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
-      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/penguin.js")) {
+      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js")) {
         auto name = req.path == "/" ? "index.html" : req.path.substr(1);
         auto mime = req.path == "/"         ? "text/html; charset=utf-8"
-                    : (req.path == "/app.js" || req.path == "/penguin.js") ? "text/javascript; charset=utf-8"
+                    : (req.path == "/app.js" || req.path == "/plugin.js") ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
         reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;
@@ -1820,28 +1820,28 @@ struct Service {
                  obj({{"username", str(user.user)},
                       {"csrf", str(user.csrf)},
                       {"expires", number(user.expires)},
-                      {"penguins", penguin_web_catalog()},
+                      {"plugins", plugin_web_catalog()},
                       {"mode", str(mode())}}),
                  fresh ? cookie(authenticated.first) : "");
         return;
       }
-      if (req.method == "GET" && req.path == "/api/penguins") {
+      if (req.method == "GET" && req.path == "/api/plugins") {
         require(!authenticated.first.empty(), "Login required");
-        response(fd, 200, *parse_json(penguin_inspect())); return;
+        response(fd, 200, *parse_json(plugin_inspect())); return;
       }
-      if (req.method == "GET" && req.path.rfind("/penguin/", 0) == 0) {
+      if (req.method == "GET" && req.path.rfind("/plugin/", 0) == 0) {
         require(!authenticated.first.empty(), "Login required");
-        for (const auto& module : penguin_web_modules) {
-          const auto base = "/penguin/" + module.id + "/";
+        for (const auto& module : plugin_web_modules) {
+          const auto base = "/plugin/" + module.id + "/";
           std::string asset;
           if (req.path == base + "entry.js") asset = module.entry;
           if (req.path == base + "style.css") asset = module.style;
           if (asset.empty()) continue;
           auto path = module.root / fs::u8path(asset); std::error_code ec;
-          require(within_root(module.root, path) && fs::is_regular_file(path, ec) && !ec && fs::file_size(path, ec) <= 4 * 1024 * 1024 && !ec, "Invalid Penguin asset");
+          require(within_root(module.root, path) && fs::is_regular_file(path, ec) && !ec && fs::file_size(path, ec) <= 4 * 1024 * 1024 && !ec, "Invalid Plugin asset");
           reply(fd, 200, read_bytes(path), req.path == base + "entry.js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8"); return;
         }
-        throw std::runtime_error("Penguin asset not found");
+        throw std::runtime_error("Plugin asset not found");
       }
       require(req.method == "POST", "Unknown route");
       require(lower(req.headers["content-type"]).rfind("application/json", 0) == 0,
@@ -2017,7 +2017,7 @@ void child_mode(int &argc, char **&argv, std::vector<char *> &storage) {
 }
 int main(int argc, char **argv) {
   try {
-    std::vector<char*> penguin_argument_storage;
+    std::vector<char*> plugin_argument_storage;
 #if defined(_WIN32)
     int wide_count = 0;
     auto wide_args = CommandLineToArgvW(GetCommandLineW(), &wide_count);
@@ -2033,7 +2033,7 @@ int main(int argc, char **argv) {
     argc = wide_count;
     argv = native_pointers.data();
 #endif
-    penguin_arguments(argc, argv, penguin_argument_storage);
+    plugin_arguments(argc, argv, plugin_argument_storage);
     std::string override_root;
     std::string operation = argc > 1 ? argv[1] : "web", host, origin, add_user, revoke_user;
     int port = 8765;

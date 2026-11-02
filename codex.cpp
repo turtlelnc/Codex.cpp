@@ -11,7 +11,7 @@
 //   - shell/read/list/write/apply_patch tools
 //   - JSON event output for automation
 //
-// Penguin services compose the model, Agent, tools, prompts, journal and WebUI.
+// Plugin services compose the model, Agent, tools, prompts, journal and WebUI.
 // OS isolation and account/project authorization remain trusted host infrastructure.
 //
 // Build (CMake automatically compiles and links libgit2):
@@ -317,7 +317,7 @@ if(chat){auto choices=doc->get("choices");if(choices && choices->kind==Json::Arr
   }
 }
 if(!out.text && out.calls.empty()){err="API response contained neither text nor tool calls: "+raw.substr(0,1000);return{};}return out; }
-#include "codex_penguin.inc"
+#include "codex_plugin.inc"
 // ---------- policy ----------
 enum class ApprovalPolicy{OnRequest,Never};enum class SandboxMode{ReadOnly,WorkspaceWrite,DangerFullAccess};static const char* sandbox_name(SandboxMode m){
 switch(m){case SandboxMode::ReadOnly: return "read-only";case SandboxMode::WorkspaceWrite: return "workspace-write"; case SandboxMode::DangerFullAccess: return "danger-full-access";
@@ -348,17 +348,17 @@ size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size(
   return n;
 }
 bool record_item(const std::string& item){try{auto value=parse_json(item);if(!value || value->kind!=Json::Object)return false;
-  auto result=penguin_call("journal.append",penguin_object({{"path",penguin_string(items_path.u8string())},{"item",penguin_string(item)}}),[&](const Json& request,const penguin::Emit&){
-    if(penguin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
-    std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return penguin_object({{"ok",penguin_bool(bool(file))},{"item",*stored}});
-  });if(!penguin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());return true;
+  auto result=plugin_call("journal.append",plugin_object({{"path",plugin_string(items_path.u8string())},{"item",plugin_string(item)}}),[&](const Json& request,const plugin::Emit&){
+    if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
+    std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());return true;
   }catch(...){return false;}}
-bool replace_items(const std::vector<std::string>& compacted){try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(penguin_string(raw));}
-  auto result=penguin_call("journal.replace",penguin_object({{"path",penguin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const penguin::Emit&){
-    if(penguin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
+bool replace_items(const std::vector<std::string>& compacted){try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
+  auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
+    if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
     const fs::path staged=items_path.string()+".new";{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
-    std::error_code ec;fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}return penguin_object({{"ok",penguin_bool(true)},{"items",*values}});
-  });if(!penguin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);return true;
+    std::error_code ec;fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);return true;
   }catch(...){return false;}}
 
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
@@ -473,7 +473,7 @@ const std::vector<fs::path> bases={fs::path(getenv_or("HOME"))/".codex"/"skills"
 }
 for(const auto& plugin:plugins.entries)if(plugin.enabled){auto base=plugin.dir/"skills";std::error_code ec;if(!fs::is_directory(base,ec))continue;
   for(const auto& e:fs::directory_iterator(base,ec)){const auto name=e.path().filename().string();const auto file=e.path()/"SKILL.md";if(plugin_id(name)&&fs::is_regular_file(file,ec)&&within_root(plugin.dir,file))found[plugin.id+":"+name]=file;}}
-return{found.begin(),found.end()}; } static std::string skills_manifest(const fs::path& root){std::ostringstream out;out<<"penguin-creator: Create, build and verify Penguin C/C++ or WebUI plugins; read this skill when asked to make a plugin.\n";for(const auto&[name,path]:available_skills(root)){
+return{found.begin(),found.end()}; } static std::string skills_manifest(const fs::path& root){std::ostringstream out;out<<"plugin-creator: Create, build and verify Plugin C/C++ or WebUI plugins; read this skill when asked to make a plugin.\n";for(const auto&[name,path]:available_skills(root)){
   std::string body=slurp(path,4096),description;std::istringstream in(body);std::string line; while(std::getline(in,line))if(line.rfind("description:",0)==0){description=trim(line.substr(12));break; }
   out<<name<<": "<<description<<'\n';
 }
@@ -481,7 +481,7 @@ return out.str(); } class ReadSkillTool final : public ToolRuntime{public: std::
   return one_arg_tool_spec("read_skill","Read an available project or user skill by name. The skill list is in the session context.","name");
 }
 ToolResult run(const std::string& args,const fs::path& root)override{auto wanted=json_string_field(args,"name");if(!wanted)return{2,"ERROR: missing name"};
-  if(*wanted=="penguin-creator")return{0,std::string(codex_resource("penguin-creator/SKILL.md"))};
+  if(*wanted=="plugin-creator")return{0,std::string(codex_resource("plugin-creator/SKILL.md"))};
   for(const auto&[name,path]:available_skills(root))if(name==*wanted)return{0,slurp(path,100000)}; return{2,"ERROR: skill not found: "+*wanted};
 }
 };
@@ -610,11 +610,11 @@ ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePol
   session.emit(EventKind::ApprovalDecision,std::string("{\"approved\":")+(ok ? "true}" : "false}"));if(!ok)return{126,"DENIED by user"}; }
   session.emit(EventKind::ToolStarted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\"}");
   ToolResult r;
-  try{auto result=penguin_call("tool.execute",penguin_object({{"name",penguin_string(call.name)},{"arguments",penguin_string(call.arguments)},{"workspace",penguin_string(root.u8string())}}),
-    [&](const Json& request,const penguin::Emit&){if(penguin_text(request,"name")!=call.name || penguin_text(request,"workspace")!=root.u8string() || penguin_text(request,"arguments")!=call.arguments)throw std::runtime_error("Tool identity/arguments changed after approval");
-      auto output=tool->execute(call.arguments,root,policy.sandbox,on_tick,watch_escape);Json images;images.kind=Json::Array;for(const auto& image:output.images)images.items.push_back(penguin_string(image));return penguin_object({{"exit_code",penguin_number(output.exit_code)},{"output",penguin_string(output.output)},{"images",images}});});
-    r.exit_code=penguin_integer(result,"exit_code");r.output=penguin_text(result,"output");if(auto images=result.get("images");images && images->kind==Json::Array)for(const auto& image:images->items)if(image.kind==Json::String)r.images.push_back(image.str());
-  }catch(const std::exception& e){r={2,std::string("Penguin tool failure: ")+e.what()};}
+  try{auto result=plugin_call("tool.execute",plugin_object({{"name",plugin_string(call.name)},{"arguments",plugin_string(call.arguments)},{"workspace",plugin_string(root.u8string())}}),
+    [&](const Json& request,const plugin::Emit&){if(plugin_text(request,"name")!=call.name || plugin_text(request,"workspace")!=root.u8string() || plugin_text(request,"arguments")!=call.arguments)throw std::runtime_error("Tool identity/arguments changed after approval");
+      auto output=tool->execute(call.arguments,root,policy.sandbox,on_tick,watch_escape);Json images;images.kind=Json::Array;for(const auto& image:output.images)images.items.push_back(plugin_string(image));return plugin_object({{"exit_code",plugin_number(output.exit_code)},{"output",plugin_string(output.output)},{"images",images}});});
+    r.exit_code=plugin_integer(result,"exit_code");r.output=plugin_text(result,"output");if(auto images=result.get("images");images && images->kind==Json::Array)for(const auto& image:images->items)if(image.kind==Json::String)r.images.push_back(image.str());
+  }catch(const std::exception& e){r={2,std::string("Plugin tool failure: ")+e.what()};}
   session.emit(EventKind::ToolCompleted,"{\"tool\":\"" + json_escape(call.name)+ "\",\"call_id\":\"" + json_escape(call.call_id)+ "\",\"exit_code\":" + std::to_string(r.exit_code)+ "}"); return r;
 }
 };
@@ -777,8 +777,8 @@ Act as a practical interface designer and implementer. Inspect the existing sour
   for(const auto& p:plugins.entries)if(p.enabled){contextual<<"# Enabled plugin "<<p.id<<"\n"<<p.description<<"\n";if(auto ui=p.manifest.get("ui"))contextual<<"Declared plugin_ui kinds: "<<json_dump(*ui)<<"\n";}
   if(auto skills=skills_manifest(root);!skills.empty())contextual << "# Available skills\n" << skills << "Use read_skill with the exact name when a skill applies.\n\n";
   contextual << render_environment_context(root,policy);if(!goal.empty())contextual << "\n\n<current_goal>" << xml_escape(goal)<< "</current_goal>"; bundle.contextual_user_prefix = contextual.str();
-  auto result=penguin_call("prompt.build",penguin_object({{"instructions",penguin_string(bundle.developer_instructions)},{"user_prefix",penguin_string(bundle.contextual_user_prefix)}}),[](const Json& request,const penguin::Emit&){return request;});
-  return {penguin_text(result,"instructions"),penguin_text(result,"user_prefix")};
+  auto result=plugin_call("prompt.build",plugin_object({{"instructions",plugin_string(bundle.developer_instructions)},{"user_prefix",plugin_string(bundle.contextual_user_prefix)}}),[](const Json& request,const plugin::Emit&){return request;});
+  return {plugin_text(result,"instructions"),plugin_text(result,"user_prefix")};
 }
 };
 static std::string format_tool_history(const FunctionCall& c,const ToolResult& r){std::ostringstream o;
@@ -799,12 +799,12 @@ Usage:
   codex-cpp serve --state-dir DIR [--host IP] [--port PORT] [--origin URL]
   codex-cpp connect USER@HOST [--project NAME] [--port PORT] [--check | --login]
 
-Penguin modules (before the command/options):
-  --penguin /absolute/penguin.json  load a trusted native/WebUI bundle; repeatable
-  --penguin-reviewed /absolute/penguin.json SHA256  verify Creator review and load a private snapshot
-  penguin inspect                  show active service owners and replacement layers
-  penguin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
-  penguin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
+Plugin modules (before the command/options):
+  --plugin /absolute/plugin.json  load a trusted native/WebUI bundle; repeatable
+  --plugin-reviewed /absolute/plugin.json SHA256  verify Creator review and load a private snapshot
+  plugin inspect                  show active service owners and replacement layers
+  plugin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
+  plugin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
 
 Provider/API options:
   --provider codex|openai|deepseek|custom
@@ -949,12 +949,12 @@ return true;
 static void print_plain_banner(const Options& opt,const ApiClient& api){std::cout << "codex-cpp  plain terminal mode\n" << "workspace: " << opt.root << "\n"
   << "provider:  " << opt.provider << " / " << api_style_name(api.style)<< " / " << api.model << "\n" << "sandbox:   " << sandbox_name(opt.policy.sandbox)<< "\n" << "type /help for commands\n\n";
 }
-#include "codex_penguin_native.inc"
+#include "codex_plugin_native.inc"
 #include "codex_remote.inc"
 #include "codex_web.inc"
 #include "codex_team_client.inc"
 #include "codex_team_tui.inc"
-#include "codex_penguin_creator.inc"
+#include "codex_plugin_creator.inc"
 int main(int argc,char** argv){
 #if defined(_WIN32)
   // Native module paths, like WebUI paths, must not depend on the ANSI code page.
@@ -967,13 +967,13 @@ int main(int argc,char** argv){
   std::vector<char*> native_arguments;try{native_web::child_mode(argc,argv,native_arguments);}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 2;}
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
-  std::vector<char*> penguin_arguments_storage;
-  try{penguin_arguments(argc,argv,penguin_arguments_storage);penguin_creator_self=native_web::executable(argv[0]);penguin_boot();
-    if(argc>1 && std::string(argv[1])=="penguin"){
-      if(argc==3 && std::string(argv[2])=="inspect"){std::cout<<penguin_inspect()<<'\n';return 0;}
-      return penguin_creator_cli(argc,argv);
+  std::vector<char*> plugin_arguments_storage;
+  try{plugin_arguments(argc,argv,plugin_arguments_storage);plugin_creator_self=native_web::executable(argv[0]);plugin_boot();
+    if(argc>1 && std::string(argv[1])=="plugin"){
+      if(argc==3 && std::string(argv[2])=="inspect"){std::cout<<plugin_inspect()<<'\n';return 0;}
+      return plugin_creator_cli(argc,argv);
     }
-  }catch(const std::exception& e){std::cerr<<"Penguin startup: "<<e.what()<<'\n';return 2;}
+  }catch(const std::exception& e){std::cerr<<"Plugin startup: "<<e.what()<<'\n';return 2;}
   if(argc>1&&(std::string(argv[1])=="web"||std::string(argv[1])=="serve"))return launch_web(argc,argv);
   if(argc>1&&std::string(argv[1])=="connect")return connect_remote(argc,argv);
 #if !defined(_WIN32)
@@ -1000,8 +1000,8 @@ plugins.load();
 Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std::cerr << err << '\n';return 2;}std::string project_memory=load_project_memory(opt.root);ToolRouter router;
 if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p){return p.enabled&&p.manifest.get("ui");}))router.add<PluginUiTool>();router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 router.add<GitReadTool>();router.add<GitWriteTool>();
-router.add<PenguinScaffoldTool>();router.add<PenguinCheckTool>();router.add<PenguinBuildTool>();router.add<PenguinTestTool>();
-for(const auto& tool:penguin_tools)router.add_dynamic(std::make_unique<PenguinTool>(tool));
+router.add<PluginScaffoldTool>();router.add<PluginCheckTool>();router.add<PluginBuildTool>();router.add<PluginTestTool>();
+for(const auto& tool:plugin_tools)router.add_dynamic(std::make_unique<PluginTool>(tool));
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
 for(const auto& p:plugins.entries)if(p.enabled)if(auto m=p.manifest.get("mcp")){const auto config=p.dir/m->str();std::error_code ec;
@@ -1168,10 +1168,10 @@ if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reason
   return 4;
 };
 auto run_turn=[&](const std::string& prompt,bool review_only=false,bool continuing=false)->int{
-  try{auto result=penguin_call("agent.turn",penguin_object({{"prompt",penguin_string(prompt)},{"review_only",penguin_bool(review_only)},{"continuing",penguin_bool(continuing)}}),
-    [&](const Json& request,const penguin::Emit&){return penguin_object({{"exit_code",penguin_number(builtin_run_turn(penguin_text(request,"prompt"),penguin_flag(request,"review_only"),penguin_flag(request,"continuing")))}});});
-    return penguin_integer(result,"exit_code");
-  }catch(const std::exception& e){session.emit(EventKind::Error,"{\"message\":\""+json_escape(e.what())+"\"}");if(tui){tui->add_error(e.what());tui->render();}else std::cerr<<"[penguin] "<<e.what()<<'\n';return 3;}
+  try{auto result=plugin_call("agent.turn",plugin_object({{"prompt",plugin_string(prompt)},{"review_only",plugin_bool(review_only)},{"continuing",plugin_bool(continuing)}}),
+    [&](const Json& request,const plugin::Emit&){return plugin_object({{"exit_code",plugin_number(builtin_run_turn(plugin_text(request,"prompt"),plugin_flag(request,"review_only"),plugin_flag(request,"continuing")))}});});
+    return plugin_integer(result,"exit_code");
+  }catch(const std::exception& e){session.emit(EventKind::Error,"{\"message\":\""+json_escape(e.what())+"\"}");if(tui){tui->add_error(e.what());tui->render();}else std::cerr<<"[plugin] "<<e.what()<<'\n';return 3;}
 };
 if(frontend){frontend->state=[&](){const auto transcript=session.transcript.size()>24000?session.transcript.substr(session.transcript.size()-24000):session.transcript;
     return "{\"session_id\":\""+json_escape(session.id)+"\",\"model\":\""+json_escape(api.model)+"\",\"workspace\":\""+json_escape(opt.root.string())+"\",\"busy\":"+(frontend->busy?"true":"false")+",\"isolated\":"+(execution.unsafe?"false":"true")+",\"transcript\":\""+json_escape(transcript)+"\",\"columns\":"+std::to_string(terminal_columns())+",\"rows\":"+std::to_string(terminal_rows()>2?terminal_rows()-2:0)+"}";};
@@ -1295,7 +1295,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   std::string quota_text;if(api.chatgpt_auth){if(tui)tui->render("querying quota...");std::string quota_err;auto quota=read_codex_quota(quota_err);
     quota_text=quota?quota->report:quota_err;st<<"\n"<<quota_text;quota_job={};accept_quota({std::move(quota),std::move(quota_err)});quota_tried=true;quota_at=std::chrono::steady_clock::now();}
   if(tui){quota_status_visible=true;tui->set_status_details(pin_text());tui->render();}else say(st.str());continue; }
-  if(token=="/penguin"){std::string report;for(const auto& service:penguin_runtime().inspect())report+=service.name+" -> "+service.owner+"\n";say(report);continue;}
+  if(token=="/plugin"){std::string report;for(const auto& service:plugin_runtime().inspect())report+=service.name+" -> "+service.owner+"\n";say(report);continue;}
   if(token=="/plugins"){const auto space=args.find(' ');const auto action=args.substr(0,space);const auto value=space==std::string::npos?std::string():trim(args.substr(space+1));
     if(args.empty()||action=="list")say(plugins.list()+"\n/plugins info ID | install PATH | update PATH | check PATH | enable ID | disable ID | config ID KEY VALUE | reset ID KEY | open ID | uninstall ID");
     else if(action=="info")say(plugins.describe(value));

@@ -5,7 +5,7 @@ static int creator_process_checks(const fs::path& root){
   auto policy=ProcessPolicy::tool(root,true);
   auto unsafe=policy;unsafe.unsafe=true;
   check(creator_process({"not-executed"},unsafe,1,{},false).exit_code==126,"Creator refuses policy unsafe override");
-  PenguinBuildTool builder;
+  PluginBuildTool builder;
   check(builder.is_shell(),"Build uses command approval, not only file-write approval");
   check(builder.execute("{\"path\":\"missing\"}",root,SandboxMode::ReadOnly,{},false).exit_code==126,"Build cannot write under read-only policy");
 #if defined(_WIN32)

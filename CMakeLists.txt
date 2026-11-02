@@ -96,18 +96,18 @@ add_custom_target(codex-web-assets ALL
   VERBATIM)
 
 # Optional development modules/tests are never built or shipped by default.
-add_executable(penguin-runtime-test EXCLUDE_FROM_ALL tests/penguin_runtime_test.cpp)
-target_compile_features(penguin-runtime-test PRIVATE cxx_std_17)
-target_link_libraries(penguin-runtime-test PRIVATE Threads::Threads)
-add_library(penguin-demo MODULE EXCLUDE_FROM_ALL examples/penguin/native.cpp)
-target_compile_features(penguin-demo PRIVATE cxx_std_17)
+add_executable(plugin-runtime-test EXCLUDE_FROM_ALL tests/plugin_runtime_test.cpp)
+target_compile_features(plugin-runtime-test PRIVATE cxx_std_17)
+target_link_libraries(plugin-runtime-test PRIVATE Threads::Threads)
+add_library(plugin-demo MODULE EXCLUDE_FROM_ALL examples/plugin/native.cpp)
+target_compile_features(plugin-demo PRIVATE cxx_std_17)
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-  target_sources(penguin-demo PRIVATE examples/penguin/native.def)
+  target_sources(plugin-demo PRIVATE examples/plugin/native.def)
 endif()
-set_target_properties(penguin-demo PROPERTIES PREFIX "" OUTPUT_NAME "penguin-demo" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/penguin-demo" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/penguin-demo")
+set_target_properties(plugin-demo PROPERTIES PREFIX "" OUTPUT_NAME "plugin-demo" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/plugin-demo" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/plugin-demo")
 if(APPLE)
-  set_target_properties(penguin-demo PROPERTIES SUFFIX ".dylib")
+  set_target_properties(plugin-demo PROPERTIES SUFFIX ".dylib")
 endif()
-add_custom_command(TARGET penguin-demo POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/penguin/penguin.json $<TARGET_FILE_DIR:penguin-demo>/penguin.json
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/penguin/client.js $<TARGET_FILE_DIR:penguin-demo>/client.js)
+add_custom_command(TARGET plugin-demo POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/plugin.json $<TARGET_FILE_DIR:plugin-demo>/plugin.json
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/client.js $<TARGET_FILE_DIR:plugin-demo>/client.js)

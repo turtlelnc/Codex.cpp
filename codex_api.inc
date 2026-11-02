@@ -161,42 +161,42 @@ std::optional<ApiResponse> builtin_call_chat(const std::string& messages_json,co
     auto response=parse_api_response(reply.body,true,err);if(response && response->text && on_delta)on_delta(*response->text);return response;}
   return decoder.finish(err);
 }
-Json penguin_config()const{return penguin_object({{"base_url",penguin_string(base_url)},{"model",penguin_string(model)},{"reasoning_effort",penguin_string(reasoning_effort)},{"chatgpt_auth",penguin_bool(chatgpt_auth)},{"no_api_key",penguin_bool(no_api_key)}});}
-ApiClient penguin_client(const Json& request)const{auto config=request.get("config");if(!config)throw std::runtime_error("Penguin model config missing");ApiClient client=*this;
-  client.base_url=penguin_text(*config,"base_url");client.model=penguin_text(*config,"model");client.reasoning_effort=penguin_text(*config,"reasoning_effort");
-  client.chatgpt_auth=penguin_flag(*config,"chatgpt_auth");client.no_api_key=penguin_flag(*config,"no_api_key");return client;
+Json plugin_config()const{return plugin_object({{"base_url",plugin_string(base_url)},{"model",plugin_string(model)},{"reasoning_effort",plugin_string(reasoning_effort)},{"chatgpt_auth",plugin_bool(chatgpt_auth)},{"no_api_key",plugin_bool(no_api_key)}});}
+ApiClient plugin_client(const Json& request)const{auto config=request.get("config");if(!config)throw std::runtime_error("Plugin model config missing");ApiClient client=*this;
+  client.base_url=plugin_text(*config,"base_url");client.model=plugin_text(*config,"model");client.reasoning_effort=plugin_text(*config,"reasoning_effort");
+  client.chatgpt_auth=plugin_flag(*config,"chatgpt_auth");client.no_api_key=plugin_flag(*config,"no_api_key");return client;
 }
-std::optional<ApiResponse> penguin_request(Json request,std::string& err,const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& tick={},bool watch=false,const std::function<void(const std::string&)>& on_reasoning={})const{
-  request.fields["config"]=penguin_config();TerminalInputScope penguin_input(watch);
-  try{auto output=penguin_call("model.request",request,[&](const Json& input,const penguin::Emit& emit){
-    auto client=penguin_client(input);auto kind=penguin_text(input,"kind");std::string why;std::optional<ApiResponse> response;
+std::optional<ApiResponse> plugin_request(Json request,std::string& err,const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& tick={},bool watch=false,const std::function<void(const std::string&)>& on_reasoning={})const{
+  request.fields["config"]=plugin_config();TerminalInputScope plugin_input(watch);
+  try{auto output=plugin_call("model.request",request,[&](const Json& input,const plugin::Emit& emit){
+    auto client=plugin_client(input);auto kind=plugin_text(input,"kind");std::string why;std::optional<ApiResponse> response;
     auto text=[&](const std::string& delta){if(emit)emit("text",delta);};auto reasoning=[&](const std::string& delta){if(emit)emit("reasoning",delta);};
-    if(kind=="chat")response=client.builtin_call_chat(penguin_text(input,"messages"),penguin_text(input,"tools"),why,text,tick,watch,reasoning);
+    if(kind=="chat")response=client.builtin_call_chat(plugin_text(input,"messages"),plugin_text(input,"tools"),why,text,tick,watch,reasoning);
     else if(kind=="responses"){std::optional<std::string> previous;if(auto value=input.get("previous_response_id");value && value->kind==Json::String)previous=value->str();
-      response=client.builtin_call_responses(penguin_text(input,"instructions"),penguin_text(input,"input"),penguin_text(input,"tools"),why,previous,text,tick,watch,reasoning);
-    }else if(kind=="text")response=client.builtin_call_text_only(penguin_text(input,"instructions"),penguin_text(input,"text"),why);
-    else throw std::runtime_error("Unknown Penguin model request kind");
+      response=client.builtin_call_responses(plugin_text(input,"instructions"),plugin_text(input,"input"),plugin_text(input,"tools"),why,previous,text,tick,watch,reasoning);
+    }else if(kind=="text")response=client.builtin_call_text_only(plugin_text(input,"instructions"),plugin_text(input,"text"),why);
+    else throw std::runtime_error("Unknown Plugin model request kind");
     if(!response)throw std::runtime_error(why.empty()?"Model request failed":why);
-    Json calls;calls.kind=Json::Array;for(const auto& c:response->calls)calls.items.push_back(penguin_object({{"name",penguin_string(c.name)},{"call_id",penguin_string(c.call_id)},{"arguments",penguin_string(c.arguments)}}));
-    return penguin_object({{"id",penguin_string(response->id)},{"text",response->text?penguin_string(*response->text):Json{}},{"calls",calls}});
+    Json calls;calls.kind=Json::Array;for(const auto& c:response->calls)calls.items.push_back(plugin_object({{"name",plugin_string(c.name)},{"call_id",plugin_string(c.call_id)},{"arguments",plugin_string(c.arguments)}}));
+    return plugin_object({{"id",plugin_string(response->id)},{"text",response->text?plugin_string(*response->text):Json{}},{"calls",calls}});
   },[&](const std::string& kind,const std::string& delta){if(kind=="text" && on_delta)on_delta(delta);else if(kind=="reasoning" && on_reasoning)on_reasoning(delta);else if(kind=="tick"){if(tick)tick();if(watch && busy_input && busy_input("",0))throw std::runtime_error("Interrupted by Esc");
 #if !defined(_WIN32)
 if(tui_interrupt_requested)throw std::runtime_error("Interrupted by Esc");
 #endif
 }});
-  ApiResponse response;response.id=penguin_text(output,"id");if(auto text=output.get("text");text && text->kind==Json::String)response.text=text->str();
-  auto calls=output.get("calls");if(!calls || calls->kind!=Json::Array)throw std::runtime_error("Penguin model calls must be an array");for(const auto& c:calls->items){auto args=penguin_text(c,"arguments");auto json=parse_json(args);if(!json||json->kind!=Json::Object)throw std::runtime_error("Invalid Penguin tool arguments");response.calls.push_back({penguin_text(c,"name"),penguin_text(c,"call_id"),args});}
-  if(!response.text && response.calls.empty())throw std::runtime_error("Penguin model returned no text or tools");return response;
+  ApiResponse response;response.id=plugin_text(output,"id");if(auto text=output.get("text");text && text->kind==Json::String)response.text=text->str();
+  auto calls=output.get("calls");if(!calls || calls->kind!=Json::Array)throw std::runtime_error("Plugin model calls must be an array");for(const auto& c:calls->items){auto args=plugin_text(c,"arguments");auto json=parse_json(args);if(!json||json->kind!=Json::Object)throw std::runtime_error("Invalid Plugin tool arguments");response.calls.push_back({plugin_text(c,"name"),plugin_text(c,"call_id"),args});}
+  if(!response.text && response.calls.empty())throw std::runtime_error("Plugin model returned no text or tools");return response;
   }catch(const std::exception& e){err=e.what();return{};}
 }
 std::optional<ApiResponse> call_text_only(const std::string& instructions,const std::string& text,std::string& err)const{
-  return penguin_request(penguin_object({{"kind",penguin_string("text")},{"instructions",penguin_string(instructions)},{"text",penguin_string(text)}}),err);
+  return plugin_request(plugin_object({{"kind",plugin_string("text")},{"instructions",plugin_string(instructions)},{"text",plugin_string(text)}}),err);
 }
 std::optional<ApiResponse> call_chat(const std::string& messages,const std::string& tools,std::string& err,const std::function<void(const std::string&)>& delta={},const std::function<void()>& tick={},bool watch=false,const std::function<void(const std::string&)>& reasoning={})const{
-  return penguin_request(penguin_object({{"kind",penguin_string("chat")},{"messages",penguin_string(messages)},{"tools",penguin_string(tools)}}),err,delta,tick,watch,reasoning);
+  return plugin_request(plugin_object({{"kind",plugin_string("chat")},{"messages",plugin_string(messages)},{"tools",plugin_string(tools)}}),err,delta,tick,watch,reasoning);
 }
 std::optional<ApiResponse> call_responses(const std::string& instructions,const std::string& input,const std::string& tools,std::string& err,const std::optional<std::string>& previous={},const std::function<void(const std::string&)>& delta={},const std::function<void()>& tick={},bool watch=false,const std::function<void(const std::string&)>& reasoning={})const{
-  return penguin_request(penguin_object({{"kind",penguin_string("responses")},{"instructions",penguin_string(instructions)},{"input",penguin_string(input)},{"tools",penguin_string(tools)},{"previous_response_id",previous?penguin_string(*previous):Json{}}}),err,delta,tick,watch,reasoning);
+  return plugin_request(plugin_object({{"kind",plugin_string("responses")},{"instructions",plugin_string(instructions)},{"input",plugin_string(input)},{"tools",plugin_string(tools)},{"previous_response_id",previous?plugin_string(*previous):Json{}}}),err,delta,tick,watch,reasoning);
 }
 
 };
@@ -229,7 +229,7 @@ static std::optional<std::vector<ModelInfo>> builtin_read_models(const ApiClient
   auto models=parse_openai_models(r.body);if(!models || models->empty()){err="No models in response";return{};}return models; }
 
 static std::optional<std::vector<ModelInfo>> read_models(const ApiClient& api,std::string& err){try{
-  auto result=penguin_call("model.catalog",penguin_object({{"config",api.penguin_config()}}),[&](const Json& input,const penguin::Emit&){std::string why;auto models=builtin_read_models(api.penguin_client(input),why);if(!models)throw std::runtime_error(why);
-    Json list;list.kind=Json::Array;for(const auto& model:*models){Json efforts;efforts.kind=Json::Array;for(const auto& effort:model.efforts)efforts.items.push_back(penguin_string(effort));list.items.push_back(penguin_object({{"id",penguin_string(model.id)},{"description",penguin_string(model.description)},{"default_effort",penguin_string(model.default_effort)},{"efforts",efforts}}));}return list;
-  });if(result.kind!=Json::Array)throw std::runtime_error("Penguin model catalog must be an array");std::vector<ModelInfo> models;for(const auto& value:result.items){ModelInfo model;model.id=penguin_text(value,"id");model.description=penguin_text(value,"description");model.default_effort=penguin_text(value,"default_effort");if(auto efforts=value.get("efforts");efforts && efforts->kind==Json::Array)for(const auto& effort:efforts->items)if(effort.kind==Json::String)model.efforts.push_back(effort.str());models.push_back(std::move(model));}return models;
+  auto result=plugin_call("model.catalog",plugin_object({{"config",api.plugin_config()}}),[&](const Json& input,const plugin::Emit&){std::string why;auto models=builtin_read_models(api.plugin_client(input),why);if(!models)throw std::runtime_error(why);
+    Json list;list.kind=Json::Array;for(const auto& model:*models){Json efforts;efforts.kind=Json::Array;for(const auto& effort:model.efforts)efforts.items.push_back(plugin_string(effort));list.items.push_back(plugin_object({{"id",plugin_string(model.id)},{"description",plugin_string(model.description)},{"default_effort",plugin_string(model.default_effort)},{"efforts",efforts}}));}return list;
+  });if(result.kind!=Json::Array)throw std::runtime_error("Plugin model catalog must be an array");std::vector<ModelInfo> models;for(const auto& value:result.items){ModelInfo model;model.id=plugin_text(value,"id");model.description=plugin_text(value,"description");model.default_effort=plugin_text(value,"default_effort");if(auto efforts=value.get("efforts");efforts && efforts->kind==Json::Array)for(const auto& effort:efforts->items)if(effort.kind==Json::String)model.efforts.push_back(effort.str());models.push_back(std::move(model));}return models;
   }catch(const std::exception& e){err=e.what();return{};}}

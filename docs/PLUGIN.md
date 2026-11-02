@@ -1,4 +1,4 @@
-# Everything is a Penguin（实验性原生模块架构）
+# Everything is a Plugin（实验性原生模块架构）
 
 内置模型、Agent 回合、提示词、工具执行、会话写入，以及 WebUI 渲染都通过命名服务调用。内置模块与扩展使用同一套注册、依赖和显式替换规则；没有加载扩展时仍是同一个自包含 C++17 可执行文件。原有 `plugin.json` 声明式扩展及 MCP 保持可用。
 
@@ -10,19 +10,19 @@
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target codex-cpp penguin-demo --parallel 2
+cmake --build build --target codex-cpp plugin-demo --parallel 2
 
-./build/codex-cpp --penguin "$PWD/build/penguin-demo/penguin.json" penguin inspect
-./build/codex-cpp --penguin "$PWD/build/penguin-demo/penguin.json" web \
+./build/codex-cpp --plugin "$PWD/build/plugin-demo/plugin.json" plugin inspect
+./build/codex-cpp --plugin "$PWD/build/plugin-demo/plugin.json" web \
   --root /path/to/project --provider custom --api chat \
-  --base-url http://127.0.0.1:9 --model penguin-demo --no-api-key
+  --base-url http://127.0.0.1:9 --model plugin-demo --no-api-key
 ```
 
-示例完全离线：替换模型、模型列表、包裹 Agent 驱动、增加 `penguin_status` 工具，同时在侧栏添加内容、装饰 Markdown 渲染。发送 `run_penguin_tool` 会实际调用原生工具再回复。默认内置模型与示例模型的回复不同，便于检查是否真正加载。
+示例完全离线：替换模型、模型列表、包裹 Agent 驱动、增加 `plugin_status` 工具，同时在侧栏添加内容、装饰 Markdown 渲染。发送 `run_plugin_tool` 会实际调用原生工具再回复。默认内置模型与示例模型的回复不同，便于检查是否真正加载。
 
-Windows 多配置生成器使用 `build/Release/codex-cpp.exe` 与 `build/penguin-demo/Release/penguin.json`；运行参数中必须提供绝对路径。macOS 示例产物为 `.dylib`，Linux 为 `.so`，Windows 为 `.dll`，架构必须与宿主一致。
+Windows 多配置生成器使用 `build/Release/codex-cpp.exe` 与 `build/plugin-demo/Release/plugin.json`；运行参数中必须提供绝对路径。macOS 示例产物为 `.dylib`，Linux 为 `.so`，Windows 为 `.dll`，架构必须与宿主一致。
 
-`--penguin` 必须放在 `web`、`serve` 或普通 Agent 参数之前，可以重复使用；排列顺序就是覆盖顺序。清除此启动参数即可回到原有实现，无需删除用户会话。Web/多人服务会把管理员指定的模块列表传给 Agent 子进程；终端、网页用户或模型不能通过 RPC 安装原生代码。
+`--plugin` 必须放在 `web`、`serve` 或普通 Agent 参数之前，可以重复使用；排列顺序就是覆盖顺序。清除此启动参数即可回到原有实现，无需删除用户会话。Web/多人服务会把管理员指定的模块列表传给 Agent 子进程；终端、网页用户或模型不能通过 RPC 安装原生代码。
 
 原生模块具有宿主进程的完整权限；显式加载就等于信任其代码，不能把它当作沙箱里的普通工具。现有工具路由仍在模块回调之前做只读检查和审批；给原生工具声明 `mutates` 是模块作者的契约，无法约束恶意原生代码。
 
@@ -36,11 +36,11 @@ Windows 多配置生成器使用 `build/Release/codex-cpp.exe` 与 `build/pengui
 - C++ 注册表启动后冻结。原生库保持到进程结束，不支持运行中卸载，避免悬空函数指针及执行中的 Agent 状态丢失。不要把注册事务回滚理解为能撤销任意原生初始化副作用。
 - 浏览器模块有单独的生命周期；移除时先清理其 DOM/CSS，再恢复被覆盖服务。存在依赖或上层覆盖时拒绝移除。
 
-查看当前服务：命令行 `penguin inspect` 输出 JSON；TUI `/penguin`；WebUI 左下角“模组”。它们显示 owner 和覆盖链，不显示密钥。
+查看当前服务：命令行 `plugin inspect` 输出 JSON；TUI `/plugin`；WebUI 左下角“模组”。它们显示 owner 和覆盖链，不显示密钥。
 
 ## C ABI
 
-公共头文件为 [`penguin/native.h`](../penguin/native.h)，示例为 [`examples/penguin/native.cpp`](../examples/penguin/native.cpp)。模块导出 `codex_penguin_init_v1`，通过 `host.bind` 注册清单中的服务。
+公共头文件为 [`plugin/native.h`](../plugin/native.h)，示例为 [`examples/plugin/native.cpp`](../examples/plugin/native.cpp)。模块导出 `codex_plugin_init_v1`，通过 `host.bind` 注册清单中的服务。
 
 所有请求和最终结果都是 UTF-8 JSON，使用明确长度；不在模块间传递 STL 对象、分配器或应用对象。缓冲区、`next` 及回调只在当前调用期间有效，不能保存到异步线程。插件必须自行保证线程安全，禁止异常跨越 C ABI。长时间工作应定期调用 `call.poll(call.emit_context)`，非零时停止；模型服务的 poll 会泵送 UI 并检查取消。阻塞且不配合的原生代码无法安全强制终止单个线程，Web 服务仍可终止整个 Agent 子进程。
 
@@ -98,11 +98,17 @@ export default ({ register, attach, element, onDispose }) => {
 - 默认可执行文件仍内嵌所有标准 WebUI 文件，不需要插件目录、Node.js 或 Python。
 - 原生动态库需要系统动态加载器。现有 **Linux musl 全静态 Release 无法 dlopen 原生库**；该版本可用内置模块及纯 WebUI 扩展。Linux 原生库扩展请使用正常 glibc 构建。macOS/Windows 采用系统加载器。不要把默认单文件与“包含任意未安装模组”混为一谈。
 - ABI v1、各服务字段均为实验协议。没有跨平台原生热卸载、远程插件市场或 Cordis 插件兼容层。
-- `tests/penguin_runtime_test.cpp` 检查覆盖、回滚、依赖、并发、递归和冻结。
-- `tests/penguin_integration.cjs` 用实际动态库验证模型、Agent、工具、默认回退、错误清单与只读拦截。
-- `tests/penguin_browser_test.cjs` 用实际 C++ 服务验证模块传给 Agent 子进程、UI 替换/移除、认证资源和刷新恢复。
+- `tests/plugin_runtime_test.cpp` 检查覆盖、回滚、依赖、并发、递归和冻结。
+- `tests/plugin_integration.cjs` 用实际动态库验证模型、Agent、工具、默认回退、错误清单与只读拦截。
+- `tests/plugin_browser_test.cjs` 用实际 C++ 服务验证模块传给 Agent 子进程、UI 替换/移除、认证资源和刷新恢复。
 - 原有浏览器布局、文件保存竞态、Markdown 标题、渐显逐帧、工具审批与多人流程继续回归。
 
 ## Agent 制作插件
 
-内置 Creator Skill、SDK 模板及制作/构建/静态检查/隔离探测流程见 [Penguin Creator](PENGUIN_CREATOR.md)。测试不会向当前服务启用插件；实际加载仍由用户或服务器管理员显式重启。
+内置 Creator Skill、SDK 模板及制作/构建/静态检查/隔离探测流程见 [Plugin Creator](PLUGIN_CREATOR.md)。测试不会向当前服务启用插件；实际加载仍由用户或服务器管理员显式重启。
+
+## 名称与 SDK 更新
+
+统一使用 Plugin：命令为 `plugin` / `--plugin` / `--plugin-reviewed`，模型工具为 `plugin_scaffold`、`plugin_build`、`plugin_check`、`plugin_test`，清单为 `plugin.json`。原生入口为 `codex_plugin_init_v1`，SDK 位于 `plugin/native.h`，浏览器 API 为 `CodexPlugin`（保留浏览器原生 `window.Plugin`）。已有原生插件需使用新版 SDK 重建并更新清单文件名及启动参数；不保留旧命名别名。
+
+原生插件使用 `--plugin` / `--plugin-reviewed` 显式加载；已有声明式/MCP 插件仍通过 `/plugins` 安装和管理。两类插件各自保留原有清单校验与权限语义，不因名称统一而自动获得加载权限。

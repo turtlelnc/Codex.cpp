@@ -1,35 +1,29 @@
 name: Publish verified release artifacts
 on:
-  push:
-    branches: ['fix/penguin-release-hardening']
   workflow_dispatch:
     inputs:
       build_run:
         description: Successful Single-file release run ID
         required: true
-        default: '41391439257'
       expected_sha:
         description: Exact verified source commit
         required: true
-        default: '65834e974707ddcd01d13fc03af84c9c44048612'
       tag:
         description: New preview tag ending in source short SHA
         required: true
-        default: 'penguin-preview-20261102-65834e9'
 permissions:
   contents: read
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[publish-verified]')
     runs-on: ubuntu-22.04
     permissions:
       actions: read
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      BUILD_RUN: ${{ inputs.build_run || '41391439257' }}
-      SOURCE_SHA: ${{ inputs.expected_sha || '65834e974707ddcd01d13fc03af84c9c44048612' }}
-      RELEASE_TAG: ${{ inputs.tag || 'penguin-preview-20261102-65834e9' }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      SOURCE_SHA: ${{ inputs.expected_sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,7 +33,7 @@ jobs:
         run: |
           node <<'JS'
           const assert=require('node:assert/strict'),cp=require('node:child_process'),e=process.env;
-          assert(/^\d+$/.test(e.BUILD_RUN));assert(/^[a-f0-9]{40}$/.test(e.SOURCE_SHA));assert(/^penguin-preview-\d{8}-[a-f0-9]{7}$/.test(e.RELEASE_TAG));assert(e.RELEASE_TAG.endsWith(e.SOURCE_SHA.slice(0,7)));
+          assert(/^\d+$/.test(e.BUILD_RUN));assert(/^[a-f0-9]{40}$/.test(e.SOURCE_SHA));assert(/^plugin-preview-\d{8}-[a-f0-9]{7}$/.test(e.RELEASE_TAG));assert(e.RELEASE_TAG.endsWith(e.SOURCE_SHA.slice(0,7)));
           const run=JSON.parse(cp.execFileSync('gh',['api',`repos/${e.GITHUB_REPOSITORY}/actions/runs/${e.BUILD_RUN}`],{encoding:'utf8'}));
           assert.equal(run.conclusion,'success');assert.equal(run.head_sha,e.SOURCE_SHA);assert.equal(run.head_repository.full_name,e.GITHUB_REPOSITORY);assert.equal(run.path,'.github/workflows/release.yml');
           JS
@@ -52,10 +46,10 @@ jobs:
         run: |
           node <<'JS'
           const fs=require('node:fs'),e=process.env;
-          fs.writeFileSync('preview-notes.md',`Verified source: ${e.SOURCE_SHA}\n\nAll-platform build: https://github.com/${e.GITHUB_REPOSITORY}/actions/runs/${e.BUILD_RUN}\n\nChanges are in PR #13; main is not merged automatically. This is a preview. macOS users should download .zip; Linux users should download .tar.gz to preserve executable permissions. Linux -native variants support native Penguins (glibc >=2.35 x64, >=2.39 ARM64); static-musl variants do not dlopen.\n\n`+fs.readFileSync('docs/RELEASE_NOTES.md','utf8'));
+          fs.writeFileSync('preview-notes.md',`Verified source: ${e.SOURCE_SHA}\n\nAll-platform build: https://github.com/${e.GITHUB_REPOSITORY}/actions/runs/${e.BUILD_RUN}\n\nMain is not merged automatically. This is a preview. macOS users should download .zip; Linux users should download .tar.gz to preserve executable permissions. Linux -native variants support native Plugins (glibc >=2.35 x64, >=2.39 ARM64); static-musl variants do not dlopen.\n\n`+fs.readFileSync('docs/RELEASE_NOTES.md','utf8'));
           JS
           cd dist
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease --latest=false --title "Penguin Creator all-platform preview" --notes-file ../preview-notes.md codex-cpp-* SHA256SUMS.txt DOWNLOADS_SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease --latest=false --title "Plugin Creator all-platform preview" --notes-file ../preview-notes.md codex-cpp-* SHA256SUMS.txt DOWNLOADS_SHA256SUMS.txt
       - name: Verify published assets
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > published.json

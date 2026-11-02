@@ -1,21 +1,21 @@
-# Penguin Creator（第一版）
+# Plugin Creator（第一版）
 
 可以直接对 Agent 说：
 
-> 帮我制作一个 Penguin 插件：在侧栏增加可暂停的番茄钟。先读取 penguin-creator Skill，生成、实现、检查和测试，完成后让我审阅，不要自动启用。
+> 帮我制作一个 Plugin 插件：在侧栏增加可暂停的番茄钟。先读取 plugin-creator Skill，生成、实现、检查和测试，完成后让我审阅，不要自动启用。
 
 或要求制作 C/C++ 原生工具。程序内嵌 Skill、公共 C ABI 头文件和独立插件模板；运行预编译 Codex.cpp 不需要再下载项目源码或 SDK。Agent 仍需实现实际功能；脚手架本身只是起点。
 
 ## 工作流
 
-1. `read_skill` 读取内置 `penguin-creator`。
-2. `penguin_scaffold` 在工作区创建新目录，`kind` 为 `native` 或 `web`。ID 使用 `[a-z0-9][a-z0-9_-]{0,31}`，以兼容原生和网页模块；目录存在就拒绝，不覆盖现有文件。
+1. `read_skill` 读取内置 `plugin-creator`。
+2. `plugin_scaffold` 在工作区创建新目录，`kind` 为 `native` 或 `web`。ID 使用 `[a-z0-9][a-z0-9_-]{0,31}`，以兼容原生和网页模块；目录存在就拒绝，不覆盖现有文件。
 3. Agent 用已有文件工具实现功能。原生模板包含 native.h、plugin.cpp、CMakeLists.txt、导出定义、清单及 WebUI 入口；web 模板无需编译。
-4. `penguin_build` 在 OS 沙箱内构建：Linux 调用 CMake；macOS 仅调用系统 clang++ 编译 plugin.cpp，再调用系统 codesign，不执行项目 CMake/脚本钩子。自定义多目标工程或特殊链接参数需用户自行审阅后手动构建。不下载依赖、不安装插件；构建使用工作区写权限和命令审批；验证构建会清理后重建，避免快速编辑或旧时间戳导致沿用旧产物。已在当前进程加载的原生 id 不允许原地重建。
-5. `penguin_check` 静态检查清单、资源路径、工具声明及当前编译产物，并返回文件 SHA-256 和手动启动参数。检查不会执行原生代码或 JavaScript，也不代表功能正确。
-6. `penguin_test` 在单独的只读、禁止网络且环境已清理的 OS 沙箱内验证原生 ABI 初始化/服务注册，最多运行 10 秒，限制输出量。它遵循既有命令执行审批；不向当前服务加载插件。调用后不得声称插件工具或界面已经过功能测试。
+4. `plugin_build` 在 OS 沙箱内构建：Linux 调用 CMake；macOS 仅调用系统 clang++ 编译 plugin.cpp，再调用系统 codesign，不执行项目 CMake/脚本钩子。自定义多目标工程或特殊链接参数需用户自行审阅后手动构建。不下载依赖、不安装插件；构建使用工作区写权限和命令审批；验证构建会清理后重建，避免快速编辑或旧时间戳导致沿用旧产物。已在当前进程加载的原生 id 不允许原地重建。
+5. `plugin_check` 静态检查清单、资源路径、工具声明及当前编译产物，并返回文件 SHA-256 和手动启动参数。检查不会执行原生代码或 JavaScript，也不代表功能正确。
+6. `plugin_test` 在单独的只读、禁止网络且环境已清理的 OS 沙箱内验证原生 ABI 初始化/服务注册，最多运行 10 秒，限制输出量。它遵循既有命令执行审批；不向当前服务加载插件。调用后不得声称插件工具或界面已经过功能测试。
 7. 有浏览器或测试能力时继续验证实际功能；否则明确标记未验证。最后再次 check，网页会展示审阅结果和“复制手动启用命令”。探测报告与检查文件的指纹一致时，才显示“隔离加载测试通过”。
-8. 用户审阅并信任代码后，停止旧实例，显式以报告给出的 `--penguin-reviewed /绝对路径/penguin.json SHA256` 重启。网页中的命令是本地 WebUI 示例；多人服务由管理员把参数加入原服务启动命令，保留原来的 state-dir、监听、认证等配置。
+8. 用户审阅并信任代码后，停止旧实例，显式以报告给出的 `--plugin-reviewed /绝对路径/plugin.json SHA256` 重启。网页中的命令是本地 WebUI 示例；多人服务由管理员把参数加入原服务启动命令，保留原来的 state-dir、监听、认证等配置。
 
 生成、编译、探测或复制命令都不会启用插件，没有自动安装/热加载 RPC。原生代码正式启用后具有宿主完整权限，网页插件具有当前页面/会话权限。
 
@@ -25,21 +25,21 @@
 
 ```sh
 cd /path/to/workspace
-codex-cpp penguin scaffold plugins/my-tool my-tool native
-codex-cpp penguin build plugins/my-tool
-codex-cpp penguin check plugins/my-tool
-codex-cpp penguin test plugins/my-tool
+codex-cpp plugin scaffold plugins/my-tool my-tool native
+codex-cpp plugin build plugins/my-tool
+codex-cpp plugin check plugins/my-tool
+codex-cpp plugin test plugins/my-tool
 ```
 
 纯网页插件：
 
 ```sh
-codex-cpp penguin scaffold plugins/my-widget my-widget web
+codex-cpp plugin scaffold plugins/my-widget my-widget web
 # 实现 client.js 后静态检查；实际交互另用浏览器验证。
-codex-cpp penguin check plugins/my-widget
+codex-cpp plugin check plugins/my-widget
 ```
 
-已有命令 `penguin inspect` 和 TUI `/penguin` 保持不变。CLI 的 build/test 与 Agent 工具一样要求隔离，不会因沙箱缺失而自动放开权限。
+已有命令 `plugin inspect` 和 TUI `/plugin` 保持不变。CLI 的 build/test 与 Agent 工具一样要求隔离，不会因沙箱缺失而自动放开权限。
 
 ## 平台与验证边界
 
@@ -52,9 +52,9 @@ codex-cpp penguin check plugins/my-widget
 
 ## 实际回归
 
-`tests/penguin_creator_test.cjs` 测试 SDK 内嵌、两种模板、不覆盖/越界拒绝、真实构建、单独启用，以及恶意初始化写入/环境读取被隔离、挂起初始化按时终止。Windows 分支验证拒绝不安全自动流程及手动编译模板。
+`tests/plugin_creator_test.cjs` 测试 SDK 内嵌、两种模板、不覆盖/越界拒绝、真实构建、单独启用，以及恶意初始化写入/环境读取被隔离、挂起初始化按时终止。Windows 分支验证拒绝不安全自动流程及手动编译模板。
 
-`tests/penguin_creator_browser_test.cjs` 使用确定性模拟模型驱动真实 C++ 服务：读 Skill → 创建 → 编辑计数器 → 构建 → 隔离加载 → 检查。覆盖批准和拒绝、源码查看、命令复制、窄屏审阅；确认插件没有自动生效，再由测试显式重启验证生成的原生工具和点击计数器实际工作、卸载清理。
+`tests/plugin_creator_browser_test.cjs` 使用确定性模拟模型驱动真实 C++ 服务：读 Skill → 创建 → 编辑计数器 → 构建 → 隔离加载 → 检查。覆盖批准和拒绝、源码查看、命令复制、窄屏审阅；确认插件没有自动生效，再由测试显式重启验证生成的原生工具和点击计数器实际工作、卸载清理。
 
 这些测试验证工具链和界面，不消耗真实模型额度；真实 DeepSeek 是否遵循 Skill、完成任意复杂需求，仍取决于模型与具体任务。
 
@@ -71,12 +71,12 @@ codex-cpp penguin check plugins/my-widget
 Creator 现在生成以下形式的命令（实际 SHA 来自 check，不要照抄占位符）：
 
 ```sh
-codex-cpp --penguin-reviewed /absolute/plugin/penguin.json REVIEW_SHA256 web --root /workspace
+codex-cpp --plugin-reviewed /absolute/plugin/plugin.json REVIEW_SHA256 web --root /workspace
 ```
 
 `review_sha256` 是清单、当前平台原生库、声明的 JS/CSS 和已知模板源码指纹映射的 SHA-256。启动时重新读取并验证这些字节，任一文件更改/重建、清单不一致、缺失或链接风险都拒绝加载，需重新审阅。读取逐级使用目录句柄，拒绝符号链接/reparse point 和最终文件的硬链接；Linux/macOS 用 openat/O_NOFOLLOW，Windows 保持祖先目录句柄以阻止替换。
 
-验证后的同一批字节会写入当前用户私有的临时快照；dlopen/LoadLibraryExW 与网页资源服务均使用快照，不再重新打开原目录。修改原目录不会改变已经启动的实例。正常退出会清理快照；强制结束/崩溃可能遗留临时目录，可在实例停止后清理。原有 `--penguin ABS_MANIFEST` 保持兼容，表示**在本次启动时信任当前文件**：无需外部审阅 pin，但同样固定快照并将快照及本次计算的指纹传给 worker，后续修改原目录不会改变新任务。它不证明用户审阅过这些字节。不要将它替代 Creator 生成的 reviewed 参数。
+验证后的同一批字节会写入当前用户私有的临时快照；dlopen/LoadLibraryExW 与网页资源服务均使用快照，不再重新打开原目录。修改原目录不会改变已经启动的实例。正常退出会清理快照；强制结束/崩溃可能遗留临时目录，可在实例停止后清理。原有 `--plugin ABS_MANIFEST` 保持兼容，表示**在本次启动时信任当前文件**：无需外部审阅 pin，但同样固定快照并将快照及本次计算的指纹传给 worker，后续修改原目录不会改变新任务。它不证明用户审阅过这些字节。不要将它替代 Creator 生成的 reviewed 参数。
 
 这不是签名、不可伪造的授权凭据或恶意代码检测。用户仍需信任插件本身及其依赖。指纹只绑定报告列出的文件，不证明全部源代码和二进制的对应关系，也不覆盖系统动态加载器、第三方依赖库、绝对路径依赖及插件主动读取的外部资源。复杂原生依赖/额外资产不适合此最小快照流程：显式失败或另行人工审阅、配置和验证，不会自动信任/复制整棵目录。已受信的原生模块能修改宿主内存、绕过进程内审批并访问凭据、文件及网络；服务注册/工具 mutates 声明不是原生代码的安全隔离。
 
@@ -86,9 +86,9 @@ Creator 自动构建要求产物路径位于插件的 build/ 目录，避免清�
 
 报告明确保留 `functional_tested:false`、`security_reviewed:false`、`activation_authorized:false`。自动工具不具备替用户批准正式加载的能力；复制命令也不代表授权。历史审阅卡是历史快照，查看清单打开当前文件；若文件已变更，旧命令会拒绝加载。
 
-WebUI 启动的 Agent 子进程同样接收私有快照与原指纹，不退回原工作区清单；子进程再次验证后建立自己的私有副本。即使把 `/tmp` 作为项目，模型文件工具和 OS 子进程也不能修改继承的父服务快照。手动 `--penguin` 模式也会固定启动快照，不再让 worker 重读原目录；Creator 仍只生成带外部指纹的 reviewed 模式。
+WebUI 启动的 Agent 子进程同样接收私有快照与原指纹，不退回原工作区清单；子进程再次验证后建立自己的私有副本。即使把 `/tmp` 作为项目，模型文件工具和 OS 子进程也不能修改继承的父服务快照。手动 `--plugin` 模式也会固定启动快照，不再让 worker 重读原目录；Creator 仍只生成带外部指纹的 reviewed 模式。
 
-本轮已确认缺陷、负面测试与保留风险的审查记录见 [Creator 复审](PENGUIN_CREATOR_REVIEW.md)。
+本轮已确认缺陷、负面测试与保留风险的审查记录见 [Creator 复审](PLUGIN_CREATOR_REVIEW.md)。
 
 ## 声明额外运行资源
 
