@@ -5,10 +5,10 @@ const fs = require("node:fs"),
   assert = require("node:assert/strict"),
   { environment } = require("./creator_test_helpers.cjs");
 const binary = path.resolve(process.argv[2]),
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "penguin-creator-")),
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-creator-")),
   env = environment(root);
 function run(args, code = 0) {
-  const p = spawnSync(binary, ["penguin", ...args], {
+  const p = spawnSync(binary, ["plugin", ...args], {
     cwd: root,
     env,
     encoding: "utf8",
@@ -43,7 +43,7 @@ try {
   assert.equal(web.kind, "web");
   assert.equal(web.native_executed, false);
   assert(!fs.existsSync(path.join(root, "web-demo", "CMakeLists.txt")));
-  const manifest = path.join(root, "native-demo", "penguin.json"),
+  const manifest = path.join(root, "native-demo", "plugin.json"),
     original = JSON.parse(fs.readFileSync(manifest));
   const bad = structuredClone(original);
   bad.web.entry = "../secret.js";
@@ -94,15 +94,15 @@ try {
   assert.equal(data.security_reviewed, false);
   assert.equal(data.activation_authorized, false);
   assert.match(data.review_sha256, /^[0-9a-f]{64}$/);
-  assert.equal(data.launch_args[1], "--penguin-reviewed");
+  assert.equal(data.launch_args[1], "--plugin-reviewed");
   const launch = (report, code = 0) => {
     const p = spawnSync(
       binary,
       [
-        "--penguin-reviewed",
+        "--plugin-reviewed",
         manifest,
         report.review_sha256,
-        "penguin",
+        "plugin",
         "inspect",
       ],
       { cwd: root, env, encoding: "utf8", timeout: 15000 },
@@ -126,7 +126,7 @@ try {
   fs.unlinkSync(extra);
   const malformed = spawnSync(
     binary,
-    ["--penguin-reviewed", manifest, "not-a-sha", "penguin", "inspect"],
+    ["--plugin-reviewed", manifest, "not-a-sha", "plugin", "inspect"],
     { cwd: root, env, encoding: "utf8" },
   );
   assert.equal(malformed.status, 2);
@@ -185,7 +185,7 @@ try {
   // Removing the original after startup must not change the bytes served by a
   // reviewed WebUI instance (covered in the browser workflow).
   // The artifact is not loaded until an explicit separate launch.
-  const plain = spawnSync(binary, ["penguin", "inspect"], {
+  const plain = spawnSync(binary, ["plugin", "inspect"], {
     cwd: root,
     env,
     encoding: "utf8",
@@ -193,14 +193,14 @@ try {
   assert(!JSON.parse(plain.stdout).some((s) => s.owner === "creator-demo"));
   const loaded = spawnSync(
     binary,
-    ["--penguin", manifest, "penguin", "inspect"],
+    ["--plugin", manifest, "plugin", "inspect"],
     { cwd: root, env, encoding: "utf8" },
   );
   assert.equal(loaded.status, 0, loaded.stderr);
   assert(JSON.parse(loaded.stdout).some((s) => s.owner === "creator-demo"));
   const activeBuild = spawnSync(
     binary,
-    ["--penguin", manifest, "penguin", "build", "native-demo"],
+    ["--plugin", manifest, "plugin", "build", "native-demo"],
     { cwd: root, env, encoding: "utf8" },
   );
   assert.equal(activeBuild.status, 2);

@@ -206,8 +206,8 @@ function inline(parent, text) {
 }
 
 function markdown(text) {
-  const node = Penguin.call('markdown.render', { text });
-  if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Penguin Markdown renderer must return an .md element');
+  const node = CodexPlugin.call('markdown.render', { text });
+  if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Plugin Markdown renderer must return an .md element');
   return node;
 }
 function markdownBuiltin(text) {
@@ -338,7 +338,7 @@ function approvalBar(name) {
 }
 
 function creatorReport(row) {
-  if (!['penguin_check', 'penguin_test'].includes(row.name) || typeof row.output !== 'string') return null;
+  if (!['plugin_check', 'plugin_test'].includes(row.name) || typeof row.output !== 'string') return null;
   try {
     const data = JSON.parse(row.output);
     return data.creator === true && typeof data.id === 'string' && typeof data.manifest === 'string' ? data : null;
@@ -347,7 +347,7 @@ function creatorReport(row) {
 function creatorReviewCard(data, probe) {
   const node = el('section', undefined, 'message creator-review');
   node.setAttribute('aria-label', '插件审阅：' + data.id);
-  node.append(el('strong', 'Penguin · ' + data.id));
+  node.append(el('strong', 'Plugin · ' + data.id));
   const probed = probe?.status === 'native_probe_passed' && JSON.stringify(probe.sha256) === JSON.stringify(data.sha256);
   const status = data.kind === 'native'
     ? !data.built ? '等待构建 · 未启用' : probed ? '隔离加载测试通过 · 功能仍待验证 · 未启用' : '静态结构检查通过 · 尚未测试原生加载'
@@ -368,7 +368,7 @@ function creatorReviewCard(data, probe) {
   return node;
 }
 
-function toolCard(...args) { return Penguin.call('tool.card', { args }); }
+function toolCard(...args) { return CodexPlugin.call('tool.card', { args }); }
 function toolCardBuiltin(
   id,
   name,
@@ -433,7 +433,7 @@ function toolCardBuiltin(
 
 /* ---------- 对话渲染 ---------- */
 
-function userBubble(text) { return Penguin.call('message.user', { text }); }
+function userBubble(text) { return CodexPlugin.call('message.user', { text }); }
 function userBubbleBuiltin(text) {
   const node = el('div', undefined, 'message user');
   node.append(document.createTextNode(text));
@@ -590,8 +590,8 @@ function reasoningMessage(text, live = false) {
   return node;
 }
 function assistantMessage(text, live) {
-  const node = Penguin.call('message.assistant', { text, live });
-  if (!(node instanceof HTMLElement) || !node.querySelector('.md')) throw Error('Penguin assistant renderer must include .md');
+  const node = CodexPlugin.call('message.assistant', { text, live });
+  if (!(node instanceof HTMLElement) || !node.querySelector('.md')) throw Error('Plugin assistant renderer must include .md');
   node._text = text;
   return node;
 }
@@ -655,14 +655,14 @@ function buildChat(snap, wasBusy = false) {
   const pending = snap.pending;
   const creatorChecks = new Map(), creatorProbes = new Map();
   for (const [index, row] of rows.entries()) {
-    if (row.name === 'penguin_build') {
+    if (row.name === 'plugin_build') {
       // Even an identical rebuild needs a fresh check/probe; a failed build
       // may have removed its previous artifact. Do not advertise old results.
       creatorChecks.clear(); creatorProbes.clear();
     }
     const data = creatorReport(row);
-    if (data && row.name === 'penguin_check') creatorChecks.set(data.manifest, index);
-    if (row.name === 'penguin_test' && row.output != null) {
+    if (data && row.name === 'plugin_check') creatorChecks.set(data.manifest, index);
+    if (row.name === 'plugin_test' && row.output != null) {
       if (data) creatorProbes.set(data.manifest, data);
       else creatorProbes.clear(); // Never reuse a success after a failed/unreadable probe.
     }
@@ -740,7 +740,7 @@ function buildChat(snap, wasBusy = false) {
         nodes.push(node);
       } else group.push({ key, node, status });
       const report = creatorReport(row);
-      if (report && row.name === 'penguin_check' && creatorChecks.get(report.manifest) === index) {
+      if (report && row.name === 'plugin_check' && creatorChecks.get(report.manifest) === index) {
         flushGroup();
         const probe = creatorProbes.get(report.manifest);
         nodes.push(cached(key + ':creator', [report, probe], () => creatorReviewCard(report, probe)));
@@ -1917,15 +1917,15 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-onClick('penguin-button', async () => {
-  const rows = await http('/api/penguins');
-  const body = $('penguin-services'); body.replaceChildren();
-  for (const service of [...rows, ...Penguin.inspect()]) {
+onClick('plugin-button', async () => {
+  const rows = await http('/api/plugins');
+  const body = $('plugin-services'); body.replaceChildren();
+  for (const service of [...rows, ...CodexPlugin.inspect()]) {
     const row = el('p'); row.append(el('code', service.service), document.createTextNode(' → ' + service.owner)); body.append(row);
   }
-  $('penguin-dialog').showModal();
+  $('plugin-dialog').showModal();
 });
-onClick('penguin-close', () => $('penguin-dialog').close());
+onClick('plugin-close', () => $('plugin-dialog').close());
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
 $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
@@ -1933,7 +1933,7 @@ $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scro
 
 async function initialize() {
   state.user = await http('/api/me');
-  await Penguin.load(state.user.penguins, { rpc, element: el });
+  await CodexPlugin.load(state.user.plugins, { rpc, element: el });
   document.body.dataset.mode = state.user.mode;
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
@@ -1945,13 +1945,13 @@ async function initialize() {
   if(!state.loopStarted){state.loopStarted=true;loop();}
 }
 
-Penguin.mount({ id: 'builtin.web', services: {
+CodexPlugin.mount({ id: 'builtin.web', services: {
   'markdown.render': { handler: ({ text }) => markdownBuiltin(text) },
   'message.user': { handler: ({ text }) => userBubbleBuiltin(text) },
   'message.assistant': { handler: ({ text, live }) => assistantMessageBuiltin(text, live) },
   'tool.card': { handler: ({ args }) => toolCardBuiltin(...args) },
 }});
-addEventListener('penguin:changed', () => { messageCache.clear(); executionGroups.clear(); state.signature = ''; });
+addEventListener('plugin:changed', () => { messageCache.clear(); executionGroups.clear(); state.signature = ''; });
 
 function loop() {
   setTimeout(async () => { await refresh(); loop(); }, state.snap?.busy ? 200 : 1200);

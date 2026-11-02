@@ -16,15 +16,15 @@ const binary = path.resolve(process.argv[2]),
 let model, service, browser, origin;
 const client = `export default ({attach,element,onDispose})=>{let n=0;const panel=element('section'),label=element('p','点击次数：0'),button=element('button','增加');panel.setAttribute('aria-label','Creator 点击计数器');button.type='button';const click=()=>label.textContent='点击次数：'+(++n);button.addEventListener('click',click);onDispose(()=>button.removeEventListener('click',click));panel.append(label,button);attach('sidebar',panel);};`;
 const plan = [
-  ["read_skill", { name: "penguin-creator" }],
+  ["read_skill", { name: "plugin-creator" }],
   [
-    "penguin_scaffold",
+    "plugin_scaffold",
     { path: "created-plugin", id: "creator-demo", kind: "native" },
   ],
   ["write_file", { path: "created-plugin/client.js", content: client }],
-  ["penguin_build", { path: "created-plugin" }],
-  ["penguin_test", { path: "created-plugin" }],
-  ["penguin_check", { path: "created-plugin" }],
+  ["plugin_build", { path: "created-plugin" }],
+  ["plugin_test", { path: "created-plugin" }],
+  ["plugin_check", { path: "created-plugin" }],
 ];
 async function port() {
   const s = net.createServer();
@@ -100,7 +100,7 @@ async function stop() {
       let message;
       if (prompt.includes("USE_GENERATED_TOOL")) {
         const manifest = JSON.parse(
-          fs.readFileSync(path.join(root, "created-plugin", "penguin.json")),
+          fs.readFileSync(path.join(root, "created-plugin", "plugin.json")),
         );
         message = outputs.length
           ? { role: "assistant", content: "GENERATED_TOOL_WORKS" }
@@ -129,7 +129,7 @@ async function stop() {
                   id: "deny-create",
                   type: "function",
                   function: {
-                    name: "penguin_scaffold",
+                    name: "plugin_scaffold",
                     arguments: JSON.stringify({
                       path: "must-not-exist",
                       id: "denied-demo",
@@ -143,7 +143,7 @@ async function stop() {
         const step = plan[outputs.length];
         if (
           outputs.length &&
-          !outputs[0].content.startsWith("---\nname: penguin-creator")
+          !outputs[0].content.startsWith("---\nname: plugin-creator")
         )
           message = {
             role: "assistant",
@@ -152,10 +152,10 @@ async function stop() {
         if (
           outputs.length &&
           [
-            "penguin_scaffold",
-            "penguin_build",
-            "penguin_test",
-            "penguin_check",
+            "plugin_scaffold",
+            "plugin_build",
+            "plugin_test",
+            "plugin_check",
           ].includes(plan[outputs.length - 1][0])
         ) {
           try {
@@ -248,7 +248,7 @@ async function stop() {
     await card.getByRole("button", { name: "复制手动启用命令" }).click();
     assert(
       (await page.evaluate(() => navigator.clipboard.readText())).includes(
-        "--penguin",
+        "--plugin",
       ),
     );
     assert(
@@ -258,7 +258,7 @@ async function stop() {
     );
     assert(
       !(
-        await page.evaluate(() => fetch("/api/penguins").then((r) => r.json()))
+        await page.evaluate(() => fetch("/api/plugins").then((r) => r.json()))
       ).some((service) => service.owner === "creator-demo"),
     );
     await card.getByRole("button", { name: "查看清单" }).click();
@@ -279,18 +279,18 @@ async function stop() {
       path: path.join(artifactDir, "creator-review-mobile.png"),
     });
     // Only the test/user's explicit new process enables the generated plugin.
-    const checked = spawnSync(binary, ["penguin", "check", "created-plugin"], {
+    const checked = spawnSync(binary, ["plugin", "check", "created-plugin"], {
       cwd: root,
       env,
       encoding: "utf8",
     });
     assert.equal(checked.status, 0, checked.stderr);
     const review = JSON.parse(checked.stdout);
-    assert.equal(review.launch_args[1], "--penguin-reviewed");
+    assert.equal(review.launch_args[1], "--plugin-reviewed");
     await stop();
     await start(
       process.env.CREATOR_TEST_LEGACY
-        ? ["--penguin", path.join(root, "created-plugin", "penguin.json")]
+        ? ["--plugin", path.join(root, "created-plugin", "plugin.json")]
         : review.launch_args.slice(1, 4),
     );
     // After startup, changing originals must never change reviewed resources.
@@ -328,7 +328,7 @@ async function stop() {
     await page.screenshot({
       path: path.join(artifactDir, "creator-enabled-plugin.png"),
     });
-    await page.evaluate(() => Penguin.unmount("creator-demo"));
+    await page.evaluate(() => CodexPlugin.unmount("creator-demo"));
     assert.equal(await widget.count(), 0);
     assert.deepEqual(errors, []);
     console.log(

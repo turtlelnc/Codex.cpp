@@ -162,7 +162,7 @@ function snapshot() {
           return reply({ result });
         }
         const name = req.url === "/" ? "index.html" : req.url.slice(1);
-        if (!["index.html", "app.js", "style.css", "penguin.js"].includes(name)) {
+        if (!["index.html", "app.js", "style.css", "plugin.js"].includes(name)) {
           res.writeHead(404);
           return res.end();
         }
@@ -281,17 +281,17 @@ function snapshot() {
         document.querySelector('.row.file[data-path="b.txt"]') !== oldTreeFile &&
         document.activeElement === document.querySelector('.row.file[data-path="b.txt"]'),
     );
-    const creatorFixture = { creator: true, id: 'fixture-plugin', kind: 'native', manifest: '/fixture/penguin.json', manifest_relative: 'penguin.json', built: true, enabled: false, sha256: { library: 'fixed' }, launch_command: 'example command', status: 'static_checked' };
+    const creatorFixture = { creator: true, id: 'fixture-plugin', kind: 'native', manifest: '/fixture/plugin.json', manifest_relative: 'plugin.json', built: true, enabled: false, sha256: { library: 'fixed' }, launch_command: 'example command', status: 'static_checked' };
     snap = { ...snap, busy: false, draft: '', timeline: [
-      { k: 'tool', id: 'probe-ok', name: 'penguin_test', args: '{}', output: JSON.stringify({ ...creatorFixture, status: 'native_probe_passed' }) },
-      { k: 'tool', id: 'creator-check', name: 'penguin_check', args: '{}', output: JSON.stringify(creatorFixture) },
+      { k: 'tool', id: 'probe-ok', name: 'plugin_test', args: '{}', output: JSON.stringify({ ...creatorFixture, status: 'native_probe_passed' }) },
+      { k: 'tool', id: 'creator-check', name: 'plugin_check', args: '{}', output: JSON.stringify(creatorFixture) },
     ] };
     await wait(async () => (await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
-    snap.timeline.splice(1, 0, { k: 'tool', id: 'probe-failed', name: 'penguin_test', args: '{}', output: 'Creator process timed out' });
+    snap.timeline.splice(1, 0, { k: 'tool', id: 'probe-failed', name: 'plugin_test', args: '{}', output: 'Creator process timed out' });
     await wait(async () => !(await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
-    snap.timeline.splice(1, 1, { k: 'tool', id: 'rebuild', name: 'penguin_build', args: '{}', output: 'build failed' });
+    snap.timeline.splice(1, 1, { k: 'tool', id: 'rebuild', name: 'plugin_build', args: '{}', output: 'build failed' });
     await wait(async () => !(await page.locator('.creator-review').textContent()).includes('隔离加载测试通过'));
-    snap.timeline.push({ k: 'tool', id: 'rebuild-after-check', name: 'penguin_build', args: '{}', output: 'build failed' });
+    snap.timeline.push({ k: 'tool', id: 'rebuild-after-check', name: 'plugin_build', args: '{}', output: 'build failed' });
     await wait(async () => (await page.locator('.creator-review').count()) === 0);
 
     const headingMarkdown = '# 一级\n正文紧邻标题\n### **三级加粗标题**\n后续正文\n## 二级 ##\n#### 四级\n##### 五级\n###### 六级\n###没有空格\n####### 七个井号\n\n' + '```text\n### 代码里的标题\n```\n\n### <img src=x onerror=alert(1)>';

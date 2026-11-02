@@ -250,15 +250,15 @@ Linux 设置父进程退出信号，Windows 使用 Job Object 管理原生子进
 HTTP 使用固定线程池和有界队列；不提供 WebSocket 实时共同光标，页面通过轮询同步。
 Git 元数据归档与会话会增长，需要管理员监控磁盘容量。本版不自动迁移旧 Python 多人服务数据库。
 
-## Everything is a Penguin（实验性）
+## Everything is a Plugin（实验性）
 
-内置模型、Agent 回合、提示词、工具执行、会话写入和网页渲染已接入可替换服务。默认仍为单文件；C/C++ 原生模组通过启动前缀 `--penguin /绝对路径/penguin.json` 显式加载。使用 `codex-cpp penguin inspect`、TUI `/penguin` 或网页左下角“模组”查看当前提供者。
+内置模型、Agent 回合、提示词、工具执行、会话写入和网页渲染已接入可替换服务。默认仍为单文件；C/C++ 原生模组通过启动前缀 `--plugin /绝对路径/plugin.json` 显式加载。使用 `codex-cpp plugin inspect`、TUI `/plugin` 或网页左下角“模组”查看当前提供者。
 
-示例、C ABI、服务契约、权限及平台限制见 [Penguin 开发指南](docs/PENGUIN.md)。原生模组是完全可信代码；现有 Linux musl 全静态 Release 不能加载动态库，Linux 原生模组需使用正常 glibc 构建。默认功能与纯网页扩展不受此限制。
+示例、C ABI、服务契约、权限及平台限制见 [Plugin 开发指南](docs/PLUGIN.md)。原生模组是完全可信代码；现有 Linux musl 全静态 Release 不能加载动态库，Linux 原生模组需使用正常 glibc 构建。默认功能与纯网页扩展不受此限制。
 
 ### 让 Agent 制作插件
 
-内置 `penguin-creator` Skill 与脚手架、构建、检查、隔离测试工具。可以直接要求 Agent 制作 Penguin 插件；完成后在对话中审阅文件与测试结果，再手动重启启用。程序内嵌 SDK，不需要项目源码。原生构建需要 CMake/C++17；Windows 暂不支持自动沙箱构建/探测。详见 [Creator 工作流](docs/PENGUIN_CREATOR.md)。
+内置 `plugin-creator` Skill 与脚手架、构建、检查、隔离测试工具。可以直接要求 Agent 制作 Plugin 插件；完成后在对话中审阅文件与测试结果，再手动重启启用。程序内嵌 SDK，不需要项目源码。原生构建需要 CMake/C++17；Windows 暂不支持自动沙箱构建/探测。详见 [Creator 工作流](docs/PLUGIN_CREATOR.md)。
 
 ## 验证
 

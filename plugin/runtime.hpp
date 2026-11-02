@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace penguin {
+namespace plugin {
 // JSON strings cross the module boundary; no application objects or ownership do.
 using Emit = std::function<void(const std::string&, const std::string&)>;
 using Next = std::function<std::string(const std::string&, const Emit&)>;
@@ -44,19 +44,19 @@ public:
   // it keeps Session/TUI/approval objects inside their owning thread and lifetime.
   void mount(Module module) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (frozen_) throw std::runtime_error("Penguin runtime is frozen; restart to change modules");
-    if (!valid_name(module.id) || modules_.count(module.id)) throw std::runtime_error("Invalid/duplicate Penguin module: " + module.id);
+    if (frozen_) throw std::runtime_error("Plugin runtime is frozen; restart to change modules");
+    if (!valid_name(module.id) || modules_.count(module.id)) throw std::runtime_error("Invalid/duplicate Plugin module: " + module.id);
     for (const auto& dependency : module.dependencies)
-      if (!modules_.count(dependency)) throw std::runtime_error("Missing Penguin dependency: " + dependency);
+      if (!modules_.count(dependency)) throw std::runtime_error("Missing Plugin dependency: " + dependency);
     std::set<std::string> names;
     for (const auto& c : module.contributions) {
       if (!valid_name(c.service) || !names.insert(c.service).second)
-        throw std::runtime_error("Invalid/duplicate Penguin service: " + c.service);
+        throw std::runtime_error("Invalid/duplicate Plugin service: " + c.service);
       auto it = services_.find(c.service);
       if (it == services_.end()) {
-        if (!c.replaces.empty()) throw std::runtime_error("Penguin replacement target missing: " + c.service);
+        if (!c.replaces.empty()) throw std::runtime_error("Plugin replacement target missing: " + c.service);
       } else if (c.replaces.empty() || c.replaces != it->second.back().owner)
-        throw std::runtime_error("Penguin replacement must name current owner of " + c.service);
+        throw std::runtime_error("Plugin replacement must name current owner of " + c.service);
     }
     // Validate the complete module before publishing any contribution.
     auto services = services_;
@@ -69,14 +69,14 @@ public:
   }
   void unmount(const std::string& id) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (frozen_) throw std::runtime_error("Penguin runtime is frozen; restart to change modules");
-    if (!modules_.count(id)) throw std::runtime_error("Unknown Penguin module: " + id);
+    if (frozen_) throw std::runtime_error("Plugin runtime is frozen; restart to change modules");
+    if (!modules_.count(id)) throw std::runtime_error("Unknown Plugin module: " + id);
     for (const auto& entry : modules_) if (entry.first != id &&
       std::find(entry.second.dependencies.begin(), entry.second.dependencies.end(), id) != entry.second.dependencies.end())
-      throw std::runtime_error("Penguin module still required by " + entry.first);
+      throw std::runtime_error("Plugin module still required by " + entry.first);
     for (const auto& entry : services_) for (size_t i = 0; i < entry.second.size(); ++i)
       if (entry.second[i].owner == id && i + 1 < entry.second.size())
-        throw std::runtime_error("Penguin module still replaced by " + entry.second.back().owner);
+        throw std::runtime_error("Plugin module still replaced by " + entry.second.back().owner);
     for (auto it = services_.begin(); it != services_.end();) {
       auto& stack = it->second;
       if (stack.back().owner == id) stack.pop_back();
@@ -106,16 +106,16 @@ public:
     std::vector<Binding> bindings;
     { std::lock_guard<std::recursive_mutex> lock(mutex_);
       auto it = services_.find(name);
-      if (it == services_.end()) throw std::runtime_error("Unknown Penguin service: " + name);
+      if (it == services_.end()) throw std::runtime_error("Unknown Plugin service: " + name);
       bindings = it->second;
     }
     static thread_local unsigned depth = 0;
-    if (depth >= 32) throw std::runtime_error("Penguin service recursion limit");
+    if (depth >= 32) throw std::runtime_error("Plugin service recursion limit");
     struct Depth { unsigned& depth; explicit Depth(unsigned& d) : depth(d) { ++depth; } ~Depth() { --depth; } } guard(depth);
     // No registry lock is held while running a callback or waiting for I/O.
     std::function<std::string(size_t, const std::string&, const Emit&)> dispatch;
     dispatch = [&](size_t count, const std::string& input, const Emit& sink) -> std::string {
-      if (!count) { if (!builtin) throw std::runtime_error("Penguin service has no builtin implementation: " + name); return builtin(input, sink); }
+      if (!count) { if (!builtin) throw std::runtime_error("Plugin service has no builtin implementation: " + name); return builtin(input, sink); }
       const auto& binding = bindings[count - 1];
       if (!binding.handler) return dispatch(count - 1, input, sink);
       return binding.handler(input, sink, [&](const std::string& next_request, const Emit& next_sink) {
@@ -125,4 +125,4 @@ public:
     return dispatch(bindings.size(), request, emit);
   }
 };
-} // namespace penguin
+} // namespace plugin
