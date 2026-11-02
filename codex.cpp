@@ -1231,7 +1231,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   auto say =[&](const std::string& text,bool is_error=false){if(tui){if(is_error)tui->add_error(text);else tui->add_system(text);tui->render();}
   else{std::cout << text;if(text.empty()|| text.back()!='\n')std::cout << '\n';} }; auto fresh_session =[&]()->bool{Session next;std::string local_err;
   if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
-  if(tui){tui->set_thread_name("");tui->reset_transcript();}plugins.event("session.started",opt.root);return true; }; if(local_web.paused&&!local_web.running()){
+  if(tui){tui->set_thread_name("");tui->reset_transcript();}plugins.event("session.started",opt.root);return true; }; if(token!="/quit"&&local_web.paused&&!local_web.running()){
     local_web.stop();std::string why;Session refreshed;
     if(!init_session(refreshed,opt.root,opt.json,session.id,why)){say("Cannot resume terminal session: "+why,true);continue;}
     session=std::move(refreshed);project_memory=load_project_memory(opt.root);local_web.paused=false;
@@ -1318,7 +1318,7 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
     quota_text=quota?quota->report:quota_err;st<<"\n"<<quota_text;quota_job={};accept_quota({std::move(quota),std::move(quota_err)});quota_tried=true;quota_at=std::chrono::steady_clock::now();}
   if(tui){quota_status_visible=true;tui->set_status_details(pin_text());tui->render();}else say(st.str());continue; }
   if(token=="/web"){
-    try{if(args=="stop"){local_web.stop();if(local_web.paused){local_web.paused=false;std::string why;Session refreshed;if(init_session(refreshed,opt.root,opt.json,session.id,why))session=std::move(refreshed);else throw std::runtime_error(why);project_memory=load_project_memory(opt.root);}say("Web service stopped; terminal session reloaded.");}
+    try{if(args=="stop"){local_web.stop();if(local_web.paused){std::string why;Session refreshed;if(init_session(refreshed,opt.root,opt.json,session.id,why))session=std::move(refreshed);else throw std::runtime_error(why);project_memory=load_project_memory(opt.root);local_web.paused=false;}say("Web service stopped; terminal session reloaded.");}
     else if(args=="status")say(local_web.running()?local_web.url:"Web service stopped");
     else if(args.empty()||args=="start"||args=="open")say(local_web.start(opt,args!="start"));else say("Usage: /web [start|open|status|stop]",true);}catch(const std::exception& e){say(e.what(),true);}continue;
   }

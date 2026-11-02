@@ -48,6 +48,11 @@ async function wait(fn) {
     child.stdout.on("data", (b) => (output += b));
     child.stderr.on("data", (b) => (output += b));
     await wait(() => output.includes("codex>"));
+    const sessions = path.join(profile, "projects", "repo", "sessions");
+    const eventFile = fs
+      .readdirSync(sessions)
+      .find((n) => n.endsWith(".jsonl") && !n.endsWith(".items.jsonl"));
+    const terminalJournal = path.join(sessions, eventFile.slice(0, -6) + ".items.jsonl");
     fs.writeFileSync(path.join(profile, "user", "secret.txt"), "PRIVATE_TEST_SECRET");
     child.stdin.write("/web start\n");
     await wait(() => /WebUI: (http:\/\/127\.0\.0\.1:\d+)/.test(output));
@@ -87,6 +92,19 @@ async function wait(fn) {
     output = "";
     child.stdin.write("should stay paused\n");
     await wait(() => output.includes("WebUI is active"));
+    const priorJournal = fs.existsSync(terminalJournal) ? fs.readFileSync(terminalJournal) : null;
+    fs.writeFileSync(terminalJournal, "{invalid-journal\n");
+    output = "";
+    child.stdin.write("/web stop\n");
+    await wait(() => output.includes("invalid session item journal"));
+    output = "";
+    child.stdin.write("must not run with stale context\n");
+    await wait(() =>
+      output.includes("Cannot resume terminal session: invalid session item journal"),
+    );
+    if (priorJournal) fs.writeFileSync(terminalJournal, priorJournal);
+    else fs.unlinkSync(terminalJournal);
+    output = "";
     child.stdin.write("/web stop\n");
     await wait(() => output.includes("terminal session reloaded"));
     output = "";
