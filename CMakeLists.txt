@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(CodexCpp LANGUAGES C CXX)
 set(OPENSSL_USE_STATIC_LIBS TRUE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(ZLIB_USE_STATIC_LIBS TRUE)
+endif()
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -14,6 +17,7 @@ set(BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(USE_SSH OFF CACHE STRING "" FORCE)
 set(USE_HTTPS OFF CACHE STRING "" FORCE)
+set(REGEX_BACKEND "builtin" CACHE STRING "Bundled regex keeps releases independent of system PCRE" FORCE)
 if(APPLE)
   # The OS supplies zlib. libgit2 1.8's bundled zlib misdetects modern Apple SDKs
   # as classic Mac OS and defines fdopen before the system stdio declaration.

@@ -35,7 +35,8 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" 2>&1 | tee release-build.log
+          sh scripts/build-macos-openssl.sh '${{ matrix.cmake_arch }}' "$PWD/openssl-release" 2>&1 | tee release-build.log
+          PKG_CONFIG_PATH="$PWD/openssl-release/lib/pkgconfig" PKG_CONFIG_LIBDIR="$PWD/openssl-release/lib/pkgconfig" cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$PWD/openssl-release" -DOPENSSL_INCLUDE_DIR="$PWD/openssl-release/include" -DOPENSSL_SSL_LIBRARY="$PWD/openssl-release/lib/libssl.a" -DOPENSSL_CRYPTO_LIBRARY="$PWD/openssl-release/lib/libcrypto.a" 2>&1 | tee -a release-build.log
           cmake --build build-release --target codex-cpp --parallel 2 2>&1 | tee -a release-build.log
           strip build-release/codex-cpp
           codesign --force --sign - build-release/codex-cpp
@@ -43,6 +44,19 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: docker run --rm -v "$PWD:/src" -w /src alpine:3.22 sh scripts/build-linux-release.sh 2>&1 | tee release-build.log
+      - name: Build and verify Linux native-plugin variant
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          sudo apt-get update && sudo apt-get install -y libssl-dev
+          cmake -S . -B build-native-release -DCMAKE_BUILD_TYPE=Release -DCODEX_BWRAP_EXECUTABLE="$PWD/build-release/bwrap" -DCODEX_EXTRA_LICENSE_FILES="$PWD/build-release/bwrap-COPYING"
+          cmake --build build-native-release --target codex-cpp penguin-demo --parallel 2
+          strip build-native-release/codex-cpp
+          node tests/runtime_dependencies.cjs build-native-release/codex-cpp native
+          node tests/standalone_test.cjs build-native-release/codex-cpp
+          node tests/penguin_integration.cjs build-native-release/codex-cpp build-native-release/penguin-demo/penguin.json
+          node tests/penguin_creator_test.cjs build-native-release/codex-cpp
       - name: Verify standalone executable
         shell: bash
         run: |
@@ -50,6 +64,12 @@ jobs:
           node tests/runtime_dependencies.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           node tests/direct_team_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+      - name: Verify Creator on native macOS and Windows executables
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          CREATOR_TEST_CMAKE_ARCH: ${{ matrix.cmake_arch }}
+        run: node tests/penguin_creator_test.cjs '${{ matrix.binary }}'
       - name: Verify Linux embedded sandbox and team workflow
         if: runner.os == 'Linux'
         shell: bash
@@ -64,6 +84,7 @@ jobs:
         run: |
           mkdir -p dist
           cp '${{ matrix.binary }}' 'dist/codex-cpp-${{ matrix.platform }}${{ matrix.ext }}'
+          if [ '${{ runner.os }}' = Linux ]; then cp build-native-release/codex-cpp 'dist/codex-cpp-${{ matrix.platform }}-native'; fi
       - name: Verify POSIX archive on its native platform
         if: runner.os != 'Windows'
         shell: bash
@@ -71,6 +92,7 @@ jobs:
           mkdir packaging-check
           cp '${{ matrix.binary }}' 'packaging-check/codex-cpp-${{ matrix.platform }}'
           node scripts/package-posix-release.cjs packaging-check '${{ matrix.platform }}'
+          if [ '${{ runner.os }}' = Linux ]; then cp build-native-release/codex-cpp 'packaging-check/codex-cpp-${{ matrix.platform }}-native'; node scripts/package-posix-release.cjs packaging-check '${{ matrix.platform }}-native'; fi
       - uses: actions/upload-artifact@v4
         with:
           name: codex-cpp-${{ matrix.platform }}
@@ -100,6 +122,8 @@ jobs:
         run: |
           node scripts/package-posix-release.cjs dist
           cd dist
-          test "$(find . -maxdepth 1 -type f -name 'codex-cpp-*' | wc -l)" -eq 11
+          test "$(find . -maxdepth 1 -type f -name 'codex-cpp-*' | wc -l)" -eq 15
           sha256sum codex-cpp-* > SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Codex.cpp $GITHUB_REF_NAME" --notes-file ../docs/RELEASE_NOTES.md --verify-tag codex-cpp-* SHA256SUMS.txt DOWNLOADS_SHA256SUMS.txt
+          flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" --repo "$GITHUB_REPOSITORY" --title "Codex.cpp $GITHUB_REF_NAME" --notes-file ../docs/RELEASE_NOTES.md --verify-tag codex-cpp-* SHA256SUMS.txt DOWNLOADS_SHA256SUMS.txt

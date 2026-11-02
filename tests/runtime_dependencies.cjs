@@ -1,7 +1,13 @@
 const {execFileSync}=require('child_process'),assert=require('assert/strict'),path=require('path');
 const binary=path.resolve(process.argv[2]);
 if(process.platform==='linux'){
- const output=execFileSync('file',[binary],{encoding:'utf8'});assert(/statically linked|static-pie linked/.test(output),output);
+ const output=execFileSync('file',[binary],{encoding:'utf8'});
+ if(process.argv[3]==='native'){
+  assert(/dynamically linked/.test(output),output);
+  const deps=execFileSync('ldd',[binary],{encoding:'utf8'});
+  assert(!/not found/.test(deps),deps);
+  for(const line of deps.split('\n').filter(s=>s.trim()))assert(/linux-vdso|lib(c|m|dl|pthread|rt)\.so|ld-linux/.test(line),'Non-system dependency: '+line);
+ }else assert(/statically linked|static-pie linked/.test(output),output);
 }else if(process.platform==='darwin'){
  const lines=execFileSync('otool',['-L',binary],{encoding:'utf8'}).split('\n').slice(1).filter(s=>s.trim());
  for(const line of lines)assert(/^\s*\/System\/Library\/|^\s*\/usr\/lib\//.test(line),line);

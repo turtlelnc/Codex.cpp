@@ -42,10 +42,23 @@ static std::string creator_read(const fs::path& root,const std::string& relative
       std::string data(info.nFileSizeLow,'\0');DWORD n=0;if(!ReadFile(h,data.data(),static_cast<DWORD>(data.size()),&n,nullptr)||n!=data.size())throw std::runtime_error("Cannot read review file");return data;}
   }
 #else
-  struct Fd{int value;~Fd(){if(value>=0)::close(value);}} directory{::open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC)};
-  if(directory.value<0)throw std::runtime_error("Cannot open review root");std::vector<fs::path> parts;for(const auto& part:path.relative_path())parts.push_back(part);
-  for(size_t i=0;i<parts.size();++i){const bool last=i+1==parts.size();Fd next{::openat(directory.value,parts[i].c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK|(last?0:O_DIRECTORY))};
-    if(next.value<0)throw std::runtime_error("Cannot open review file/directory (links rejected)");
+  #if defined(__APPLE__)
+  // Event-only directory handles require metadata/search, not directory listing.
+  // O_SEARCH is not supported by the macOS 12 deployment baseline.
+  const int directory_flags=O_EVTONLY|O_DIRECTORY|O_CLOEXEC;
+#else
+  const int directory_flags=O_RDONLY|O_DIRECTORY|O_CLOEXEC;
+#endif
+  struct Fd{int value;~Fd(){if(value>=0)::close(value);}} directory{::open("/",directory_flags)};
+  if(directory.value<0)throw std::runtime_error("Cannot open review root");std::vector<fs::path> parts;bool pinned=false;
+#if defined(__APPLE__)
+  if(getenv_or("CODEX_CPP_CREATOR_DIRFD")=="3"){
+    struct stat handle{},target{};if(::fstat(3,&handle)==0&&::stat(root.c_str(),&target)==0&&S_ISDIR(handle.st_mode)&&handle.st_dev==target.st_dev&&handle.st_ino==target.st_ino){const int fd=::fcntl(3,F_DUPFD_CLOEXEC,4);if(fd<0)throw std::runtime_error("Cannot duplicate Creator directory capability");::close(directory.value);directory.value=fd;pinned=true;}
+  }
+#endif
+  for(const auto& part:pinned?fs::u8path(relative):path.relative_path())parts.push_back(part);
+  for(size_t i=0;i<parts.size();++i){const bool last=i+1==parts.size();Fd next{::openat(directory.value,parts[i].c_str(),O_NOFOLLOW|(last?(O_RDONLY|O_CLOEXEC|O_NONBLOCK):directory_flags))};
+    if(next.value<0)throw std::runtime_error("Cannot open review file/directory (links rejected): "+parts[i].u8string()+": "+std::strerror(errno));
     if(last){struct stat info{};if(::fstat(next.value,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||info.st_size<0||static_cast<uint64_t>(info.st_size)>limit)throw std::runtime_error("Invalid review file");
       if(remove){if(::unlinkat(directory.value,parts[i].c_str(),0))throw std::runtime_error("Cannot remove old native artifact");return {};}
       std::string data;char bytes[8192];for(;;){auto n=::read(next.value,bytes,sizeof bytes);if(n<0&&errno==EINTR)continue;if(n<0)throw std::runtime_error("Cannot read review file");if(!n)return data;data.append(bytes,static_cast<size_t>(n));if(data.size()>limit)throw std::runtime_error("Review file exceeds limit");}}
@@ -62,11 +75,11 @@ struct CreatorSnapshot{
 };
 // Snapshots outlive native handlers and HTTP asset reads, then are removed at exit.
 static std::vector<std::unique_ptr<CreatorSnapshot>> creator_snapshots;
-static Json creator_check(const fs::path& root,const std::string& input,std::map<std::string,std::string>* captured=nullptr){
+static Json creator_check(const fs::path& root,const std::string& input,std::map<std::string,std::string>* captured=nullptr,bool manual=false){
   auto manifest=creator_path(root,input);std::error_code ec;if(fs::is_directory(manifest,ec))manifest/="penguin.json";
   if(!within_root(root,manifest)||!fs::is_regular_file(manifest,ec)||ec||fs::file_size(manifest,ec)>65536)throw std::runtime_error("Plugin manifest missing or too large");
   const auto bundle=fs::canonical(manifest.parent_path());if(!within_root(root,bundle)||sensitive_path(bundle))throw std::runtime_error("Plugin bundle changed or escaped workspace");const auto manifest_bytes=creator_read(bundle,manifest.filename().u8string(),65536);auto json=plugin_json(manifest_bytes);if(!json||json->kind!=Json::Object||penguin_integer(*json,"api")!=1)throw std::runtime_error("Penguin manifest API 1 required");
-  const auto id=penguin_text(*json,"id");if(!creator_id(id))throw std::runtime_error("Invalid Penguin id");
+  const auto id=penguin_text(*json,"id");if(!(manual?plugin_id(id)&&id.rfind("builtin",0)!=0:creator_id(id)))throw std::runtime_error("Invalid Penguin id");
   auto file=[&](const std::string& name,bool required,size_t limit)->fs::path{
     if(name.empty())throw std::runtime_error("Empty plugin asset path");auto path=bundle/fs::u8path(name);
     if(!within_root(bundle,path)||!within_root(root,path)||sensitive_path(path))throw std::runtime_error("Plugin asset escapes bundle or is protected");
@@ -81,9 +94,10 @@ static Json creator_check(const fs::path& root,const std::string& input,std::map
   else if(!services.empty())throw std::runtime_error("Native service declarations require a library");
   if(auto tools=json->get("tools")){if(tools->kind!=Json::Array||tools->items.size()>32)throw std::runtime_error("Invalid plugin tools");std::set<std::string> names={"read_file","list_dir","read_skill","write_file","shell","apply_patch","git_read","git_write","design_review","plugin_ui","penguin_scaffold","penguin_check","penguin_build","penguin_test"};for(const auto& tool:tools->items){auto spec=tool.get("spec");if(!spec||spec->kind!=Json::Object)throw std::runtime_error("Plugin tool spec missing");auto name=penguin_text(*spec,"name");auto parameters=spec->get("parameters");if(!plugin_id(name)||!names.insert(name).second||!declarations||!declarations->get("tools."+name)||!parameters||parameters->kind!=Json::Object)throw std::runtime_error("Invalid/duplicate plugin tool");(void)penguin_flag(tool,"mutates");}}
   if(auto web=json->get("web")){auto entry=penguin_text(*web,"entry");file(entry,true,4*1024*1024);if(fs::u8path(entry).extension()!=".js"&&fs::u8path(entry).extension()!=".mjs")throw std::runtime_error("Web entry must be JavaScript");files.push_back(entry);if(auto style=web->get("style")){if(style->kind!=Json::String||fs::u8path(style->str()).extension()!=".css")throw std::runtime_error("Web style must be CSS");file(style->str(),true,4*1024*1024);files.push_back(style->str());}}
+  if(auto assets=json->get("assets")){if(assets->kind!=Json::Array||assets->items.size()>64)throw std::runtime_error("Invalid Penguin assets");for(const auto& asset:assets->items){if(asset.kind!=Json::String)throw std::runtime_error("Invalid Penguin asset");file(asset.str(),true,32*1024*1024);files.push_back(asset.str());}}
   if(!native&&!json->get("web"))throw std::runtime_error("Creator plugin has no native or WebUI contribution");
   for(const auto& name:{"plugin.cpp","native.h","CMakeLists.txt","native.def","README.md"})if(fs::exists(bundle/name,ec)){file(name,true,4*1024*1024);files.push_back(name);}
-  Json hashes;hashes.kind=Json::Object;for(const auto& name:files){file(name,true,32*1024*1024);const auto bytes=name==manifest.filename().u8string()?manifest_bytes:creator_read(bundle,name,32*1024*1024);hashes.fields[name]=penguin_string(native_web::digest(bytes));if(captured)(*captured)[name]=bytes;}
+  size_t total=0;Json hashes;hashes.kind=Json::Object;for(const auto& name:files){file(name,true,32*1024*1024);const auto bytes=name==manifest.filename().u8string()?manifest_bytes:creator_read(bundle,name,32*1024*1024);total+=bytes.size();if(total>128*1024*1024)throw std::runtime_error("Plugin review exceeds 128 MB");hashes.fields[name]=penguin_string(native_web::digest(bytes));if(captured)(*captured)[name]=bytes;}
   const auto fingerprint=native_web::digest(json_dump(hashes));
   std::vector<std::string> launch={penguin_creator_self.u8string(),"--penguin-reviewed",fs::absolute(manifest).lexically_normal().u8string(),fingerprint,"web","--root",fs::weakly_canonical(root).u8string()};
   auto report=penguin_object({{"creator",penguin_bool(true)},{"id",penguin_string(id)},{"kind",penguin_string(native?"native":"web")},{"status",penguin_string(native&&!built?"needs_build":"static_checked")},{"built",penguin_bool(built)},{"enabled",penguin_bool(penguin_runtime().has_module(id))},{"manifest",penguin_string(fs::weakly_canonical(manifest).u8string())},{"manifest_relative",penguin_string(manifest.lexically_relative(fs::absolute(root)).generic_u8string())},{"files",creator_array(files)},{"sha256",hashes},{"services",creator_array(services)},{"requires",creator_array(dependencies)},{"native_executed",penguin_bool(false)},{"functional_tested",penguin_bool(false)},{"requires_restart",penguin_bool(true)},{"launch_args",creator_array(launch)},{"launch_command",penguin_string(creator_command(launch))},{"notes",penguin_string("This check did not activate or change any plugin. Command is a local WebUI example. For hosted services the administrator must preserve --penguin-reviewed and its fingerprint in the original startup configuration and restart. No activation has occurred.")}});
@@ -91,14 +105,15 @@ static Json creator_check(const fs::path& root,const std::string& input,std::map
 }
 static void penguin_load_reviewed(const fs::path& path,const std::string& fingerprint){
   std::map<std::string,std::string> captured;
-  auto report=creator_check(path.parent_path(),path.u8string(),&captured);
-  if(penguin_text(report,"review_sha256")!=fingerprint)throw std::runtime_error("Penguin review mismatch: files changed; review again before enabling");
+  auto report=creator_check(path.parent_path(),path.u8string(),&captured,fingerprint.empty());
+  if(!fingerprint.empty()&&penguin_text(report,"review_sha256")!=fingerprint)throw std::runtime_error("Penguin review mismatch: files changed; review again before enabling");
   if(penguin_text(report,"kind")=="native"&&!penguin_flag(report,"built"))throw std::runtime_error("Reviewed native library is missing");
   auto snapshot=std::make_unique<CreatorSnapshot>(true);std::string error;
   for(const auto& entry:captured)if(!write_all(snapshot->path/fs::u8path(entry.first),entry.second,error))throw std::runtime_error(error);
   const auto manifest=snapshot->path/path.filename();creator_snapshots.push_back(std::move(snapshot));
   process_protected_paths.push_back(fs::canonical(manifest.parent_path()));
   penguin_worker_manifests[path.u8string()]=manifest.u8string();
+  penguin_reviews[path.u8string()]=penguin_text(report,"review_sha256");
   // A worker may grant /tmp (or even /) as its project. Hide the inherited
   // parent snapshot from model file tools and OS-sandboxed child processes.
   if(path.parent_path().parent_path().filename().u8string().rfind("codex-private-",0)==0)process_protected_paths.push_back(fs::canonical(path.parent_path()));
@@ -141,33 +156,49 @@ static ToolResult creator_build(const fs::path& root,const std::string& path,con
   if(execution.unsafe||!sandbox_available())return {126,"DENIED: Creator build requires an available OS sandbox; no unsafe fallback"};
   if(penguin_flag(report,"built"))creator_read(source,penguin_text(report,"library"),32*1024*1024,true);
   auto build=source/"build";if(!within_root(source,build)||!within_root(root,build))return {2,"Build directory escapes plugin"};auto policy=ProcessPolicy::tool(root,true);policy.reads.push_back("/usr/include");policy.reads.push_back("/usr/local/include");policy.reads.push_back("/usr/local/share");policy.reads.push_back("/usr/libexec");policy.reads.push_back("/usr/local/libexec");
+  std::string log;
 #if defined(__APPLE__)
-  for(const auto& path:{"/usr/local/Cellar","/usr/local/opt","/Applications/CMake.app/Contents"})policy.reads.push_back(path);
+  // Compile untrusted source with trusted system tools, never execute project
+  // CMake or build hooks which could daemonize beyond process-group cleanup.
+  auto selected=creator_process({"/usr/bin/xcode-select","-p"},policy,10,tick,watch);if(selected.exit_code)return {selected.exit_code,selected.output};
+  const auto developer=fs::canonical(fs::u8path(trim(selected.output)));
+  if(developer!=fs::path("/Library/Developer/CommandLineTools")&&!(within_root("/Applications",developer)&&developer.filename()=="Developer"&&developer.parent_path().filename()=="Contents"))throw std::runtime_error("Unsupported system developer directory");
+  const bool clt=developer==fs::path("/Library/Developer/CommandLineTools");
+  const auto tools=clt?developer:developer/"Toolchains/XcodeDefault.xctoolchain";
+  const auto compiler=tools/"usr/bin/clang++",allocator=tools/"usr/bin/codesign_allocate";
+  const auto sdk=clt?developer/"SDKs/MacOSX.sdk":developer/"Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+  if(!fs::is_regular_file(compiler)||!fs::is_directory(sdk))throw std::runtime_error("System compiler or macOS SDK is missing");policy.reads.push_back(developer);
+  std::error_code ec;fs::create_directories((source/artifact).parent_path(),ec);if(ec)throw std::runtime_error(ec.message());
+#if defined(__aarch64__)
+  const char* arch="arm64";
+#else
+  const char* arch="x86_64";
 #endif
-  std::vector<std::string> configure={"cmake","-S",source.u8string(),"-B",build.u8string(),"-DCMAKE_BUILD_TYPE=Release"};
-#if defined(__APPLE__) && defined(__aarch64__)
-  configure.push_back("-DCMAKE_OSX_ARCHITECTURES=arm64");
-#elif defined(__APPLE__)
-  configure.push_back("-DCMAKE_OSX_ARCHITECTURES=x86_64");
+  auto compiled=creator_process({compiler.u8string(),"--driver-mode=g++","-stdlib=libc++","-isysroot",sdk.u8string(),"-std=c++17","-O2","-dynamiclib","-arch",arch,(source/"plugin.cpp").u8string(),"-o",(source/artifact).u8string()},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=compiled.output;
+  auto signed_library=creator_process({"/usr/bin/env","CODESIGN_ALLOCATE="+allocator.u8string(),"/usr/bin/codesign","--force","--sign","-",(source/artifact).u8string()},policy,30,tick,watch);if(signed_library.exit_code)return {signed_library.exit_code,signed_library.output};log+=signed_library.output;
+#else
+  auto configured=creator_process({"cmake","-S",source.u8string(),"-B",build.u8string(),"-DCMAKE_BUILD_TYPE=Release"},policy,120,tick,watch);if(configured.exit_code)return {configured.exit_code,configured.output};auto compiled=creator_process({"cmake","--build",build.u8string(),"--config","Release","--parallel","2","--clean-first"},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=configured.output+compiled.output;
 #endif
-  auto configured=creator_process(configure,policy,120,tick,watch);if(configured.exit_code)return {configured.exit_code,configured.output};auto compiled=creator_process({"cmake","--build",build.u8string(),"--config","Release","--parallel","2","--clean-first"},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};report=creator_check(root,path);if(!penguin_flag(report,"built"))return {2,"Build completed but manifest library was not produced"};report.fields["status"]=penguin_string("build_passed");report.fields["build_log"]=penguin_string(configured.output+compiled.output);return {0,json_dump(report)};
+  report=creator_check(root,path);if(!penguin_flag(report,"built"))return {2,"Build completed but manifest library was not produced"};report.fields["status"]=penguin_string("build_passed");
+#if defined(__APPLE__)
+  report.fields["build_backend"]=penguin_string("system-clang++ (plugin.cpp only; no project hooks)");
+#else
+  report.fields["build_backend"]=penguin_string("sandboxed-cmake");
+#endif
+  report.fields["build_log"]=penguin_string(log);return {0,json_dump(report)};
 }catch(const std::exception& e){return {2,e.what()};}}
 static ToolResult creator_test(const fs::path& root,const std::string& path,const std::function<void()>& tick={},bool watch=false){try{
   std::map<std::string,std::string> captured;auto report=creator_check(root,path,&captured);if(penguin_text(report,"kind")!="native")return {2,"Web-only behavior requires browser verification; no native ABI to probe"};if(!penguin_flag(report,"built"))return {2,"Build the native plugin first"};
-  const auto manifest=fs::u8path(penguin_text(report,"manifest"));auto bytes=captured.at(manifest.filename().u8string());auto staged=plugin_json(bytes);if(!staged)throw std::runtime_error("Invalid probe manifest");auto fingerprints=report.get("sha256");
-  if(!fingerprints||plugin_string(*fingerprints,manifest.filename().u8string())!=native_web::digest(bytes))throw std::runtime_error("Plugin changed before probe");
-  CreatorSnapshot snapshot;const auto directory=snapshot.path;
-  auto copy=[&](const std::string& from,const std::string& to){auto data=captured.at(from);if(plugin_string(*fingerprints,from)!=native_web::digest(data))throw std::runtime_error("Plugin changed before probe");std::string error;if(!write_all(directory/to,data,error))throw std::runtime_error(error);};
-  const auto library=penguin_text(report,"library");const auto filename="plugin"+fs::u8path(library).extension().u8string();copy(library,filename);staged->fields["libraries"]=penguin_object({{creator_platform(),penguin_string(filename)}});
-  if(auto web=staged->get("web")){auto entry=penguin_text(*web,"entry");copy(entry,"entry.js");auto replacement=penguin_object({{"entry",penguin_string("entry.js")}});if(auto style=web->get("style")){copy(style->str(),"style.css");replacement.fields["style"]=penguin_string("style.css");}staged->fields["web"]=replacement;}
-  std::string error;if(!write_all(directory/"penguin.json",json_dump(*staged),error))throw std::runtime_error(error);
-  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;auto tested=creator_process({penguin_creator_self.u8string(),"--penguin",(directory/"penguin.json").u8string(),"penguin","inspect"},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==penguin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
+  const auto manifest=fs::u8path(penguin_text(report,"manifest"));const auto fingerprints=report.get("sha256");
+  CreatorSnapshot snapshot;const auto directory=snapshot.path;std::string error;
+  for(const auto& entry:captured)if(!write_all(directory/fs::u8path(entry.first),entry.second,error))throw std::runtime_error(error);
+  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;policy.pinned_directory=fs::canonical(directory);auto tested=creator_process({penguin_creator_self.u8string(),"--penguin-reviewed",(directory/manifest.filename()).u8string(),penguin_text(report,"review_sha256"),"penguin","inspect"},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==penguin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
   if(json_dump(creator_check(root,path).fields.at("sha256"))!=json_dump(*fingerprints))throw std::runtime_error("Plugin changed during probe; rerun verification");
   report.fields["status"]=penguin_string("native_probe_passed");report.fields["native_executed"]=penguin_bool(true);report.fields["probe_scope"]=penguin_string("read-only isolated subprocess; ABI registration only");report.fields["notes"]=penguin_string("ABI registration passed in an isolated process. Tool/UI behavior remains unverified; plugin is not enabled in this service.");return {0,json_dump(report)};
 }catch(const std::exception& e){return {2,e.what()};}}
 class PenguinScaffoldTool final:public ToolRuntime{public:std::string name()const override{return "penguin_scaffold";}bool mutates()const override{return true;}std::string spec_json()const override{return R"({"type":"function","name":"penguin_scaffold","description":"Create a new Penguin plugin starter with embedded SDK. Read penguin-creator skill first. Never overwrites or enables a plugin.","parameters":{"type":"object","properties":{"path":{"type":"string"},"id":{"type":"string"},"kind":{"type":"string","enum":["native","web"]}},"required":["path","id","kind"],"additionalProperties":false},"strict":true})";}ToolResult run(const std::string& args,const fs::path& root)override{try{auto request=parse_json(args);if(!request)throw std::runtime_error("Invalid arguments");return {0,json_dump(creator_scaffold(root,penguin_text(*request,"path"),penguin_text(*request,"id"),penguin_text(*request,"kind")))};}catch(const std::exception& e){return {2,e.what()};}}};
 class PenguinCheckTool final:public ToolRuntime{public:std::string name()const override{return "penguin_check";}std::string spec_json()const override{return one_arg_tool_spec("penguin_check","Statically review a workspace Penguin manifest/files and prepare manual activation instructions. Does not execute native/JavaScript code or enable anything.","path");}ToolResult run(const std::string& args,const fs::path& root)override{try{auto path=json_string_field(args,"path");if(!path)throw std::runtime_error("Missing path");return {0,json_dump(creator_check(root,*path))};}catch(const std::exception& e){return {2,e.what()};}}};
-class PenguinBuildTool final:public ToolRuntime{public:std::string name()const override{return "penguin_build";}bool mutates()const override{return true;}bool is_shell()const override{return true;}ToolResult execute(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick,bool watch)override{if(mode==SandboxMode::ReadOnly)return {126,"DENIED: native build requires workspace write permission"};return run_with_ui(args,root,tick,watch);}std::string spec_json()const override{return one_arg_tool_spec("penguin_build","Configure/build a workspace native Penguin with CMake inside the OS sandbox. Requires CMake/compiler; never installs or enables the result.","path");}ToolResult run(const std::string& args,const fs::path& root)override{return run_with_ui(args,root,{},false);}ToolResult run_with_ui(const std::string& args,const fs::path& root,const std::function<void()>& tick,bool watch)override{auto path=json_string_field(args,"path");return path?creator_build(root,*path,tick,watch):ToolResult{2,"Missing path"};}};
+class PenguinBuildTool final:public ToolRuntime{public:std::string name()const override{return "penguin_build";}bool mutates()const override{return true;}bool is_shell()const override{return true;}ToolResult execute(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick,bool watch)override{if(mode==SandboxMode::ReadOnly)return {126,"DENIED: native build requires workspace write permission"};return run_with_ui(args,root,tick,watch);}std::string spec_json()const override{return one_arg_tool_spec("penguin_build","Build a native Penguin inside the OS sandbox: Linux CMake, macOS fixed system clang++ (plugin.cpp; no custom hooks). Requires local compiler; never installs or enables.","path");}ToolResult run(const std::string& args,const fs::path& root)override{return run_with_ui(args,root,{},false);}ToolResult run_with_ui(const std::string& args,const fs::path& root,const std::function<void()>& tick,bool watch)override{auto path=json_string_field(args,"path");return path?creator_build(root,*path,tick,watch):ToolResult{2,"Missing path"};}};
 class PenguinTestTool final:public ToolRuntime{public:std::string name()const override{return "penguin_test";}bool mutates()const override{return true;}bool is_shell()const override{return true;}std::string spec_json()const override{return one_arg_tool_spec("penguin_test","Probe native Penguin ABI/registration from a staged bundle in a separate read-only OS sandbox without network or inherited credentials. Does not prove feature behavior and does not enable the plugin. Fails closed if isolation is unavailable.","path");}ToolResult run(const std::string& args,const fs::path& root)override{return run_with_ui(args,root,{},false);}ToolResult run_with_ui(const std::string& args,const fs::path& root,const std::function<void()>& tick,bool watch)override{auto path=json_string_field(args,"path");return path?creator_test(root,*path,tick,watch):ToolResult{2,"Missing path"};}};
 static int penguin_creator_cli(int argc,char** argv){try{const auto root=fs::current_path();Json result;ToolResult tested;
   if(argc==4&&std::string(argv[2])=="check")result=creator_check(root,argv[3]);

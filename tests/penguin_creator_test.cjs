@@ -66,6 +66,8 @@ try {
       ["-S", "native-demo", "-B", "native-demo/build"],
       ["--build", "native-demo/build", "--config", "Release"],
     ]) {
+      if (args[0] === "-S" && process.env.CREATOR_TEST_CMAKE_ARCH)
+        args.push("-A", process.env.CREATOR_TEST_CMAKE_ARCH);
       const p = spawnSync("cmake", args, {
         cwd: root,
         env,
@@ -110,6 +112,18 @@ try {
     return p;
   };
   launch(data);
+  const extra = path.join(root, "native-demo", "runtime-data.txt");
+  fs.writeFileSync(extra, "approved data");
+  const withAssets = structuredClone(original);
+  withAssets.assets = ["runtime-data.txt"];
+  fs.writeFileSync(manifest, JSON.stringify(withAssets));
+  const assetReview = JSON.parse(run(["check", "native-demo"]).stdout);
+  launch(assetReview);
+  if (process.platform !== "win32") run(["test", "native-demo"]);
+  fs.writeFileSync(extra, "changed data");
+  assert.match(launch(assetReview, 2).stderr, /review mismatch/);
+  fs.writeFileSync(manifest, JSON.stringify(original));
+  fs.unlinkSync(extra);
   const malformed = spawnSync(
     binary,
     ["--penguin-reviewed", manifest, "not-a-sha", "penguin", "inspect"],
@@ -194,6 +208,26 @@ try {
   if (process.platform !== "win32") {
     // Native init is untrusted: static check must not execute it, and the probe
     // must deny workspace writes and omit a parent-only secret environment value.
+    // Establish a trusted CMake baseline; macOS automatic builds use clang++.
+    for (const args of [
+      [
+        "-S",
+        "native-demo",
+        "-B",
+        "native-demo/build",
+        "-DCMAKE_BUILD_TYPE=Release",
+      ],
+      ["--build", "native-demo/build", "--config", "Release"],
+    ]) {
+      const p = spawnSync("cmake", args, {
+        cwd: root,
+        env,
+        encoding: "utf8",
+        timeout: 120000,
+      });
+      assert.equal(p.status, 0, p.stderr + p.stdout);
+    }
+    const mtimeBaseline = JSON.parse(run(["check", "native-demo"]).stdout);
     const marker = path.join(root, "probe-must-not-write");
     const privateFile = path.join(root, "home", "host-only.txt");
     fs.mkdirSync(path.dirname(privateFile), { recursive: true });
@@ -234,11 +268,14 @@ try {
     const stale = JSON.parse(run(["check", "native-demo"]).stdout);
     assert.equal(
       stale.sha256[stale.library],
-      data.sha256[data.library],
+      mtimeBaseline.sha256[mtimeBaseline.library],
       "old-mtime incremental build must reproduce the stale native artifact",
     );
     const changed = JSON.parse(run(["build", "native-demo"]).stdout);
-    assert.notEqual(changed.sha256[changed.library], data.sha256[data.library]);
+    assert.notEqual(
+      changed.sha256[changed.library],
+      mtimeBaseline.sha256[mtimeBaseline.library],
+    );
     // Unlike the read-only probe, an accidental host load would write marker.
     // A stale review must reject this real native initializer before dlopen.
     assert.match(launch(data, 2).stderr, /review mismatch/);
@@ -255,8 +292,27 @@ try {
       cmakeFile,
       "cmake_minimum_required(VERSION 3.15)\nproject(noop LANGUAGES NONE)\n",
     );
-    run(["build", "native-demo"], 2);
-    assert(!fs.existsSync(library));
+    if (process.platform === "darwin") {
+      const hookMarker = path.join(root, "cmake-hook-must-not-run");
+      fs.writeFileSync(
+        cmakeFile,
+        'cmake_minimum_required(VERSION 3.15)\nproject(hostile LANGUAGES NONE)\nexecute_process(COMMAND /bin/sh -c "sleep 1; touch ' +
+          hookMarker +
+          ' &")\n',
+      );
+      run(["build", "native-demo"]);
+      assert(!fs.existsSync(hookMarker));
+      fs.writeFileSync(
+        path.join(root, "native-demo", "plugin.cpp"),
+        "not valid C++",
+      );
+      run(["build", "native-demo"], 1);
+      assert(!fs.existsSync(library));
+      fs.writeFileSync(path.join(root, "native-demo", "plugin.cpp"), source);
+    } else {
+      run(["build", "native-demo"], 2);
+      assert(!fs.existsSync(library));
+    }
     fs.writeFileSync(cmakeFile, cmakeSource);
     source = source
       .replace(
