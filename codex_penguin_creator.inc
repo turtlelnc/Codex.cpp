@@ -174,7 +174,7 @@ static ToolResult creator_build(const fs::path& root,const std::string& path,con
 #else
   const char* arch="x86_64";
 #endif
-  auto compiled=creator_process({compiler.u8string(),"-isysroot",sdk.u8string(),"-std=c++17","-O2","-dynamiclib","-arch",arch,(source/"plugin.cpp").u8string(),"-o",(source/artifact).u8string()},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=compiled.output;
+  auto compiled=creator_process({compiler.u8string(),"--driver-mode=g++","-stdlib=libc++","-isysroot",sdk.u8string(),"-std=c++17","-O2","-dynamiclib","-arch",arch,(source/"plugin.cpp").u8string(),"-o",(source/artifact).u8string()},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=compiled.output;
   auto signed_library=creator_process({"/usr/bin/env","CODESIGN_ALLOCATE="+allocator.u8string(),"/usr/bin/codesign","--force","--sign","-",(source/artifact).u8string()},policy,30,tick,watch);if(signed_library.exit_code)return {signed_library.exit_code,signed_library.output};log+=signed_library.output;
 #else
   auto configured=creator_process({"cmake","-S",source.u8string(),"-B",build.u8string(),"-DCMAKE_BUILD_TYPE=Release"},policy,120,tick,watch);if(configured.exit_code)return {configured.exit_code,configured.output};auto compiled=creator_process({"cmake","--build",build.u8string(),"--config","Release","--parallel","2","--clean-first"},policy,120,tick,watch);if(compiled.exit_code)return {compiled.exit_code,compiled.output};log=configured.output+compiled.output;
