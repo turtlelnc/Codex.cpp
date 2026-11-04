@@ -1,3 +1,4 @@
+#include <deque>
 // C++17 local/hosted web runtime. UI and Agent JSON protocol are shared.
 #include <mutex>
 #include <condition_variable>
@@ -404,7 +405,7 @@ struct Workspace {
   }
 #endif
 #if defined(_WIN32)
-  HANDLE checked_handle(const std::string &name, DWORD access, DWORD share, bool internal = false) {
+  HANDLE checked_handle(const std::string &name, DWORD access, DWORD share, bool internal = false, bool large = false) {
     auto relative = fs::u8path(name);
     require(!relative.empty() && !relative.is_absolute() && !relative.has_root_name() &&
                 (internal || (!blocked(relative)&&!sensitive_path(root/relative))),
@@ -439,7 +440,7 @@ struct Workspace {
     bool good = file_length && file_length < file_name.size() && target.rfind(prefix, 0) == 0 &&
                 GetFileType(file) == FILE_TYPE_DISK && GetFileInformationByHandle(file, &info) &&
                 !(info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
-                info.nNumberOfLinks == 1 && info.nFileSizeHigh == 0 && info.nFileSizeLow <= 16 * 1024 * 1024;
+                info.nNumberOfLinks == 1 && (large || (info.nFileSizeHigh == 0 && info.nFileSizeLow <= 16 * 1024 * 1024));
     if (!good) {
       CloseHandle(file);
       throw std::runtime_error("Linked, external or oversized workspace file denied");
@@ -1044,16 +1045,44 @@ struct App {
       args.insert(args.end(), {"--api-key-env", options.api_key_env});
     if (!options.reasoning_effort.empty())
       args.insert(args.end(), {"--reasoning", options.reasoning_effort});
+    args.insert(args.end(),{"--context-window",std::to_string(options.context_window),"--output-reserve",std::to_string(options.output_reserve?options.output_reserve:std::min<size_t>(4096,options.context_window/8))});
     return args;
   }
   std::string session_read(const std::string& name){
     require(!name.empty()&&name.find_first_of("/\\:")==std::string::npos&&name.find("..") == std::string::npos,"Invalid session filename");
     return portable_config.root.empty()?workspace.read(".codex_cpp/sessions/"+name,true):read_bytes(project_state_root(workspace.root)/"sessions"/fs::u8path(name));
   }
-  J journal() {
-    std::vector<J> rows;
-    if (sid.empty())
-      return arr();
+  bool journal_truncated=false;std::string journal_error;
+  // Stream under the existing workspace path checks. Preview reads seek to a
+  // bounded tail; explicit raw tool-log requests scan records without a file cap.
+  void session_lines(const std::string& name,const std::function<bool(const std::string&,uint64_t)>& visit,size_t tail=0){
+    require(!name.empty()&&name.find_first_of("/\\:")==std::string::npos&&name.find("..") == std::string::npos,"Invalid session filename");
+#if defined(_WIN32)
+    HANDLE handle=portable_config.root.empty()?workspace.checked_handle(".codex_cpp/sessions/"+name,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,true,true):CreateFileW((project_state_root(workspace.root)/"sessions"/fs::u8path(name)).c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    require(handle!=INVALID_HANDLE_VALUE,"Cannot read session journal");struct Close{HANDLE h;~Close(){CloseHandle(h);}} close{handle};BY_HANDLE_FILE_INFORMATION info{};require(GetFileInformationByHandle(handle,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&info.nNumberOfLinks==1,"Linked session journal denied");uint64_t size=(uint64_t(info.nFileSizeHigh)<<32)|info.nFileSizeLow;
+#else
+    int handle=portable_config.root.empty()?workspace.open_file(".codex_cpp/sessions/"+name,O_RDONLY,true) : ::open((project_state_root(workspace.root)/"sessions"/fs::u8path(name)).c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
+    require(handle>=0,"Cannot read session journal");struct Close{int h;~Close(){::close(h);}} close{handle};struct stat info{};require(::fstat(handle,&info)==0&&S_ISREG(info.st_mode)&&info.st_nlink==1&&info.st_size>=0,"Linked session journal denied");uint64_t size=static_cast<uint64_t>(info.st_size);
+#endif
+    uint64_t offset=tail&&size>tail?size-tail:0;bool skip=offset!=0;if(tail)journal_truncated=skip;
+#if defined(_WIN32)
+    LARGE_INTEGER position;position.QuadPart=static_cast<LONGLONG>(offset);require(SetFilePointerEx(handle,position,nullptr,FILE_BEGIN)!=0,"Cannot seek session journal");
+#else
+    require(::lseek(handle,static_cast<off_t>(offset),SEEK_SET)>=0,"Cannot seek session journal");
+#endif
+    uint64_t line_start=offset;std::string line;char buffer[8192];while(offset<size){const auto count=static_cast<size_t>(std::min<uint64_t>(sizeof buffer,size-offset));
+#if defined(_WIN32)
+      DWORD n=0;require(ReadFile(handle,buffer,static_cast<DWORD>(count),&n,nullptr)!=0,"Cannot read session journal");
+#else
+      auto n=::read(handle,buffer,count);if(n<0&&errno==EINTR)continue;require(n>=0,"Cannot read session journal");
+#endif
+      if(!n)break;const uint64_t chunk_start=offset;offset+=static_cast<uint64_t>(n);for(size_t i=0;i<static_cast<size_t>(n);++i){if(buffer[i]=='\n'){if(!skip&&!visit(line,line_start))return;line.clear();skip=false;line_start=chunk_start+i+1;}else if(!skip){line+=buffer[i];require(line.size()<=12'000'000,"Session journal record exceeds 12 MB");}}
+    }
+    // A writer may be halfway through the final line. Wait for its newline.
+  }
+  const J& journal() {
+    std::deque<J> rows;size_t row_base=0;
+    if (sid.empty()){journal_key="empty";journal_cache=arr();journal_error.clear();journal_truncated=false;return journal_cache;}
     std::string cache_key;
     std::error_code cache_error;
     auto file = project_state_root(workspace.root) / "sessions" / (sid + ".items.jsonl");
@@ -1070,20 +1099,13 @@ struct App {
       if (!cache_error && cache_key == journal_key)
         return journal_cache;
     }
-    std::string source;
-    try {
-      source = session_read(sid + ".items.jsonl");
-    } catch (...) {
-      return arr();
-    }
-    std::istringstream in(source);
-    std::string line;
-    std::map<std::string, size_t> calls;
-    while (std::getline(in, line)) {
+    if(!fs::exists(file)){journal_key=sid+":missing";journal_cache=arr();journal_error.clear();journal_truncated=false;return journal_cache;}
+    std::map<std::string, size_t> calls;journal_error.clear();
+    try{session_lines(sid+".items.jsonl",[&](const std::string& line,uint64_t position){
       auto item = parse_json(line);
       if (!item)
-        continue;
-      auto role = text(*item, "role"), kind = text(*item, "type");
+        return true;
+      const auto before=row_base+rows.size();auto role = text(*item, "role"), kind = text(*item, "type");
       if (kind == "codex_reasoning") {
         rows.push_back(obj({{"k", str("reasoning")}, {"text", field(*item, "text")}}));
       } else if (role == "user" || role == "assistant") {
@@ -1098,7 +1120,7 @@ struct App {
         if (!value.empty())
           rows.push_back(obj({{"k", str(role)}, {"text", str(value)}}));
       } else if (kind == "function_call") {
-        calls[text(*item, "call_id")] = rows.size();
+        calls[text(*item, "call_id")] = row_base+rows.size();
         rows.push_back(obj({{"k", str("tool")},
                             {"id", field(*item, "call_id")},
                             {"name", field(*item, "name")},
@@ -1107,17 +1129,19 @@ struct App {
                             {"output", J{}}}));
       } else if (kind == "function_call_output") {
         auto found = calls.find(text(*item, "call_id"));
+        if(found==calls.end()){calls[text(*item,"call_id")]=row_base+rows.size();rows.push_back(obj({{"k",str("tool")},{"id",field(*item,"call_id")},{"name",str("tool")},{"args",str("[Earlier call: open full tool log]")},{"args_truncated",boolean(true)},{"output",J{}}}));found=calls.find(text(*item,"call_id"));}
         if (found != calls.end()) {
           auto output = text(*item, "output");
-          rows[found->second].fields["output"] = str(output.substr(0, 12000));
-          rows[found->second].fields["output_truncated"] = boolean(output.size() > 12000);
+          rows[found->second-row_base].fields["output"] = str(output.substr(0, 12000));
+          rows[found->second-row_base].fields["output_truncated"] = boolean(output.size() > 12000);
         }
       }
-    }
-    if (rows.size() > 400)
-      rows.erase(rows.begin(), rows.end() - 400);
+      if(row_base+rows.size()>before)rows.back().fields["row_key"]=str(std::to_string(position));
+      while(rows.size()>400){if(text(rows.front(),"k")=="tool")calls.erase(text(rows.front(),"id"));rows.pop_front();++row_base;journal_truncated=true;}
+      return true;
+    },16*1024*1024);}catch(const std::exception& e){journal_error=e.what();if(journal_key.rfind(sid+":",0)!=0){journal_key=sid+":unavailable";journal_cache=arr();}return journal_cache;}
     journal_key = cache_key;
-    journal_cache = arr(rows);
+    journal_cache = arr(std::vector<J>(rows.begin(),rows.end()));
     return journal_cache;
   }
   J sessions() {
@@ -1143,12 +1167,10 @@ struct App {
           title = found->second;
         else
           try {
-            std::istringstream input(session_read(id + ".items.jsonl"));
-            std::string line;
-            while (std::getline(input, line)) {
+            session_lines(id+".items.jsonl",[&](const std::string& line,uint64_t){
               auto item = parse_json(line);
               if (!item || text(*item, "role") != "user")
-                continue;
+                return true;
               auto content = field(*item, "content");
               std::string value = content.str();
               if (content.kind == J::Array)
@@ -1158,8 +1180,8 @@ struct App {
               title = value.substr(0, value.find('\n')).substr(0, 72);
               if (!title.empty())
                 title_cache[id] = title;
-              break;
-            }
+              return false;
+            });
           } catch (...) {
           }
       }
@@ -1176,21 +1198,29 @@ struct App {
     });
     return arr(result);
   }
-  J snapshot() {
-    return obj({{"session_id", sid.empty() ? J{} : str(sid)},
-                {"busy", boolean(busy)},
-                {"timeline", journal()},
-                {"draft", str(draft)},
-                {"reasoning_draft", str(reasoning_draft)},
-                {"messages", messages},
-                {"events", events},
-                {"pending", pending},
-                {"error", str(error)},
-                {"model", str(display_model)},
-                {"reasoning", str(options.reasoning_effort)},
-                {"permission", str(permission)},
-                {"provider", provider(active)},
-                {"sessions", sessions()}});
+  std::string snapshot_epoch=entropy();uint64_t snapshot_sequence=0;
+  std::deque<std::pair<std::string,std::map<std::string,std::string>>> snapshot_versions;
+  std::string row_hash_key;std::map<std::string,std::string> row_hashes;
+  J snapshot(const J* request=nullptr) {
+    const auto& timeline=journal();
+    auto result=obj({{"session_id",sid.empty()?J{}:str(sid)},{"busy",boolean(busy)},
+      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"events",events},{"pending",pending},
+      {"error",str(journal_error.empty()?error:"History unavailable: "+journal_error)},
+      {"model",str(display_model)},{"reasoning",str(options.reasoning_effort)},{"permission",str(permission)},
+      {"provider",provider(active)},{"sessions",sessions()},{"history_truncated",boolean(journal_truncated)}});
+    if(!request||!request->get("since")){result.fields["timeline"]=timeline;result.fields["messages"]=messages;return result;}
+    // New clients only need the optimistic user message before its journal row
+    // arrives. Do not clone/hash a second copy of the complete conversation.
+    result.fields["messages"]=arr();if(timeline.items.empty())result.fields["messages"]=messages;
+    else if(busy)for(auto it=messages.items.rbegin();it!=messages.items.rend();++it)if(text(*it,"role")=="user"){result.fields["messages"]=arr({*it});break;}
+    std::map<std::string,std::string> hashes;for(const auto& entry:result.fields)hashes[entry.first]=digest(json_dump(entry.second));hashes["timeline"]=journal_key;
+    if(row_hash_key!=journal_key){row_hashes.clear();for(const auto& row:timeline.items)row_hashes["@row/"+text(row,"row_key")]=digest(json_dump(row));row_hash_key=journal_key;}hashes.insert(row_hashes.begin(),row_hashes.end());
+    if(snapshot_versions.empty()||snapshot_versions.back().second!=hashes){snapshot_versions.emplace_back(snapshot_epoch+":"+std::to_string(++snapshot_sequence),hashes);if(snapshot_versions.size()>16)snapshot_versions.pop_front();}
+    const auto revision=snapshot_versions.back().first;const auto since=text(*request,"since");
+    for(const auto& base:snapshot_versions)if(base.first==since){J changes=obj();for(const auto& entry:result.fields){auto previous=base.second.find(entry.first);if(previous==base.second.end()||previous->second!=hashes.at(entry.first))changes.fields[entry.first]=entry.second;}
+      auto previous=base.second.find("timeline");if(previous==base.second.end()||previous->second!=journal_key){std::vector<J> changed,order;for(const auto& row:timeline.items){auto id=text(row,"row_key");order.push_back(str(id));auto old=base.second.find("@row/"+id);if(old==base.second.end()||old->second!=row_hashes.at("@row/"+id))changed.push_back(row);}changes.fields["timeline_delta"]=obj({{"rows",arr(changed)},{"order",arr(order)}});}
+      return obj({{"partial",boolean(true)},{"base_revision",str(since)},{"revision",str(revision)},{"changes",changes}});}
+    result.fields["timeline"]=timeline;result.fields["revision"]=str(revision);return result;
   }
   void start(const std::string &prompt, const std::string &rid, bool login = false) {
     require(!busy, "A task is already running");
@@ -1348,25 +1378,24 @@ struct App {
     if (op == "list")
       return obj({{"projects", arr({str("local")})}});
     if (op == "snapshot")
-      return snapshot();
+      return snapshot(&request);
     if (op == "tool_log") {
       require(!sid.empty() && text(request, "session_id") == sid, "Session changed; reopen the tool log");
       auto call_id = text(request, "call_id");
       require(!call_id.empty() && call_id.size() <= 256, "Invalid tool call ID");
       // Read only the current App's journal, preserving hosted scope/membership checks.
-      std::istringstream input(session_read(sid + ".items.jsonl"));
-      std::string line;
       J result = obj();
       bool found = false;
-      while (std::getline(input, line)) {
+      session_lines(sid+".items.jsonl",[&](const std::string& line,uint64_t){
         auto item = parse_json(line);
-        if (!item || text(*item, "call_id") != call_id) continue;
+        if (!item || text(*item, "call_id") != call_id) return true;
         auto kind = text(*item, "type");
         if (kind == "function_call") {
           result = obj({{"name", field(*item, "name")}, {"arguments", field(*item, "arguments")}, {"output", J{}}});
           found = true;
         } else if (kind == "function_call_output" && found) result.fields["output"] = field(*item, "output");
-      }
+        return true;
+      });
       require(found, "Tool call not found in the current session");
       return result;
     }
@@ -1547,7 +1576,7 @@ struct App {
       auto id = value.kind == J::Null ? "" : value.str();
       require(id.empty() || identifier(id), "Invalid session ID");
       if (!id.empty())
-        session_read(id + ".items.jsonl");
+        session_lines(id+".items.jsonl",[](const std::string&,uint64_t){return false;});
       sid = id;
       messages = arr();
       events = arr();
@@ -2077,7 +2106,7 @@ int main(int argc, char **argv) {
         continue;
       }
       require(std::set<std::string>{"--root", "--provider", "--model", "--base-url", "--api", "--api-key-env",
-                                    "--no-api-key", "--reasoning"}
+                                    "--no-api-key", "--reasoning", "--context-window", "--output-reserve"}
                   .count(arg),
               "Unsupported web option; execution policy is chosen in the page");
       if (arg != "--root")

@@ -427,3 +427,5 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .creator-review p { margin: 6px 0; font-size: 13px; color: var(--muted); }
 .creator-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .creator-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 180px; overflow: auto; }
+
+#history-status { margin: 8px auto; padding: 0 16px; color: var(--text-muted, #706b62); font-size: 12px; }

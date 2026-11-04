@@ -643,7 +643,7 @@ function buildChat(snap, wasBusy = false) {
   const used = new Set();
   const cached = (key, value, create) => {
     used.add(key);
-    const signature = JSON.stringify(value);
+    const signature = typeof value === 'string' ? value : JSON.stringify(value);
     let entry = messageCache.get(key);
     if (!entry || entry.signature !== signature) {
       entry = { signature, node: create() };
@@ -703,13 +703,13 @@ function buildChat(snap, wasBusy = false) {
     group = [];
   };
   for (const [index, row] of rows.entries()) {
-    const key = snap.session_id + ':' + row.k + ':' + (row.id || index);
+    const key = snap.session_id + ':' + row.k + ':' + (row.id || row.row_key || index);
     if (row.k === 'reasoning') {
       flushGroup();
       const live = messageCache.get('reasoning-draft');
       if (!messageCache.has(key) && live && live.node.querySelector('.reasoning-body').textContent === row.text) {
         live.node.querySelector('summary').textContent = '思考过程';
-        messageCache.set(key, { signature: JSON.stringify(row.text), node: live.node });
+        messageCache.set(key, { signature: row.text, node: live.node });
         messageCache.delete('reasoning-draft');
       }
       nodes.push(cached(key, row.text, () => reasoningMessage(row.text)));
@@ -1235,8 +1235,31 @@ async function refresh() {
   state.polling = true;
   const generation = state.generation;
   try {
-    const snap = await rpc('snapshot');
+    const update = await rpc('snapshot', { since: state.snap?.revision || '' });
     if (generation !== state.generation) return;
+    let snap = update;
+    if (update.partial) {
+      if (!state.snap || update.base_revision !== state.snap.revision) {
+        if (state.snap) delete state.snap.revision;
+        throw new Error('会话同步版本已变化，正在恢复完整状态');
+      }
+      const changes = { ...update.changes };
+      if (changes.timeline_delta) {
+        const patch = changes.timeline_delta;
+        const rowsById = new Map((state.snap.timeline || []).map(row => [row.row_key, row]));
+        for (const row of patch.rows || []) rowsById.set(row.row_key, row);
+        if (!Array.isArray(patch.order) || patch.order.length > 400 ||
+            new Set(patch.order).size !== patch.order.length || patch.order.some(id => !rowsById.has(id))) {
+          delete state.snap.revision;
+          throw new Error('历史记录版本已变化，正在恢复完整状态');
+        }
+        const rows = patch.order.map(id => rowsById.get(id));
+        changes.timeline = rows.length === state.snap.timeline?.length &&
+          rows.every((row, i) => row === state.snap.timeline[i]) ? state.snap.timeline : rows;
+        delete changes.timeline_delta;
+      }
+      snap = { ...state.snap, ...changes, revision: update.revision };
+    }
     if (state.user.mode === 'server') {
       const info = await rpc('project_status');
       if (generation !== state.generation) return;
@@ -1252,13 +1275,16 @@ async function refresh() {
     }
     if (generation !== state.generation) return;
     const wasBusy = state.snap?.session_id === snap.session_id && state.snap?.busy;
+    const previousSnap = state.snap;
     state.snap = snap;
+    const historyStatus = $('history-status');
+    if (historyStatus) historyStatus.hidden = !snap.history_truncated;
     renderDeviceLogin(snap);
     const composerKey = JSON.stringify([state.project, state.scope, snap.session_id]);
     if (!state.composerKey) $('prompt').value = composerDrafts.get(composerKey) || $('prompt').value;
     state.composerKey = composerKey;
     const rows = snap.timeline || [];
-    const signature = JSON.stringify([
+    const signature = snap.revision || JSON.stringify([
       rows,
       snap.draft,
       snap.reasoning_draft,
@@ -1272,7 +1298,7 @@ async function refresh() {
       state.signature = signature;
       const view = captureChatView();
       drawMessages(buildChat(snap, wasBusy), view);
-      renderTerminal(rows);
+      if (previousSnap?.timeline !== rows) renderTerminal(rows);
       renderPendingDiff(snap);
     }
     // 工具完成数变化 → 刷新文件树与 Diff
