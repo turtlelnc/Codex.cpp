@@ -69,3 +69,26 @@ existing WebUI suite continues to cover approvals, races and streaming behavior.
 
 Windows isolation and splitting the compilation unit are deliberately outside
 this change; no sandbox permission is relaxed.
+
+## Authorization and provider-switch regressions
+
+Hosted snapshot login events are filtered for the caller before computing field
+hashes or building any full/delta response. Shared non-creators cannot receive
+creator device-login notices, including when they reuse a creator revision or
+force a full-snapshot recovery; personal login views remain scoped to their user.
+Provider selection retains deployment context/output budgets, including automatic
+saved-provider loading at startup and subsequent Agent argument construction.
+
+`codex-self-test --web-boundary-checks NEW_TEMP_DIRECTORY` exercises the real
+HostedService dispatch and App snapshot/provider paths with injected login-event
+fixtures. It tests creator/member/nonmember views, repeated delta polling,
+cross-view revisions, personal isolation, environment budgets, explicit overrides,
+provider switching/deletion and saved-provider restart. No real OAuth login or
+model request is performed. The harness runs on all three native CI platforms.
+
+`node tests/provider_budget_restart_test.cjs build/codex-cpp` also starts the real
+WebUI process with 16K/2K environment configuration, selects a saved provider,
+submits model tasks, stops and restarts the service, then repeats. Local model
+fixtures verify compaction and request sizes under the configured budget on both
+sides of the process restart. The two boundary regressions were first reproduced
+on the unchanged PR code, then passed after these fixes.

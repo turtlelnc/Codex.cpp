@@ -637,12 +637,5 @@ J HostedService::dispatch(const std::string &user, const J &request) {
     return application->rpc(request);
   }
   lock.unlock();
-  auto result = application->rpc(request);
-  if (op == "snapshot" && !personal && !owner) {
-    auto &events = result.fields["events"].items;
-    events.erase(std::remove_if(events.begin(), events.end(),
-                                [](const J &e) { return text(e, "type") == "login.notice"; }),
-                 events.end());
-  }
-  return result;
+  return application->rpc(request,personal || owner);
 }

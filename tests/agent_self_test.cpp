@@ -193,7 +193,9 @@ std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed
 
 #include "creator_process_checks.inc"
 #include "portable_download_checks.inc"
+#include "web_boundary_checks.inc"
 int main(int argc,char** argv){
+  if((argc==3||argc==4)&&std::string(argv[1])=="--web-boundary-checks")return web_boundary_checks(fs::u8path(argv[2]),argc==4?argv[3]:"all");
   if(argc>1&&std::string(argv[1])=="--portable-download-check")return portable_download_check(argc,argv);
   if(argc==3 && std::string(argv[1])=="--creator-process-checks")return creator_process_checks(fs::u8path(argv[2]));
   if(argc>1 && (std::string(argv[1])=="--native-agent-git" || std::string(argv[1])=="--native-git-command" || std::string(argv[1])=="--native-child"))return codex_runtime_main(argc,argv);

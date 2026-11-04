@@ -996,6 +996,8 @@ struct App {
     require(!busy, "Wait for current task to finish");
     Options next;
     next.root = workspace.root;
+    next.context_window = options.context_window;
+    next.output_reserve = options.output_reserve;
     std::map<std::string, std::string> keys;
     display_model.clear();
     if (id != "codex") {
@@ -1201,10 +1203,13 @@ struct App {
   std::string snapshot_epoch=entropy();uint64_t snapshot_sequence=0;
   std::deque<std::pair<std::string,std::map<std::string,std::string>>> snapshot_versions;
   std::string row_hash_key;std::map<std::string,std::string> row_hashes;
-  J snapshot(const J* request=nullptr) {
+  J snapshot(const J* request=nullptr,bool include_login_notices=true) {
     const auto& timeline=journal();
+    // Authorize the view before hashing/versioning it. Full and delta replies
+    // must never share an unfiltered event payload with an unauthorized reader.
+    J visible_events=events;if(!include_login_notices)visible_events.items.erase(std::remove_if(visible_events.items.begin(),visible_events.items.end(),[](const J& event){return text(event,"type")=="login.notice";}),visible_events.items.end());
     auto result=obj({{"session_id",sid.empty()?J{}:str(sid)},{"busy",boolean(busy)},
-      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"events",events},{"pending",pending},
+      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"events",visible_events},{"pending",pending},
       {"error",str(journal_error.empty()?error:"History unavailable: "+journal_error)},
       {"model",str(display_model)},{"reasoning",str(options.reasoning_effort)},{"permission",str(permission)},
       {"provider",provider(active)},{"sessions",sessions()},{"history_truncated",boolean(journal_truncated)}});
@@ -1372,13 +1377,13 @@ struct App {
       }
     });
   }
-  J rpc(const J &request) {
+  J rpc(const J &request,bool include_login_notices=true) {
     std::unique_lock<std::recursive_mutex> lock(mutex);
     auto op = text(request, "op");
     if (op == "list")
       return obj({{"projects", arr({str("local")})}});
     if (op == "snapshot")
-      return snapshot(&request);
+      return snapshot(&request,include_login_notices);
     if (op == "tool_log") {
       require(!sid.empty() && text(request, "session_id") == sid, "Session changed; reopen the tool log");
       auto call_id = text(request, "call_id");
