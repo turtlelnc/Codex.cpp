@@ -1170,7 +1170,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
     if(overhead+1024>=context_budget.input())err="System instructions and tools exceed the configured model context budget";
     else if(compact_session(session,api,err,context_budget.input()-overhead)&&prepare_request()<=context_budget.input())err.clear();
     else if(err.empty())err="Current request still exceeds the configured model context budget; input remains saved";
-    if(!err.empty()){if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
+    if(!err.empty()){session.emit(EventKind::Error,"{\"message\":\""+json_escape(err)+"\"}");if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
   }
   std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
