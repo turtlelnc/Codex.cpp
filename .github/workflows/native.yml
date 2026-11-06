@@ -61,6 +61,18 @@ jobs:
           node tests/portable_update_test.cjs "$binary"
       - name: Build Creator lifecycle regression harness
         run: cmake --build build --config Release --target codex-self-test --parallel 2
+      - name: Build explicit team compatibility modules
+        run: cmake --build build --config Release --target team-protocol-compat team-protocol-fixture team-protocol-bad-fixture --parallel 2
+      - name: Verify team protocol negotiation and native adapter behavior
+        shell: bash
+        run: |
+          base=build
+          module_config=
+          if [ "$RUNNER_OS" = Windows ]; then base=build/Release; module_config=/Release; fi
+          binary="$base/codex-cpp"
+          probe="$base/codex-self-test"
+          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; probe="$probe.exe"; fi
+          node tests/team_protocol_test.cjs "$binary" "$probe" "build/team-protocol-compat$module_config/plugin.json" "build/team-protocol-fixture$module_config/plugin.json" "build/team-protocol-bad-fixture$module_config/plugin.json"
       - name: Verify login snapshot privacy and provider budget retention
         shell: bash
         run: |

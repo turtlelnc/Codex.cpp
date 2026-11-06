@@ -151,7 +151,7 @@ struct RemoteTeamConsole {
       auto result=connection.rpc("projects");std::vector<std::string> projects;
       for(const auto& item:field(result,"projects",arr()).items)projects.push_back(item.str());
       auto choices=projects;choices.insert(choices.end(),{"Create project","Sign out","Back"});
-      int selected=ui.settings_menu("Team projects",connection.origin+"\nSigned in: "+connection.username,choices);
+      int selected=ui.settings_menu("Team projects",connection.origin+"\nSigned in: "+connection.username+"\n"+connection.protocol_status(),choices);
       if(selected<0||selected==static_cast<int>(choices.size()-1))return;
       if(static_cast<size_t>(selected)<projects.size()){project=projects[static_cast<size_t>(selected)];project_menu(ui);}
       else if(static_cast<size_t>(selected)==projects.size()){

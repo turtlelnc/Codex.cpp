@@ -1,0 +1,1 @@
+{"api":1,"id":"team-protocol-compat","requires":["builtin.protocol"],"libraries":{"linux":"team-protocol-compat.so","macos":"team-protocol-compat.dylib","windows":"team-protocol-compat.dll"},"services":{"team.protocol.adapters":"builtin.protocol"},"assets":["plugin.cpp"]}
