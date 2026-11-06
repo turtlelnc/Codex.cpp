@@ -44,7 +44,7 @@ async function freePort() {
           index = items.map((x) => x.role).lastIndexOf("user"),
           prompt = JSON.stringify(items[index]?.content || ""),
           results = items.slice(index + 1).filter((x) => x.type === "function_call_output");
-        records.push({ prompt, results });
+        records.push({ prompt, results, toolCount: (body.tools || []).length });
         res.setHeader("Content-Type", "application/json");
         if (prompt.includes("MAIN_HOLD") && !prompt.includes("Side question:")) {
           held.push(res);
@@ -108,6 +108,46 @@ async function freePort() {
     });
     service.stdout.on("data", (b) => (logs += b));
     service.stderr.on("data", (b) => (logs += b));
+    const disabledTool = await new Promise((resolve, reject) => {
+      const child = spawn(
+        binary,
+        [
+          "--root",
+          root,
+          "--session-dir",
+          path.join(temp, "tool-less-journal"),
+          "--provider",
+          "custom",
+          "--base-url",
+          "http://127.0.0.1:" + model.address().port,
+          "--api",
+          "responses",
+          "--model",
+          "fixture",
+          "--no-api-key",
+          "--no-tools",
+          "--json",
+          "--",
+          "SIDE_CHECK",
+        ],
+        {
+          env: {
+            ...process.env,
+            CODEX_CPP_HOME: home,
+            CODEX_CPP_PORTABLE_DIR: "",
+            CODEX_CPP_PORTABLE_PROJECT: "",
+          },
+        },
+      );
+      let output = "";
+      child.stdout.on("data", (b) => (output += b));
+      child.stderr.on("data", (b) => (output += b));
+      child.on("error", reject);
+      child.on("exit", (code) => resolve({ code, output }));
+    });
+    assert.equal(disabledTool.code, 3);
+    assert.match(disabledTool.output, /Tool call refused: tools are disabled/);
+    assert.equal(records.at(-1).toolCount, 0);
     let cookie = "",
       csrf = "";
     async function call(route, data, status = 200) {
@@ -235,13 +275,13 @@ async function freePort() {
         path: path.join(artifacts, "side-chat-next-steps.png"),
         fullPage: true,
       });
-      await page.setViewportSize({width:390,height:844});
-    await page.keyboard.press("Escape");
-    assert(await page.locator('.next-steps').isVisible());
-    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-    await page.screenshot({path:path.join(artifacts,'side-chat-mobile.png'),fullPage:true});
-    await page.setViewportSize({width:1440,height:900});
-    const before = records.length;
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.keyboard.press("Escape");
+      assert(await page.locator(".next-steps").isVisible());
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.screenshot({ path: path.join(artifacts, "side-chat-mobile.png"), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const before = records.length;
       await rpc("suggestions_generate");
       assert.equal(records.length, before);
       await page.locator("#settings-button").click();

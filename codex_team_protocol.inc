@@ -9,7 +9,7 @@ struct TeamAdapter{
   std::map<std::string,std::string> request_names,response_names;
 };
 static bool team_binding(const std::string& name){
-  static const std::set<std::string> bindings={"op","project","scope","request_id","approval","allow","fingerprint","confirmed","username","session_id","call_id","base","source","target","permission","sandbox","expected_session"};return bindings.count(name)!=0;
+  static const std::set<std::string> bindings={"op","project","scope","request_id","approval","allow","fingerprint","confirmed","username","session_id","call_id","base","source","target","permission","sandbox","expected_session","main_session"};return bindings.count(name)!=0;
 }
 static const std::vector<TeamAdapter>& team_adapters(){
   static const auto adapters=[](){std::vector<TeamAdapter> result;
