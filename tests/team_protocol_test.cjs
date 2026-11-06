@@ -153,10 +153,25 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
     await modern.rpc("projects", {}, 400);
     await stop();
     url = await launch(compat, state);
-    const older = new Client(url);
+    let older = new Client(url);
     await older.login(token);
     assert((await older.call("/api/protocol")).protocols.includes(0));
-    await older.rpc("create", { name: "legacy-project" });
+    if (process.platform === "win32") {
+      // Preserve Windows fail-closed execution. Seed a real repository offline
+      // so protocol/snapshot tests do not require an unavailable sandbox.
+      const denied = await older.call("/api/rpc", {op:"create", name:"legacy-project"}, 400);
+      assert.match(denied.error, /sandbox unavailable/);
+      await stop();
+      const databasePath = path.join(state, "server.json");
+      const database = JSON.parse(fs.readFileSync(databasePath, "utf8"));
+      database.projects["legacy-project"] = {owner:"alice", members:["alice"], blocked:false};
+      fs.writeFileSync(databasePath, JSON.stringify(database));
+      const repo = path.join(state,"repositories","legacy-project","shared");
+      const workspace = path.join(state,"workspaces","legacy-project","shared");
+      fs.mkdirSync(repo,{recursive:true});fs.mkdirSync(workspace,{recursive:true});
+      execFileSync(binary,["--native-git-command",repo,workspace,"init","--bare","--initial-branch=shared",repo],{env});
+      url = await launch(compat,state);older = new Client(url);await older.login(token);
+    } else await older.rpc("create", { name: "legacy-project" });
     assert((await older.rpc("projects")).projects.includes("legacy-project"));
     const full = await older.rpc("snapshot", {
       project: "legacy-project",
