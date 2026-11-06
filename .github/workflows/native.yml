@@ -73,6 +73,12 @@ jobs:
           probe="$base/codex-self-test"
           if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; probe="$probe.exe"; fi
           node tests/team_protocol_test.cjs "$binary" "$probe" "build/team-protocol-compat$module_config/plugin.json" "build/team-protocol-fixture$module_config/plugin.json" "build/team-protocol-bad-fixture$module_config/plugin.json"
+      - name: Verify bounded atomic journal replacement under reader locks
+        shell: bash
+        run: |
+          binary=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-self-test.exe; fi
+          "$binary" --journal-replacement-checks "$RUNNER_TEMP/journal-replacement"
       - name: Verify login snapshot privacy and provider budget retention
         shell: bash
         run: |
