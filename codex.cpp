@@ -395,7 +395,7 @@ bool close_unconfirmed_calls(){
 };
 static bool lock_session(Session& s,Session* previous,std::string& err);static void unlock_session(Session& s,Session* previous);// defined after the portable lease is included
 static bool init_session(Session& s,const fs::path& root,bool echo_json,const std::optional<std::string>& resume,std::string& err,Session* previous = nullptr){
-s.items.clear();s.estimated_tokens=0;s.transcript.clear();s.root = root;s.dir = project_state_root(root) / "sessions";std::error_code ec;fs::create_directories(s.dir,ec);
+s.items.clear();s.estimated_tokens=0;s.transcript.clear();s.root = root;s.dir = project_session_root(root);std::error_code ec;fs::create_directories(s.dir,ec);
 if(ec){err = "cannot create session dir: " + ec.message();return false;}s.echo_json = echo_json;s.id = resume ? *resume : random_id("session");
 s.events_path = s.dir /(s.id + ".jsonl");s.transcript_path = s.dir /(s.id + ".transcript");s.items_path = s.dir /(s.id + ".items.jsonl");
 s.meta_path = s.dir /(s.id + ".meta.json");
@@ -424,7 +424,7 @@ if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !f
     << json_escape(now_iso8601())<< "\",\"cwd\":\"" << json_escape(root.string())<< "\"}\n";
   s.emit(EventKind::SessionStarted,"{\"cwd\":\"" + json_escape(root.string())+ "\"}");
 }
-return true; } static std::vector<std::string> session_ids(const fs::path& root){const fs::path dir = project_state_root(root) / "sessions";std::error_code ec;
+return true; } static std::vector<std::string> session_ids(const fs::path& root){const fs::path dir = project_session_root(root);std::error_code ec;
 std::vector<fs::path> files;if(!fs::exists(dir,ec))return{};for(const auto& e : fs::directory_iterator(dir,ec)) if(e.is_regular_file(ec) && e.path().extension()== ".jsonl" && e.path().filename().string().find(".items.jsonl")==std::string::npos)files.push_back(e.path());
 std::sort(files.begin(),files.end(),[](const fs::path& a,const fs::path& b){std::error_code ea,eb; return fs::last_write_time(a,ea)> fs::last_write_time(b,eb);
 });
@@ -806,8 +806,8 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
-bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false;int max_steps = 64;
+struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
+bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
@@ -852,6 +852,7 @@ UI:
 
 Agent options:
   --root DIR                    workspace (default: current directory)
+  --session-dir DIR             host-selected separate session journal directory
   --resume SESSION_ID           resume a saved structured session
   --continue                    continue its unfinished turn (requires --resume)
   --wait-quota                  wait for confirmed Codex quota reset
@@ -866,6 +867,7 @@ Agent options:
   --danger-full-access          alias; also implies --approval never
   --context-window N            model context tokens (default 32768; environment CODEX_CPP_CONTEXT_WINDOW)
   --output-reserve N            reserved output tokens (default min(4096, window/8))
+  --no-tools                    discussion-only mode; reject tool calls
   --max-steps N                 agent step limit (default: 64)
   --mcp-config PATH             trusted MCP stdio server configuration JSON
   --image PATH                  attach an image to the next prompt (repeatable)
@@ -895,8 +897,10 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a=="--"){for(++i;i<argc;++i)o.prompt.emplace_back(argv[i]);break;}
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
+  if(a == "--session-dir" && i + 1 < argc){o.session_store=fs::absolute(fs::u8path(argv[++i]));continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a=="--no-tools"){o.no_tools=true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
   if(a == "--continue"){o.continue_turn=true;continue;}
@@ -1045,7 +1049,7 @@ int main(int argc,char** argv){
 #if !defined(_WIN32)
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
 #endif
-std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
+std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;session_store_override=opt.session_store;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
 if(!opt.frontend.empty()&&opt.policy.sandbox==SandboxMode::DangerFullAccess&&!opt.unsafe_execution){std::cerr<<"--frontend with danger-full-access requires explicit --unsafe-execution\n";return 2;}
 if(!opt.frontend.empty()&&(opt.json||opt.ui_mode==UiMode::Plain)){std::cerr<<"--frontend requires a real TUI terminal, without --json or --ui plain\n";return 2;}
 if(opt.unsafe_execution){if(!terminal_is_tty()||!approve("UNSAFE: disable OS isolation for this run?"))return 2;}
@@ -1163,6 +1167,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   const auto prepare_request=[&](){std::vector<std::string> input;
     if(api.style==ApiStyle::Responses){input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);request_tools=router.specs_json();}
     else{input=chat_history(session,turn_instructions);append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
+    if(opt.no_tools)request_tools="[]";
     request_input=join_json_array(input);return estimate_tokens(request_input)+estimate_tokens(request_tools)+(api.style==ApiStyle::Responses?estimate_tokens(turn_instructions):0)+256;
   };
   if(prepare_request()>context_budget.input()){
@@ -1192,6 +1197,7 @@ if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reason
     }else if(!opt.json)std::cout<<"[interrupted]\n";
     return 0; } session.emit(EventKind::Error,"{\"message\":\"" + json_escape(err)+ "\"}");if(tui){tui->add_error(err);tui->render(); }else{ std::cerr << "[error] " << err << '\n'; } return 3;
   }
+  if(opt.no_tools&&!response->calls.empty()){session.emit(EventKind::Error,R"({"message":"Tool call refused: tools are disabled"})");return 3;}
   session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\",\"text\":\""+json_escape(response->text.value_or(""))+"\"}");
   if(!response->calls.empty()){if(!streamed_text.empty()&& !opt.json){if(tui)tui->finish_assistant_stream(streamed_text);else std::cout<<'\n'; }
     if(response->text && !response->text->empty())session.record_item("{\"role\":\"assistant\",\"content\":\""+json_escape(*response->text)+"\"}");

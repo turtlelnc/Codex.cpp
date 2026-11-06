@@ -1,7 +1,7 @@
 // Included in native_web: the host owns authorization and mutation semantics.
 // Native plugins provide bounded, declarative codecs, never authorization grants.
 static bool team_read_operation(const std::string& op){
-  static const std::set<std::string> reads={"projects","list","project_status","member_candidates","providers","models","snapshot","files","read","diff","tool_log","status"};
+  static const std::set<std::string> reads={"projects","list","project_status","member_candidates","providers","models","snapshot","files","read","diff","tool_log","status","side_snapshot","preferences","suggestions_snapshot"};
   return reads.count(op)!=0;
 }
 struct TeamAdapter{
@@ -9,7 +9,7 @@ struct TeamAdapter{
   std::map<std::string,std::string> request_names,response_names;
 };
 static bool team_binding(const std::string& name){
-  static const std::set<std::string> bindings={"op","project","scope","request_id","approval","allow","fingerprint","confirmed","username","session_id","call_id","base","source","target","permission","sandbox"};return bindings.count(name)!=0;
+  static const std::set<std::string> bindings={"op","project","scope","request_id","approval","allow","fingerprint","confirmed","username","session_id","call_id","base","source","target","permission","sandbox","expected_session"};return bindings.count(name)!=0;
 }
 static const std::vector<TeamAdapter>& team_adapters(){
   static const auto adapters=[](){std::vector<TeamAdapter> result;
@@ -33,6 +33,6 @@ static J team_decode_result(J result,const TeamAdapter* codec){return codec?team
 static J team_protocol_description(const std::string& mode){
   std::vector<J> versions={number(1)},profiles;for(const auto& codec:team_adapters())if(codec.server){versions.push_back(number(codec.wire));profiles.push_back(obj({{"wire_version",number(codec.wire)},{"profile",str(codec.profile)}}));}
   return obj({{"application",str("codex-cpp")},{"mode",str(mode)},{"protocols",arr(versions)},
-    {"capabilities",arr({str("scope-auth.v1"),str("snapshot.full.v1"),str("snapshot.delta.v1"),str("approval.bound.v1"),str("request-id.v1"),str("team.write.v1")})},{"adapters",arr(profiles)}});
+    {"capabilities",arr({str("suggestions.v1"),str("side-chat.v1"),str("scope-auth.v1"),str("snapshot.full.v1"),str("snapshot.delta.v1"),str("approval.bound.v1"),str("request-id.v1"),str("team.write.v1")})},{"adapters",arr(profiles)}});
 }
 static int team_wire_version(const std::string& value){require(!value.empty()&&value.size()<=5&&value.find_first_not_of("0123456789")==std::string::npos,"Invalid team protocol header");int n=std::stoi(value);require(n<=65535&&std::to_string(n)==value,"Invalid team protocol header");return n;}

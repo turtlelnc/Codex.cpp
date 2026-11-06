@@ -65,7 +65,7 @@ async function http(path, body, wire = 1) {
   return data;
 }
 
-const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','status']);
+const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','status','side_snapshot','preferences','suggestions_snapshot']);
 function teamProtocol() {
   const peer = state.user?.protocol;
   if (!peer) return { wire: state.user?.mode === 'server' ? 0 : 1, readOnly: state.user?.mode === 'server' };
@@ -107,10 +107,10 @@ function openDialog(title, fields, submit, preview = '') {
   $('dialog-error').textContent = '';
   for (const f of fields) {
     const label = el('label', f.label);
-    const input = el(f.type === 'select' ? 'select' : 'input');
+    const input = el(f.type === 'select' ? 'select' : f.type === 'textarea' ? 'textarea' : 'input');
     input.name = f.name;
     if (f.type === 'select') for (const value of f.options) input.append(new Option(value, value));
-    else input.type = f.type;
+    else if (f.type !== 'textarea') input.type = f.type;
     input.value = f.value;
     input.required = f.required;
     if (f.type === 'password') input.autocomplete = 'new-password';
@@ -139,6 +139,80 @@ function openDialog(title, fields, submit, preview = '') {
 
 onClick('dialog-close', () => $('dialog').close());
 onClick('dialog-cancel', () => $('dialog').close());
+
+/* ---------- 设置与缓存的模型建议 ---------- */
+const preferences={loaded:false,side_chat:true,auto_suggestions:false};
+const suggestions={cache:null,node:el('section',undefined,'next-steps'),loading:false,ticket:0,lastActivity:Date.now(),attempted:new Set()};
+function applyPreferences(value){Object.assign(preferences,{loaded:true,side_chat:value.side_chat!==false,auto_suggestions:value.auto_suggestions===true});$('preference-side').checked=preferences.side_chat;$('preference-suggestions').checked=preferences.auto_suggestions;$('side-chat-toggle').hidden=!preferences.side_chat;document.querySelector('[data-panel="side"]').hidden=!preferences.side_chat;if(!preferences.side_chat&&state.panel==='side')setInspector(false);}
+async function loadPreferences(){if((state.user?.mode==='server'&&!state.project)||!state.user?.protocol?.capabilities?.includes('suggestions.v1')){$('preference-side').disabled=true;$('preference-suggestions').disabled=true;return;}const generation=state.generation;const value=await rpc('preferences');if(generation===state.generation)applyPreferences(value);}
+for(const [id,name] of [['preference-side','side_chat'],['preference-suggestions','auto_suggestions']])$(id).onchange=async()=>{const input=$(id),value=input.checked,generation=state.generation;input.disabled=true;try{const next=await rpc('preferences_save',{[name]:value});if(generation!==state.generation)return;applyPreferences(next);$('preference-status').textContent='已保存';suggestions.lastActivity=Date.now();}catch(e){input.checked=!value;$('preference-status').textContent=e.message;}finally{input.disabled=false;}};
+function suggestionButton(action){const chars=Array.from(String(action.title||'')),label=chars.length>12?chars.slice(0,11).join('')+'…':chars.join('');const b=el('button',label);b.type='button';b.title=action.prompt;b.onclick=()=>{if($('prompt').value.trim()&&!confirm('替换尚未发送的输入？'))return;$('prompt').value=action.prompt;$('prompt').focus();};return b;}
+function paintSuggestions(){const cache=suggestions.cache,box=$('messages');if(!cache?.actions?.length||state.snap?.busy||(cache.source_session!==state.snap?.session_id||cache.source_revision!==state.snap?.suggestion_context)){suggestions.node.remove();return;}const signature=JSON.stringify(cache);if(suggestions.node._signature!==signature){suggestions.node._signature=signature;const actions=el('div',undefined,'sugg');for(const action of cache.actions)actions.append(suggestionButton(action));suggestions.node.replaceChildren(el('h3','下一步 · 模型建议'),el('p','已完成：'+(cache.done||'尚无明确记录')),el('p','建议：'+(cache.next||'')),actions);}box.append(suggestions.node);}
+async function updateSuggestions(generate=false){if(!state.user?.protocol?.capabilities?.includes('suggestions.v1')||suggestions.loading)return;const generation=state.generation,ticket=suggestions.ticket;const view=captureChatView();suggestions.loading=true;try{const cache=await rpc(generate?'suggestions_generate':'suggestions_snapshot');if(generation!==state.generation||ticket!==suggestions.ticket)return;suggestions.cache=cache;paintSuggestions();if(!state.snap?.timeline?.length){state.signature='';await refresh();}if(view.nearBottom)$('messages').scrollTop=$('messages').scrollHeight;}catch(e){if(generate&&generation===state.generation)notice('未能生成自动建议：'+e.message);}finally{if(ticket===suggestions.ticket)suggestions.loading=false;}}
+for(const name of ['pointerdown','keydown','input','scroll'])document.addEventListener(name,()=>suggestions.lastActivity=Date.now(),{capture:true,passive:true});
+document.addEventListener('visibilitychange',()=>suggestions.lastActivity=Date.now());
+setInterval(()=>{
+  if(!preferences.loaded||!preferences.auto_suggestions||!state.snap||state.switching||!state.user||document.hidden)return;
+  if(state.snap.busy){suggestions.lastActivity=Date.now();return;}
+  if(suggestions.cache?.generating){updateSuggestions().catch(()=>{});return;}
+  const session=state.snap.session_id,key=sideKey();
+  if(!session||!state.snap.timeline?.some(row=>row.k==='assistant')||$('prompt').value.trim()||editor.dirty||document.querySelector('dialog[open]')||Date.now()-suggestions.lastActivity<120000||suggestions.attempted.has(key))return;
+  suggestions.attempted.add(key);updateSuggestions(true).catch(()=>{});
+},5000);
+
+/* ---------- 独立只读侧聊 ---------- */
+const side = {key:'', loading:false, sending:false, ticket:0, nodes:new Map(), drafts:new Map(), pending:null};
+function sideKey(){return [state.user?.username,state.project,state.scope,state.snap?.session_id||''].join('/');}
+function resetSide(){if(side.key)side.drafts.set(side.key,$('side-prompt').value);side.key='';side.ticket++;side.loading=false;side.sending=false;side.nodes.clear();$('side-messages').replaceChildren();$('side-prompt').value='';$('side-status').textContent='';}
+function sideError(e){if(e.message!==STALE)$('side-status').textContent=e.message;}
+async function refreshSide(){
+  if(!state.snap || !state.user?.protocol?.capabilities?.includes('side-chat.v1')){$('side-status').textContent='此服务尚不支持侧聊';$('side-send').disabled=true;return;}
+  const key=sideKey();if(side.key!==key){resetSide();side.key=key;$('side-prompt').value=side.drafts.get(key)||'';}
+  if(side.loading)return;side.loading=true;const ticket=side.ticket,generation=state.generation;
+  try{
+    const snap=await rpc('side_snapshot',{main_session:state.snap.session_id||''});
+    if(ticket!==side.ticket||generation!==state.generation||key!==sideKey())return;
+    const box=$('side-messages'),near=box.scrollHeight-box.scrollTop-box.clientHeight<64, rows=[];
+    for(const [i,row] of (snap.timeline||[]).entries()){
+      if(!['user','assistant','tool'].includes(row.k))continue;
+      let text=row.text||'';if(row.k==='user'&&text.startsWith('You are a separate read-only discussion assistant.'))text=text.split('\nSide question:\n').slice(1).join('\nSide question:\n');
+      if(row.k==='tool')text=(row.name||'工具')+': '+String(row.output||row.text||'').slice(0,1600);
+      rows.push({id:row.row_key||String(i),kind:row.k,text});
+    }
+    if(snap.busy&&snap.draft)rows.push({id:'live',kind:'assistant',text:snap.draft,live:true});
+    if(!rows.length)rows.push({id:'empty',kind:'hint',text:'在这里讨论方案、询问进度或阅读代码。侧聊不会修改文件。'});
+    const keep=new Set();let previous=null;
+    for(const row of rows){keep.add(row.id);let node=side.nodes.get(row.id);if(!node){node=el('article',undefined,'side-message '+row.kind);side.nodes.set(row.id,node);}
+      if(node._text!==row.text||node._live!==row.live){node._text=row.text;node._live=row.live;node.replaceChildren(markdown(row.text));if(row.kind==='assistant'&&!row.live){const b=el('button','转交主 Agent');b.type='button';b.onclick=()=>forwardSide(row.text);node.append(b);}}
+      if(node!== (previous?previous.nextSibling:box.firstChild))box.insertBefore(node,previous?previous.nextSibling:box.firstChild);previous=node;
+    }
+    for(const [id,node] of side.nodes)if(!keep.has(id)){node.remove();side.nodes.delete(id);}
+    if(near)box.scrollTop=box.scrollHeight;
+    $('side-status').textContent=snap.error|| (snap.busy?(snap.pending?'侧聊等待授权，已拒绝写入权限；可停止侧聊':'侧聊处理中 · 主任务独立运行'):'只读讨论 · 转交前可以编辑内容');
+    $('side-send').disabled=snap.busy||side.sending||teamProtocol().readOnly;$('side-stop').hidden=!snap.busy;
+  }finally{if(ticket===side.ticket)side.loading=false;}
+}
+$('side-composer').onsubmit=async event=>{
+  event.preventDefault();if(side.sending)return;const text=$('side-prompt').value;if(!text.trim())return;
+  const generation=state.generation,key=sideKey(),main=state.snap?.session_id||'';
+  const pending=side.pending?.key===key&&side.pending.text===text?side.pending:{key,text,request_id:newId()};side.pending=pending;side.sending=true;$('side-send').disabled=true;
+  try{await rpc('side_send',{text,request_id:pending.request_id,main_session:main});if(generation!==state.generation||key!==sideKey())return;if($('side-prompt').value===text)$('side-prompt').value='';side.pending=null;side.drafts.delete(key);await refreshSide();}
+  catch(e){if(generation===state.generation&&key===sideKey())sideError(e);}
+  finally{if(generation===state.generation){side.sending=false;refreshSide().catch(sideError);}}
+};
+$('side-prompt').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('side-composer').requestSubmit();}});
+onClick('side-stop',async()=>{await rpc('side_stop',{main_session:state.snap?.session_id||''});await refreshSide();});
+onClick('side-chat-toggle',()=>{showInspector('side');$('side-prompt').focus();});
+function forwardSide(text){
+  const generation=state.generation,key=sideKey(),session=state.snap?.session_id||'',rid=newId();let interrupted=false;
+  openDialog('转交主 Agent（将中断当前任务）',[field('text','确认或编辑要转交的内容','textarea',text)],async fields=>{
+    if(generation!==state.generation||key!==sideKey())throw Error('会话已切换，请重新转交');
+    if(!interrupted){interrupted=true;await rpc('stop',{expected_session:session});}
+    for(let i=0;i<100;i++){const snap=await rpc('snapshot');if(generation!==state.generation||key!==sideKey())throw Error('会话已切换，未发送');if(!snap.busy)break;if(i===99)throw Error('主任务尚未停止，内容已保留，请稍后重试');await new Promise(r=>setTimeout(r,100));}
+    await rpc('send',{text:fields.text,request_id:rid,expected_session:session});
+    return()=>notice(state.user.mode==='server'?'已提交到主任务队列；若项目已暂停，请先审核并恢复项目。':'已转交主 Agent');
+  },'只有确认提交才会停止主任务。现有修改会保留，主 Agent 继续遵守原有权限。多人项目可能需要审核恢复，侧聊不会绕过此检查。');
+}
 
 /* ---------- 代码高亮与 Diff 解析 ---------- */
 
@@ -846,6 +920,8 @@ function drawMessages(nodes, view = captureChatView()) {
   reconcileChildren(box, nodes);
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
+    empty.querySelector('h2').textContent=state.user?.welcome||'让想法跑起来。';
+    for(const action of suggestions.cache?.actions||[])empty.querySelector('.sugg').append(suggestionButton(action));
     empty.querySelectorAll('[data-q]').forEach((button) => {
       button.onclick = () => {
         $('prompt').value = button.dataset.q;
@@ -854,6 +930,7 @@ function drawMessages(nodes, view = captureChatView()) {
     });
     box.append(empty);
   }
+  paintSuggestions();
   if (view.tool && !view.focused.isConnected) {
     const head = [...box.querySelectorAll('.tool')]
       .find((node) => node.dataset.toolId === view.tool)
@@ -875,6 +952,7 @@ function showPanel(name) {
     tab.setAttribute('aria-pressed', String(tab.dataset.panel === name));
     $(tab.dataset.panel + '-panel').hidden = tab.dataset.panel !== name;
   }
+  if (name === 'side') refreshSide().catch(e => sideError(e));
   if (name === 'changes') loadDiff().catch(e => notice(e.message));
 }
 
@@ -1367,7 +1445,9 @@ async function refresh() {
     }
     if (state.connectionError && $('notice').textContent === state.connectionError) notice('');
     state.connectionError = '';
+    if(state.panel==='side' && $('inspector-toggle').getAttribute('aria-pressed')==='true') refreshSide().catch(sideError);
     setConnection(teamProtocol().readOnly ? '已连接（兼容只读）' : '已连接', true);
+    if(!preferences.loaded&&state.user?.protocol?.capabilities?.includes('suggestions.v1')){await loadPreferences();await updateSuggestions();}
   } catch (e) {
     if (generation !== state.generation) return;
     if (deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) $('device-login-status').textContent = '连接中断，正在尝试恢复登录状态…';
@@ -1851,7 +1931,9 @@ async function fillProviders() {
 async function openProviders() { await fillProviders(); }
 function openSettings() { return openProviders(); }
 
-onClick('settings-button', openProviders);
+onClick('settings-button', async()=>{await loadPreferences();$('workspace-settings').showModal();});
+onClick('provider-button',()=>{$('workspace-settings').close();return openProviders();});
+onClick('workspace-settings-close',()=>$('workspace-settings').close());
 
 async function openSessions() {
   const snap = await rpc('snapshot');
@@ -1956,6 +2038,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 onClick('plugin-button', async () => {
+  $('workspace-settings').close();
   const rows = await http('/api/plugins');
   const body = $('plugin-services'); body.replaceChildren();
   for (const service of [...rows, ...CodexPlugin.inspect()]) {
@@ -1978,6 +2061,7 @@ async function initialize() {
   const status = await rpc('status');
   $('root-name').textContent = String(status.workspace || '').split('/').filter(Boolean).pop() || '';
   await refresh();
+  if(state.user?.protocol?.capabilities?.includes('suggestions.v1')){await loadPreferences();await updateSuggestions();}
   await loadFiles().catch(e => notice(e.message));
   $('team-button').disabled=false;
   if(!state.loopStarted){state.loopStarted=true;loop();}
@@ -2000,6 +2084,9 @@ async function hostProjects(preferred) {
  state.project=preferred&&projects.includes(preferred)?preferred:projects.includes(state.project)?state.project:(projects[0]||'');$('host-project').value=state.project;
 }
 function resetContext(clearRoot = false) {
+  notice('');
+  resetSide();
+  preferences.loaded=false;suggestions.ticket++;suggestions.loading=false;suggestions.cache=null;suggestions.node.remove();suggestions.lastActivity=Date.now();
   deviceLogin = null;
   if ($('device-login-dialog').open) $('device-login-dialog').close();
   if (state.composerKey) composerDrafts.set(state.composerKey, $('prompt').value);
@@ -2100,7 +2187,7 @@ onClick('team-token-close',()=>{$('team-token-dialog').close();});
 $('team-token-dialog').addEventListener('close',()=>{$('team-token').value='';$('team-token').type='password';openTeam('accounts').catch(e=>notice(e.message));});
 onClick('team-close',closeTeam);
 $('team-dialog').addEventListener('close',()=>{teamTicket++;clearTimeout(teamTimer);teamTimer=null;});
-onClick('team-button',()=>openTeam());
+onClick('team-button',()=>{$('workspace-settings').close();return openTeam();});
 async function openTeam(selected,keyboard=false){
  const ticket=++teamTicket;clearTimeout(teamTimer);$('team-error').textContent='';
  const local=state.user?.mode==='local';const tabs=local?[['service','本机服务'],['accounts','账号'],['remote','连接远程']]:[['members','成员'],['models','共同模型'],['branches','分支'],['activity','活动']];

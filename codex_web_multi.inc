@@ -614,6 +614,7 @@ J HostedService::dispatch(const std::string &user, const J &request) {
   }
   init_repository(user, id, personal);
   auto application = app(user, id, personal);
+  if(op=="preferences"||op=="preferences_save"||op.rfind("suggestions_",0)==0||op.rfind("side_",0)==0)return application->rpc(request,personal||owner,user);
   if (op == "approve") {
     std::lock_guard<std::recursive_mutex> app_lock(application->mutex);
     auto decision = request.get("allow");
