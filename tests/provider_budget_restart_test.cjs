@@ -154,7 +154,7 @@ const tokens = (text) => {
       });
       await wait(async () => {
         const snap = await rpc("snapshot");
-        if (snap.error) throw Error(snap.error);
+        if (snap.error) throw Error(snap.error + "\nAgent events: " + JSON.stringify(snap.events) + "\nFixture requests: " + records.length);
         return !snap.busy && snap.timeline.some((row) => row.text === "RESTART_BUDGET_REPLY");
       });
       const calls = records.slice(before);
