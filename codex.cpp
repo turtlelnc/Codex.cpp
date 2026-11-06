@@ -343,7 +343,7 @@ static const char* event_name(EventKind k){switch(k){case EventKind::SessionStar
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
-return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript;std::unique_ptr<portable::Lease> lease;void release_lock();
+return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
 size_t estimated_tokens=0;
 std::vector<std::string> items;// Responses input items, one JSON object per journal line
 size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size();size_t pos=0;
@@ -360,14 +360,29 @@ bool record_item(const std::string& item){try{auto value=parse_json(item);if(!va
     std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
   });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());estimated_tokens+=estimate_tokens(stored->str());return true;
   }catch(...){return false;}}
-bool replace_items(const std::vector<std::string>& compacted){try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
+bool replace_items(const std::vector<std::string>& compacted){storage_error.clear();try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
   auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
     // Unique staging name so concurrent writers never share a temporary file.
-    const fs::path staged=items_path.string()+"."+random_id("journal-new");{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
-    std::error_code ec;fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
+    fs::path staged=items_path;staged+="."+random_id("journal-new");{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
+    std::error_code ec;
+#if defined(_WIN32)
+    // Readers and antivirus scanners can briefly hold a file without delete
+    // sharing. Retry only transient lock/access failures, keeping the original
+    // intact. Never truncate/unlink the destination to make replacement work.
+    DWORD code=ERROR_SUCCESS;bool replaced=false;
+    for(int attempt=0;attempt<40;++attempt){
+      if(MoveFileExW(staged.c_str(),items_path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){replaced=true;break;}
+      code=GetLastError();if(code!=ERROR_SHARING_VIOLATION&&code!=ERROR_LOCK_VIOLATION&&code!=ERROR_ACCESS_DENIED)break;
+      if(attempt<39)std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    if(!replaced){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal (Windows error "+std::to_string(code)+")");}
+#else
+    fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}
+#endif
+    return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
   });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);estimated_tokens=0;for(const auto& item:items)estimated_tokens+=estimate_tokens(item);return true;
-  }catch(...){return false;}}
+  }catch(const std::exception& e){storage_error=e.what();return false;}catch(...){storage_error="Unknown journal replacement error";return false;}}
 
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
   << "\",\"session_id\":\"" << json_escape(id)<< "\",\"type\":\"" << event_name(kind)<< "\",\"payload\":" << payload << "}";
@@ -975,7 +990,7 @@ flush_calls();return messages; } static bool compact_session(Session& session,co
   if(!flush())return false;if(!changed)return true;
   std::vector<std::string> replacement={"{\"role\":\"user\",\"content\":\""+json_escape(marker+summary)+"\"}"};for(const auto index:retained_indices)replacement.push_back(session.items[index]);
   size_t tokens=0;for(const auto& item:replacement)tokens+=estimate_tokens(item);if(tokens>history_budget){err="Compacted context still exceeds model budget; original context retained";return false;}
-  if(!session.replace_items(replacement)){err="Could not save compacted session";return false;}
+  if(!session.replace_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
   session.append_transcript("\n[context compacted]\n"+summary+"\n");return true;
 }
 static bool configure_provider(Options& opt,std::string& error){

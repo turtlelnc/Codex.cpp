@@ -196,8 +196,10 @@ std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed
 #include "web_boundary_checks.inc"
 #include "team_protocol_probe.inc"
 #include "side_boundary_checks.inc"
+#include "journal_replace_checks.inc"
 int main(int argc,char** argv){
   if(argc==3&&std::string(argv[1])=="--side-boundary-checks")return side_boundary_checks(fs::u8path(argv[2]));
+  if(argc==3&&std::string(argv[1])=="--journal-replacement-checks")return journal_replace_checks(fs::u8path(argv[2]));
   if(argc>1&&std::string(argv[1])=="--team-protocol-probe")return team_protocol_probe(argc,argv);
   if((argc==3||argc==4)&&std::string(argv[1])=="--web-boundary-checks")return web_boundary_checks(fs::u8path(argv[2]),argc==4?argv[3]:"all");
   if(argc>1&&std::string(argv[1])=="--portable-download-check")return portable_download_check(argc,argv);

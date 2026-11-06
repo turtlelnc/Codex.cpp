@@ -81,6 +81,12 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/Release/codex-self-test.exe; fi
           "$probe" --side-boundary-checks "$RUNNER_TEMP/side-boundary"
           node tests/side_chat_test.cjs "$binary"
+      - name: Verify bounded atomic journal replacement under reader locks
+        shell: bash
+        run: |
+          binary=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-self-test.exe; fi
+          "$binary" --journal-replacement-checks "$RUNNER_TEMP/journal-replacement"
       - name: Verify login snapshot privacy and provider budget retention
         shell: bash
         run: |
