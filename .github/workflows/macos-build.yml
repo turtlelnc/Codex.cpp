@@ -8,7 +8,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 40
     env:
-      SOURCE_COMMIT: ec97336cd4906f610642e3db03c50a37a393cbcc
+      SOURCE_COMMIT: ffcbd2329c4da778d1063480dbf02cd5d403cd6b
     steps:
       - uses: actions/checkout@v4
         with:
