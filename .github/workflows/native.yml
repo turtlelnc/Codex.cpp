@@ -81,6 +81,19 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/Release/codex-self-test.exe; fi
           "$probe" --side-boundary-checks "$RUNNER_TEMP/side-boundary"
           node tests/side_chat_test.cjs "$binary"
+      - name: Verify observable model progress, retry and streaming safety
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          probe=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/Release/codex-self-test.exe; fi
+          node tests/model_activity_test.cjs "$binary" "$probe"
+      - name: Verify shared settings and reasoning request serialization
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; fi
+          node tests/settings_test.cjs "$binary"
       - name: Verify bounded atomic journal replacement under reader locks
         shell: bash
         run: |
@@ -188,7 +201,7 @@ jobs:
       - name: Build native host and example module
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target codex-cpp plugin-demo --parallel 2
+          cmake --build build --target codex-cpp plugin-demo codex-self-test --parallel 2
       - name: Install Chromium
         run: |
           npm install --prefix "$RUNNER_TEMP/plugin-tests" playwright@1.62.1
@@ -209,6 +222,16 @@ jobs:
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/side_chat_test.cjs build/codex-cpp --browser
+      - name: Verify early tool progress and Markdown rendering in Chromium
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
+        run: |
+          NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/model_activity_test.cjs build/codex-cpp build/codex-self-test --browser
+          NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/markdown_test.cjs
+      - name: Verify settings categories and TUI synchronization
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/settings_test.cjs build/codex-cpp --browser --tui
       - name: Verify portable WebUI bridge in Chromium
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/portable_web_test.cjs build/codex-cpp
       - name: Verify manual-trust startup also freezes worker resources

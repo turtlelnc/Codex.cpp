@@ -5,6 +5,7 @@
 
 static bool self_test(const fs::path& root){int failed = 0;std::error_code root_ec;fs::create_directories(root,root_ec);
 auto check =[&](bool ok,const char* what){std::cout <<(ok ? "PASS " : "FAIL ")<< what << '\n';if(!ok)++failed; };
+#include "settings_checks.inc"
 check(native_web::visible_user_message("# Available skills\nexample\n\n<environment_context>\nmetadata\n</environment_context>\n\n你好")=="你好","WebUI hides injected context");
 check(native_web::visible_user_message("<environment_context>\nmetadata\n</environment_context>\n\n<current_goal>goal</current_goal>\n\nhello")=="hello","WebUI hides injected goal");
 check(native_web::visible_user_message("Workspace root: /tmp\nSandbox policy: read-only\nUser task:\nhello")=="hello","WebUI legacy user text");
@@ -34,6 +35,26 @@ std::string chat_events=
 for(char byte:chat_events)chat_stream.feed(&byte,1);
 auto chat_result=chat_stream.finish(parse_err);
 check(chat_result && live_reasoning=="private reasoning" && live_chat=="你好" && chat_result->calls.size()==1 && chat_result->calls[0].arguments==R"({"path":"a.txt"})","Chat SSE byte chunks, UTF-8, reasoning isolation and tool assembly");
+std::vector<std::string> phases;ResponsesStreamProgress progress;
+{
+  std::vector<std::string> events;
+  plugin::Emit emit=[&](const std::string& kind,const std::string& value){events.push_back(kind+":"+value);};
+  plugin::Next next=[](const std::string&,const plugin::Emit& emit){emit("activity",R"({"phase":"waiting"})");emit("text","hello");return std::string("done");};
+  PluginNativeCall bridge{emit,next,{},{},{},0,false};
+  const int code=PluginNativeCall::forward(&bridge,"{}",2,PluginNativeCall::send,&bridge);
+  check(code==0&&!bridge.exception&&bridge.has_result&&bridge.result=="done"&&events==std::vector<std::string>{"activity:{\"phase\":\"waiting\"}","text:hello"},"Native model middleware forwards activity and final result");
+  PluginNativeCall invalid{emit,next,{},{},{},0,false};
+  PluginNativeCall::send(&invalid,"unknown-channel","{}",2);
+  check(bool(invalid.exception),"Native bridge still rejects unknown event channels");
+}
+progress.on_activity=[&](const std::string& phase,const std::string& name,const std::string&){phases.push_back(phase+":"+name);};
+progress.event(*parse_json(R"({"type":"response.in_progress"})"));check(phases.back()=="waiting:","Responses in_progress does not claim hidden reasoning");
+progress.event(*parse_json(R"({"type":"response.output_item.added","item":{"id":"item-1","type":"function_call","call_id":"call-1","name":"write_file"}})"));
+progress.event(*parse_json(R"({"type":"response.function_call_arguments.delta","item_id":"item-1","delta":"{incomplete"})"));check(phases.back()=="tool:write_file","Responses tool progress precedes valid/complete arguments");
+progress.event(*parse_json(R"({"type":"response.output_item.added","item":{"type":"reasoning"}})"));check(phases.back()=="reasoning:","Explicit Responses reasoning item signals reasoning");
+ChatStreamDecoder early;early.on_activity=[&](const std::string& phase,const std::string& name,const std::string&){phases.push_back(phase+":"+name);};
+const std::string early_bytes=": keep-alive\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c\",\"function\":{\"name\":\"shell\",\"arguments\":\"{\"}}]}}]}\n\n";
+early.feed(early_bytes.data(),early_bytes.size());check(phases.back()=="tool:shell"&&!early.finish(parse_err),"Chat tool progress is visible while incomplete calls remain unexecutable");
 ChatStreamDecoder incomplete_chat;incomplete_chat.feed("data: [DONE]\n\n",14);
 check(!incomplete_chat.finish(parse_err),"Chat SSE rejects incomplete stream");
 Session reasoning_history;reasoning_history.items={R"({"type":"codex_reasoning","text":"inspect first"})",R"({"type":"function_call","name":"read_file","call_id":"r1","arguments":"{}"})",R"({"type":"function_call_output","call_id":"r1","output":"done"})"};
@@ -197,7 +218,9 @@ std::cout <<(failed ? "SELF-TEST FAILED\n" : "SELF-TEST PASSED\n");return failed
 #include "team_protocol_probe.inc"
 #include "side_boundary_checks.inc"
 #include "journal_replace_checks.inc"
+#include "model_activity_checks.inc"
 int main(int argc,char** argv){
+  if(argc>1&&std::string(argv[1])=="--model-http-probe")return model_http_probe(argc,argv);
   if(argc==3&&std::string(argv[1])=="--side-boundary-checks")return side_boundary_checks(fs::u8path(argv[2]));
   if(argc==3&&std::string(argv[1])=="--journal-replacement-checks")return journal_replace_checks(fs::u8path(argv[2]));
   if(argc>1&&std::string(argv[1])=="--team-protocol-probe")return team_protocol_probe(argc,argv);

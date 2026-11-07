@@ -57,11 +57,11 @@ async function http(path, body, wire = 1) {
     data = await response.json();
   } catch (error) {
     if (generation !== state.generation) throw Error(STALE);
-    throw error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;
+    const failure=error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;failure.network=true;throw failure;
   } finally { clearTimeout(timeout); }
   if (generation !== state.generation) throw Error(STALE);
   if (response.status === 401) { $('workspace').hidden = true; $('host-login').hidden = false; throw new Error('请登录服务器工作区'); }
-  if (!response.ok) throw new Error(data.error || '请求失败');
+  if (!response.ok) {const failure=new Error(data.error || '请求失败');failure.network=[408,429,500,502,503,504].includes(response.status);throw failure;}
   return data;
 }
 
@@ -141,7 +141,7 @@ onClick('dialog-close', () => $('dialog').close());
 onClick('dialog-cancel', () => $('dialog').close());
 
 /* ---------- 设置与缓存的模型建议 ---------- */
-const preferences = { loaded: false, side_chat: true, auto_suggestions: false };
+const preferences = { loaded: false, side_chat: true, auto_suggestions: false, carry_reasoning: false };
 const suggestions = {
   cache: null,
   node: el('section', undefined, 'next-steps'),
@@ -155,7 +155,11 @@ function applyPreferences(value) {
     loaded: true,
     side_chat: value.side_chat !== false,
     auto_suggestions: value.auto_suggestions === true,
+    carry_reasoning: value.carry_reasoning === true,
   });
+  $('preference-reasoning').disabled = !state.user?.protocol?.capabilities?.includes('settings.reasoning.v1');
+  $('preference-reasoning').checked = preferences.carry_reasoning;
+  $('preference-reasoning').title = $('preference-reasoning').disabled?'当前服务器尚未支持推理回传设置':'';
   $('preference-side').disabled = false;
   $('preference-suggestions').disabled = false;
   $('preference-side').checked = preferences.side_chat;
@@ -169,6 +173,7 @@ async function loadPreferences() {
     (state.user?.mode === 'server' && !state.project) ||
     !state.user?.protocol?.capabilities?.includes('suggestions.v1')
   ) {
+    $('preference-reasoning').disabled = true;
     $('preference-side').disabled = true;
     $('preference-suggestions').disabled = true;
     return;
@@ -180,12 +185,13 @@ async function loadPreferences() {
 for (const [id, name] of [
   ['preference-side', 'side_chat'],
   ['preference-suggestions', 'auto_suggestions'],
+  ['preference-reasoning', 'carry_reasoning'],
 ])
   $(id).onchange = async () => {
     const input = $(id),
       value = input.checked,
       generation = state.generation;
-    input.disabled = true;
+    for(const id of ['preference-side','preference-suggestions','preference-reasoning'])$(id).disabled=true;
     try {
       const next = await rpc('preferences_save', { [name]: value });
       if (generation !== state.generation) return;
@@ -193,10 +199,11 @@ for (const [id, name] of [
       $('preference-status').textContent = '已保存';
       suggestions.lastActivity = Date.now();
     } catch (e) {
+      if(generation!==state.generation)return;
       input.checked = !value;
       $('preference-status').textContent = e.message;
     } finally {
-      input.disabled = false;
+      if(generation===state.generation)applyPreferences(preferences);
     }
   };
 function suggestionButton(action) {
@@ -493,13 +500,13 @@ function forwardSide(text) {
 /* ---------- 代码高亮与 Diff 解析 ---------- */
 
 const KW = new Set('int char bool void auto const static inline struct class return if else for while switch case break continue namespace using include std string size_t nullptr true false new delete public private virtual template typename function let var import export from async await def'.split(' '));
-const CODE_EXT = new Set(['c', 'cc', 'cpp', 'h', 'hpp', 'inc', 'mm', 'js', 'ts', 'java', 'rs', 'go']);
+const CODE_EXT = new Set(['c', 'cc', 'cpp', 'h', 'hpp', 'inc', 'mm', 'js', 'ts', 'java', 'rs', 'go', 'json']);
 const extOf = p => (String(p).split('.').pop() || '').toLowerCase();
 
 // 返回 [{text, cls}] 片段，调用方用 textContent 写入。
 function highlight(src, path) {
   if (path && !CODE_EXT.has(extOf(path))) return [{text: src}];
-  const re = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*")|(^\s*#\s*\w+)|(\b\d+\b)|(\b[A-Za-z_]\w*\b)/gm;
+  const re = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(^\s*#\s*\w+)|(\b\d+\b)|(\b[A-Za-z_]\w*\b)/gm;
   const out = [];
   let last = 0, m;
   while ((m = re.exec(src))) {
@@ -558,46 +565,13 @@ function diffBlock(files, single) {
 
 /* ---------- Markdown（DOM 构造，不使用 innerHTML） ---------- */
 
-function inline(parent, text) {
-  for (const part of text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/)) {
-    if (!part) continue;
-    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) parent.append(el('code', part.slice(1, -1)));
-    else if (part.startsWith('**') && part.endsWith('**') && part.length > 4) parent.append(el('b', part.slice(2, -2)));
-    else parent.append(document.createTextNode(part));
-  }
-}
-
 function markdown(text) {
   const node = CodexPlugin.call('markdown.render', { text });
   if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Plugin Markdown renderer must return an .md element');
   return node;
 }
 function markdownBuiltin(text) {
-  const box = el('div', undefined, 'md');
-  text.split(/```[\w+-]*\n?/).forEach((chunk, i) => {
-    if (i % 2) { box.append(el('pre', chunk.replace(/\n$/, ''))); return; }
-    let lines = [];
-    const flushParagraph = () => {
-      if (!lines.length) return;
-      const p = el('p');
-      inline(p, lines.join('\n'));
-      box.append(p);
-      lines = [];
-    };
-    for (const line of chunk.split(/\r?\n/)) {
-      // ATX headings: up to three leading spaces, 1–6 hashes, then whitespace.
-      const heading = line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/);
-      if (heading) {
-        flushParagraph();
-        const node = el('h' + heading[1].length);
-        inline(node, (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '').trim());
-        box.append(node);
-      } else if (!line.trim()) flushParagraph();
-      else lines.push(line);
-    }
-    flushParagraph();
-  });
-  return box;
+  return CodexMarkdown.render(text, {highlight, onFileLink: async path => {try{await openFile(decodeURIComponent(path.split('#')[0]));}catch(error){notice(error.message);}} });
 }
 
 /* ---------- 工具调用 ---------- */
@@ -812,7 +786,7 @@ function streamMarkup(text) {
   const leaves = [];
   let leaf,
     offset = 0;
-  while ((leaf = walker.nextNode())) leaves.push(leaf);
+  while ((leaf = walker.nextNode())) if(!leaf.parentElement.closest('button, .md-code-header'))leaves.push(leaf);
   for (const textNode of leaves) {
     const span = el('span', undefined, 'stream-text');
     span._offset = offset;
@@ -820,6 +794,7 @@ function streamMarkup(text) {
     textNode.replaceWith(span);
     span.append(textNode);
   }
+  body._streamText=leaves.map(leaf=>leaf.textContent).join('');
   return body;
 }
 function settleStreamLeaf(leaf) {
@@ -879,6 +854,7 @@ function appendStreamText(leaf, delta, budget, offset) {
   leaf.append(tail);
 }
 function patchStreamMarkup(current, next, budget) {
+  CodexMarkdown.updateElement(current,next);
   if (current.classList.contains('stream-text')) {
     const before = current.textContent,
       after = next.textContent;
@@ -917,7 +893,7 @@ function updateLiveMessage(node, text) {
     box = $('messages');
   const canAnimate =
     text.startsWith(node._text) &&
-    next.textContent.startsWith(body.textContent) &&
+    next._streamText.startsWith(body._streamText) &&
     streamSegmenter &&
     !streamReducedMotion.matches &&
     !document.hidden &&
@@ -928,11 +904,12 @@ function updateLiveMessage(node, text) {
   patchStreamMarkup(body, next, {
     remaining: canAnimate ? 1 : 0,
     groups: Math.max(0, activeGroups - 16),
-    oldLength: body.textContent.length,
+    oldLength: body._streamText.length,
   });
   for (const leaf of body.querySelectorAll('.stream-end')) leaf.classList.remove('stream-end');
   const leaves = body.querySelectorAll('.stream-text');
   leaves[leaves.length - 1]?.classList.add('stream-end');
+  body._streamText=next._streamText;
   node._text = text;
 }
 function settleStreamAnimations() {
@@ -1001,6 +978,65 @@ function loginRunning(snap) {
       (snap.events || []).some((event) => event.type === 'login.notice'))
   );
 }
+// Progress reflects observable protocol events, not inferred hidden reasoning.
+function modelPhase(snap) {
+  return snap.model_activity?.phase || (snap.reasoning_draft ? 'reasoning' : 'waiting');
+}
+function modelActivityLabel(snap) {
+  const phase = modelPhase(snap),
+    name = snap.model_activity?.name || '';
+  if (phase === 'reasoning') return '思考中';
+  if (phase === 'retrying') {
+    const reason = snap.model_activity?.reason;
+    return reason === 'overloaded'
+      ? '服务繁忙，正在重连'
+      : reason === 'rate_limited'
+        ? '请求受限，等待重试'
+        : '正在重连模型服务';
+  }
+  if (phase === 'quota') return '额度不足，等待恢复';
+  if (phase === 'text') return '正在生成回复';
+  if (phase === 'tool') {
+    if (['write_file', 'apply_patch'].includes(name)) return '正在生成文件修改参数';
+    if (name === 'shell') return '正在生成命令';
+    if (name === 'read_file' || name === 'list_dir') return '正在准备读取文件';
+    return '正在生成工具调用' + (name ? '：' + name : '');
+  }
+  return '等待模型响应';
+}
+function modelProgressNode(snap) {
+  const node = el('div', undefined, 'message activity-progress');
+  node.dataset.phase = modelPhase(snap);
+  const cursor = el('span', undefined, 'activity-cursor');
+  cursor.setAttribute('aria-hidden', 'true');
+  const label = el('span', modelActivityLabel(snap));
+  label.setAttribute('role', 'status');
+  const elapsed = el('span', undefined, 'activity-elapsed');
+  elapsed.setAttribute('aria-hidden', 'true');
+  const started = Number(snap.model_activity?.started_at);
+  node.dataset.startedAt = String(
+    Number.isFinite(started) && started > 0 ? started : state.waitStarted || Date.now(),
+  );
+  if (snap.model_activity?.heartbeat_at)
+    node.title = '已收到服务端保活；连接仍在，保活不能说明正在推理或排队。';
+  if (modelPhase(snap) === 'tool')
+    node.title = '模型仍在生成工具参数；完整验证并获得所需批准后才会执行。';
+  node.append(cursor, label, elapsed);
+  updateModelElapsed(node);
+  return node;
+}
+function updateModelElapsed(node) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Number(node.dataset.startedAt)) / 1000));
+  const value =
+    seconds < 60 ? seconds + ' 秒' : Math.floor(seconds / 60) + ' 分 ' + (seconds % 60) + ' 秒';
+  const counter = node.querySelector('.activity-elapsed');
+  if (counter && counter.textContent !== value) counter.textContent = value;
+}
+setInterval(() => {
+  if (!document.hidden)
+    for (const node of document.querySelectorAll('.activity-progress')) updateModelElapsed(node);
+}, 1000);
+
 function buildChat(snap, wasBusy = false) {
   const used = new Set();
   const cached = (key, value, create) => {
@@ -1153,10 +1189,10 @@ function buildChat(snap, wasBusy = false) {
     updateLiveMessage(entry.node, snap.draft);
     nodes.push(entry.node);
   }
-  else if (loginRunning(snap))
+  if (loginRunning(snap))
     nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
-  else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
-    nodes.push(cached('thinking', true, () => el('div', '思考中…', 'message thinking')));
+  else if (snap.busy && !pending && (!snap.draft || modelPhase(snap)!=='text') && !rows.some((r) => r.k === 'tool' && r.output === null))
+    nodes.push(cached('activity', [modelActivityLabel(snap),snap.model_activity?.started_at,!!snap.model_activity?.heartbeat_at], () => modelProgressNode(snap)));
   for (const key of messageCache.keys()) if (!used.has(key)) messageCache.delete(key);
   return nodes;
 }
@@ -1574,7 +1610,7 @@ function renderSessions(sessions, busy) {
 }
 
 function setQueueState(text, busy) {
-  $('queue-state').textContent = text;
+  if($('queue-state').textContent!==text)$('queue-state').textContent = text;
   $('queue-state').title = text;
   $('queue-state').dataset.busy = busy ? 'true' : 'false';
 }
@@ -1643,6 +1679,7 @@ async function refresh() {
     const wasBusy = state.snap?.session_id === snap.session_id && state.snap?.busy;
     const previousSnap = state.snap;
     state.snap = snap;
+    if(snap.busy&&!wasBusy)state.waitStarted=Date.now();
     const historyStatus = $('history-status');
     if (historyStatus) historyStatus.hidden = !snap.history_truncated;
     renderDeviceLogin(snap);
@@ -1654,6 +1691,7 @@ async function refresh() {
       rows,
       snap.draft,
       snap.reasoning_draft,
+      snap.model_activity,
       snap.busy,
       snap.pending,
       snap.messages,
@@ -1703,12 +1741,12 @@ async function refresh() {
           : snap.busy
             ? runningTool
               ? '工具执行中'
-              : waitingTool && !snap.draft ? '等待工具结果' : '模型处理中'
+              : waitingTool && !snap.draft ? '等待工具结果' : modelActivityLabel(snap)
             : queued
               ? '任务排队'
               : state.projectInfo?.busy
                 ? '项目处理中'
-                : '就绪',
+                : snap.error ? (snap.error==='Task stopped'?'已停止':'任务失败') : '就绪',
       snap.busy,
     );
     setSendMode(snap.busy);
@@ -1728,8 +1766,9 @@ async function refresh() {
     if (generation !== state.generation) return;
     if (deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) $('device-login-status').textContent = '连接中断，正在尝试恢复登录状态…';
     state.connectionError = e.message;
-    setConnection('连接中断', false);
-    setQueueState('连接中断', false);
+    const status=e.network?'正在重连':'状态获取失败';
+    setConnection(status, false);
+    setQueueState(status, false);
     notice(e.message);
   } finally {
     state.polling = false;
@@ -2168,12 +2207,14 @@ function providerForm(p) {
 }
 
 async function fillProviders() {
+  const generation=state.generation,ticket=settingsTicket,inside=$('workspace-settings').open&&settingsTab==='providers';
   const data = await rpc('providers');
+  if(generation!==state.generation||(inside&&(ticket!==settingsTicket||!$('workspace-settings').open)))return;
   const editable=state.user.mode!=='server'||state.scope==='personal'||state.projectInfo?.owner===state.user.username;
   const list = el('div', undefined, 'prov-list');
   const act = (label, fn, cls) => {
     const b = el('button', label, cls); b.type = 'button';
-    b.onclick = async () => { try { await fn(); if (fn !== startDeviceLogin) await fillProviders(); await refresh(); } catch (e) { $('dialog-error').textContent = e.message; } };
+    b.onclick = async () => { b.disabled=true;try { await fn(); if (fn !== startDeviceLogin&&settingsTab==='providers'&&$('workspace-settings').open) await fillProviders(); await refresh(); } catch (e) { $(settingsTab==='providers'?'provider-error':'dialog-error').textContent = e.message; }finally{if(b.isConnected)b.disabled=false;} };
     return b;
   };
   for (const p of data.providers) {
@@ -2201,15 +2242,80 @@ async function fillProviders() {
   add.onclick = () => { $('dialog').close(); providerForm(null); };
   if(editable) list.append(add);
   list.append(el('p', '只内置 Codex；其他兼容服务可手动添加。密钥只写入当前会话所属的私有凭据目录，不提供读取接口。', 'prov-note'));
-  showDialog('模型提供商', list);
+  if($('workspace-settings').open&&settingsTab==='providers')$('settings-providers').replaceChildren(list);
+  else showDialog('模型提供商', list);
 }
 
-async function openProviders() { await fillProviders(); }
-function openSettings() { return openProviders(); }
+async function openProviders() { return showSettings('providers'); }
+function openSettings() { return showSettings('providers'); }
 
-onClick('settings-button', async()=>{await loadPreferences();$('workspace-settings').showModal();});
-onClick('provider-button',()=>{$('workspace-settings').close();return openProviders();});
-onClick('workspace-settings-close',()=>$('workspace-settings').close());
+const settingsNarrow = matchMedia('(max-width:600px)');
+function settingsOrientation() {
+  document
+    .querySelector('.settings-nav')
+    ?.setAttribute('aria-orientation', settingsNarrow.matches ? 'horizontal' : 'vertical');
+}
+let settingsTab = 'general',
+  settingsTicket = 0;
+settingsNarrow.addEventListener('change', settingsOrientation);
+settingsOrientation();
+function selectSettings(tab, focus = false) {
+  settingsTab = tab;
+  settingsTicket++;
+  if (tab !== 'team') closeTeam();
+  if (tab !== 'plugins' && $('plugin-dialog').open) $('plugin-dialog').close();
+  for (const button of document.querySelectorAll('[data-settings]')) {
+    const active = button.dataset.settings === tab;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    $(button.getAttribute('aria-controls')).hidden = !active;
+    if (active && focus) button.focus();
+  }
+  $('preference-status').textContent = '';
+}
+async function showSettings(tab = 'general', focus = false) {
+  if (!$('workspace-settings').open) $('workspace-settings').showModal();
+  selectSettings(tab, focus);
+  const ticket = settingsTicket;
+  try {
+    await loadPreferences();
+    if (ticket !== settingsTicket || !$('workspace-settings').open) return;
+    if (tab === 'providers') await fillProviders();
+    if (tab === 'team') await openTeam();
+    if (tab === 'plugins') await openPluginSettings(ticket);
+    if (focus && ticket === settingsTicket && $('workspace-settings').open)
+      document.querySelector('[data-settings="' + tab + '"]').focus();
+    if (tab === 'about')
+      $('settings-location').textContent =
+        state.user?.mode === 'server' ? '当前为远程团队模式' : '当前为本机模式';
+  } catch (e) {
+    if (ticket === settingsTicket) $('preference-status').textContent = e.message;
+  }
+}
+onClick('settings-button', () => showSettings());
+for (const button of document.querySelectorAll('[data-settings]')) {
+  button.onclick = () => showSettings(button.dataset.settings);
+  button.onkeydown = (event) => {
+    const buttons = [...document.querySelectorAll('[data-settings]')].filter((b) => !b.disabled);
+    let index = buttons.indexOf(button);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight')
+      index = (index + 1) % buttons.length;
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft')
+      index = (index + buttons.length - 1) % buttons.length;
+    else if (event.key === 'Home') index = 0;
+    else if (event.key === 'End') index = buttons.length - 1;
+    else return;
+    event.preventDefault();
+    showSettings(buttons[index].dataset.settings, true);
+  };
+}
+onClick('workspace-settings-close', () => $('workspace-settings').close());
+$('workspace-settings').addEventListener('close', () => {
+  settingsTicket++;
+  closeTeam();
+  if ($('plugin-dialog').open) $('plugin-dialog').close();
+  $('settings-button').focus();
+});
 
 async function openSessions() {
   const snap = await rpc('snapshot');
@@ -2313,16 +2419,14 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-onClick('plugin-button', async () => {
-  $('workspace-settings').close();
-  const rows = await http('/api/plugins');
-  const body = $('plugin-services'); body.replaceChildren();
-  for (const service of [...rows, ...CodexPlugin.inspect()]) {
-    const row = el('p'); row.append(el('code', service.service), document.createTextNode(' → ' + service.owner)); body.append(row);
-  }
-  $('plugin-dialog').showModal();
-});
-onClick('plugin-close', () => $('plugin-dialog').close());
+async function openPluginSettings(ticket){
+  const rows=await http('/api/plugins');if(ticket!==settingsTicket||settingsTab!=='plugins')return;
+  const body=$('plugin-services');body.replaceChildren();
+  for(const service of [...rows,...CodexPlugin.inspect()]){const row=el('p');row.append(el('code',service.service),document.createTextNode(' → '+service.owner));body.append(row);}
+  $('settings-panel-plugins').append($('plugin-dialog'));
+  if(!$('plugin-dialog').open)$('plugin-dialog').show();
+}
+onClick('plugin-close',()=>showSettings());
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
 $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
@@ -2461,9 +2565,9 @@ onClick('team-token-show',()=>{const input=$('team-token');const show=input.type
 onClick('team-token-copy',async()=>{try{await navigator.clipboard.writeText($('team-token').value);$('team-token-feedback').textContent='已复制';}catch{$('team-token').type='text';$('team-token').select();$('team-token-feedback').textContent='请手动复制选中的令牌';}});
 onClick('team-token-close',()=>{$('team-token-dialog').close();});
 $('team-token-dialog').addEventListener('close',()=>{$('team-token').value='';$('team-token').type='password';openTeam('accounts').catch(e=>notice(e.message));});
-onClick('team-close',closeTeam);
+onClick('team-close',()=>showSettings());
 $('team-dialog').addEventListener('close',()=>{teamTicket++;clearTimeout(teamTimer);teamTimer=null;});
-onClick('team-button',()=>{$('workspace-settings').close();return openTeam();});
+
 async function openTeam(selected,keyboard=false){
  const ticket=++teamTicket;clearTimeout(teamTimer);$('team-error').textContent='';
  const local=state.user?.mode==='local';const tabs=local?[['service','本机服务'],['accounts','账号'],['remote','连接远程']]:[['members','成员'],['models','共同模型'],['branches','分支'],['activity','活动']];
@@ -2471,7 +2575,10 @@ async function openTeam(selected,keyboard=false){
  $('team-title').textContent='团队设置';$('team-subtitle').textContent=local?'在本机管理团队服务，或连接已有服务器':state.project?'项目：'+state.project:'先创建项目，或请创建者邀请你';
  $('team-tabs').replaceChildren();for(const [id,label] of tabs){const button=el('button',label);button.type='button';button.id='team-tab-'+id;button.setAttribute('role','tab');button.setAttribute('aria-selected',String(id===selected));button.setAttribute('aria-controls','team-body');button.tabIndex=id===selected?0:-1;button.onclick=()=>openTeam(id,true).catch(e=>notice(e.message));button.onkeydown=event=>{const i=tabs.findIndex(t=>t[0]===id);let next;if(event.key==='ArrowRight')next=(i+1)%tabs.length;else if(event.key==='ArrowLeft')next=(i+tabs.length-1)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;else return;event.preventDefault();openTeam(tabs[next][0],true).catch(e=>notice(e.message));};$('team-tabs').append(button);}
  $('team-body').setAttribute('aria-labelledby','team-tab-'+selected);$('team-body').replaceChildren(el('p','正在加载…'));
- if(!$('team-dialog').open)$('team-dialog').showModal();if(keyboard)$('team-tab-'+selected).focus();
+ if(!$('workspace-settings').open)$('workspace-settings').showModal();
+ if(settingsTab!=='team')selectSettings('team');
+ $('settings-panel-team').append($('team-dialog'));
+ if(!$('team-dialog').open)$('team-dialog').show();if(keyboard)$('team-tab-'+selected).focus();
  try {if(local){const data=await rpc('team_get');if(ticket!==teamTicket)return;renderLocalTeam(selected,data,ticket);}else {if(!state.project){$('team-body').replaceChildren(teamNote('创建项目后即可管理成员、共同模型和分支。'),teamAction('创建项目',openTeamProjectCreate,true));return;}const info=await rpc('project_status');if(ticket!==teamTicket)return;state.projectInfo=info;await renderHostedTeam(selected,info,ticket);}}catch(e){if(ticket===teamTicket){$('team-body').replaceChildren();$('team-error').textContent=e.message;}}
 }
 function renderLocalTeam(tab,data,ticket){

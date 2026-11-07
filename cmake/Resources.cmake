@@ -13,7 +13,7 @@ function(codex_embed name filename)
   set(resource_cases "${resource_cases}" PARENT_SCOPE)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${filename}")
 endfunction()
-foreach(asset index.html app.js style.css plugin.js)
+foreach(asset index.html app.js style.css plugin.js markdown.js vendor/marked.umd.js)
   codex_embed("${asset}" "${CMAKE_CURRENT_SOURCE_DIR}/web/${asset}")
 endforeach()
 codex_embed("plugin-creator/native.h" "${CMAKE_CURRENT_SOURCE_DIR}/plugin/native.h")
@@ -32,7 +32,7 @@ file(READ "${codex_libgit2_SOURCE_DIR}/COPYING" git_license)
 file(READ "${codex_curl_SOURCE_DIR}/COPYING" curl_license)
 set(CODEX_EXTRA_LICENSE_FILES "" CACHE STRING "Additional license texts embedded by release builds")
 set(extra_licenses "")
-list(APPEND CODEX_EXTRA_LICENSE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/OpenSSL.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/GCC-RUNTIME.txt"
+list(APPEND CODEX_EXTRA_LICENSE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/marked.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/OpenSSL.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/GCC-RUNTIME.txt"
   "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/GPL3.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/musl.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/libcap.txt"
   "${codex_libgit2_SOURCE_DIR}/deps/zlib/LICENSE" "${codex_libgit2_SOURCE_DIR}/deps/pcre/COPYING" "${codex_libgit2_SOURCE_DIR}/deps/llhttp/LICENSE-MIT")
 foreach(filename IN LISTS CODEX_EXTRA_LICENSE_FILES)

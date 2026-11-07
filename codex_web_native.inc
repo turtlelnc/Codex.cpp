@@ -364,6 +364,7 @@ void atomic_save(const fs::path &path, const J &value) {
   require(synced == 0, "Cannot sync state directory");
 #endif
 }
+#include "codex_settings_store.inc"
 // All workspace path components are opened without following links on POSIX.
 struct Workspace {
   fs::path root;
@@ -930,6 +931,7 @@ struct App {
   std::unique_ptr<Child> child;
   bool busy = false, stopping = false;
   std::string sid, error, draft, reasoning_draft, permission = "workspace", active = "codex", pending_id;
+  J model_activity=obj();
   J pending, events = arr(), messages = arr(), submissions = obj(),
              registry = obj({{"providers", arr()}, {"active", str("codex")}});
   Options options;
@@ -1007,6 +1009,7 @@ struct App {
     require(!busy, "Wait for current task to finish");
     Options next;
     next.root = workspace.root;
+    next.carry_reasoning = options.carry_reasoning;
     next.context_window = options.context_window;
     next.output_reserve = options.output_reserve;
     std::map<std::string, std::string> keys;
@@ -1061,6 +1064,7 @@ struct App {
     if (!options.reasoning_effort.empty())
       args.insert(args.end(), {"--reasoning", options.reasoning_effort});
     args.insert(args.end(),{"--context-window",std::to_string(options.context_window),"--output-reserve",std::to_string(options.output_reserve?options.output_reserve:std::min<size_t>(4096,options.context_window/8))});
+    if(options.carry_reasoning)args.insert(args.end(),{"--carry-reasoning",*options.carry_reasoning?"always":"auto"});
     return args;
   }
   fs::path journal_directory()const{return session_directory.empty()?project_session_root(workspace.root):session_directory;}
@@ -1216,6 +1220,16 @@ struct App {
     });
     return arr(result);
   }
+  void model_progress(const J& payload){
+    const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto phase=text(payload,"phase");
+    if(phase=="heartbeat"){if(text(model_activity,"phase")=="retrying")model_progress(obj({{"phase",str("waiting")}}));model_activity.fields["heartbeat_at"]=number(now);return;}
+    if(!std::set<std::string>{"waiting","reasoning","text","tool","retrying","quota"}.count(phase))return;
+    const auto name=text(payload,"name"),id=text(payload,"call_id"),reason=text(payload,"reason");
+    if(phase=="waiting"||phase!=text(model_activity,"phase")||name!=text(model_activity,"name")||id!=text(model_activity,"call_id")||reason!=text(model_activity,"reason")){
+      model_activity=obj({{"phase",str(phase)},{"name",str(name)},{"call_id",str(id)},{"reason",str(reason)},{"started_at",number(now)}});
+    }
+  }
   std::string snapshot_epoch=entropy();uint64_t snapshot_sequence=0;
   std::deque<std::pair<std::string,std::map<std::string,std::string>>> snapshot_versions;
   std::string row_hash_key;std::map<std::string,std::string> row_hashes;
@@ -1225,7 +1239,7 @@ struct App {
     // must never share an unfiltered event payload with an unauthorized reader.
     J visible_events=events;if(!include_login_notices)visible_events.items.erase(std::remove_if(visible_events.items.begin(),visible_events.items.end(),[](const J& event){return text(event,"type")=="login.notice";}),visible_events.items.end());
     auto result=obj({{"session_id",sid.empty()?J{}:str(sid)},{"busy",boolean(busy)},
-      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"events",visible_events},{"pending",pending},
+      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"model_activity",model_activity},{"events",visible_events},{"pending",pending},
       {"error",str(journal_error.empty()?error:"History unavailable: "+journal_error)},
       {"model",str(display_model)},{"reasoning",str(options.reasoning_effort)},{"permission",str(permission)},
       {"provider",provider(active)},{"sessions",sessions()},{"history_truncated",boolean(journal_truncated)},{"suggestion_context",str(digest(journal_key))}});
@@ -1253,6 +1267,7 @@ struct App {
     if (worker.joinable())
       worker.join();
     busy = true;
+    model_activity=obj();if(!login)model_progress(obj({{"phase",str("waiting")}}));
     stopping = false;
     error.clear();
     events = arr();
@@ -1333,11 +1348,14 @@ struct App {
                 sid = id;
               auto kind = text(*event, "type");
               auto payload = field(*event, "payload", obj());
-              if (kind == "model.reasoning.delta")
-                reasoning_draft += text(payload, "text");
-              if (kind == "model.delta")
-                draft += text(payload, "text");
-              if (kind == "model.output") { draft.clear(); reasoning_draft.clear(); }
+              if(kind=="model.activity")model_progress(payload);
+              if (kind == "model.reasoning.delta"){
+                reasoning_draft += text(payload, "text");if(!text(payload,"text").empty())model_progress(obj({{"phase",str("reasoning")}}));
+              }
+              if (kind == "model.delta"){
+                draft += text(payload, "text");if(!text(payload,"text").empty())model_progress(obj({{"phase",str("text")}}));
+              }
+              if (kind == "model.output") { draft.clear(); reasoning_draft.clear(); model_activity=obj(); }
               if (kind == "approval.requested" && side_mode) {
                 child->send("n\n"); // Side discussion never acquires approval/write authority.
               } else if (kind == "approval.requested") {
@@ -1379,6 +1397,7 @@ struct App {
         child.reset();
       }
       busy = false;
+      model_activity=obj();
       pending = J{};
       pending_id.clear();
       draft.clear();
@@ -1417,7 +1436,7 @@ struct App {
     // Deduplication binds the user's text, not a changing main-task snapshot.
     auto previous=discussion.submissions.get(rid);if(previous){require(previous->str()==digest(prompt),"request_id already used for another side message");return obj({{"submitted",boolean(true)},{"duplicate",boolean(true)}});}
     require(!discussion.busy,"Side conversation is already responding");
-    discussion.options=options;discussion.secrets=secrets;discussion.display_model=display_model;discussion.permission="readonly";
+    discussion.options=options;discussion.options.carry_reasoning=flag(ui_preferences(actor),"carry_reasoning");discussion.secrets=secrets;discussion.display_model=display_model;discussion.permission="readonly";
     std::string context;const auto& rows=journal();
     for(auto it=rows.items.rbegin();it!=rows.items.rend()&&context.size()<12000;++it){const auto kind=text(*it,"k");if(kind!="user"&&kind!="assistant")continue;auto value=utf8_prefix(text(*it,"text"),4000);context=kind+": "+value+"\n"+context;}
     if(busy)context+="\nMain task is running. Partial reply: "+utf8_prefix(draft,4000);
@@ -1426,22 +1445,8 @@ struct App {
     discussion.start(full,rid);discussion.submissions.fields[rid]=str(digest(prompt));discussion.save();
     return obj({{"submitted",boolean(true)}});
   }
-  fs::path assistance_root()const{
-    auto path=home/"web-assistance"/portable_project_key(workspace.root);
-#if defined(_WIN32)
-    // Atomic-save suffixes and private journals can exceed MAX_PATH after
-    // workspace namespacing. Keep the full identity and use wide extended paths.
-    auto native=fs::absolute(path).lexically_normal().make_preferred().native();
-    if(native.rfind(L"\\\\?\\",0)!=0){
-      if(native.rfind(L"\\\\",0)==0)native=L"\\\\?\\UNC\\"+native.substr(2);
-      else native=L"\\\\?\\"+native;
-    }
-    return fs::path(native);
-#else
-    return path;
-#endif
-  }
-  J ui_preferences(const std::string& actor){auto value=read_json(assistance_root()/"ui-preferences"/(digest(actor)+".json"));return obj({{"side_chat",boolean(!value.get("side_chat")||flag(value,"side_chat"))},{"auto_suggestions",boolean(flag(value,"auto_suggestions"))}});}
+  fs::path assistance_root()const{return assistance_directory(home,workspace.root);}
+  J ui_preferences(const std::string& actor){return load_preferences(home,workspace.root,actor);}
   J suggestions_rpc(const J& request,const std::string& actor){
     const auto file=assistance_root()/"suggestions"/(digest(actor)+".json");auto saved=read_json(file);const auto op=text(request,"op");
     const auto stamp=assistance_root()/"suggestions"/(digest(actor+"/"+sid)+".attempt.json");
@@ -1475,8 +1480,7 @@ struct App {
     auto op = text(request, "op");
     if(op=="preferences")return ui_preferences(actor);
     if(op=="preferences_save"){
-      auto next=ui_preferences(actor);for(auto name:{"side_chat","auto_suggestions"})if(auto value=request.get(name)){require(value->kind==J::Other&&(value->value=="true"||value->value=="false"),"Preference must be a boolean");next.fields[name]=*value;}
-      auto directory=assistance_root()/"ui-preferences";private_dir(directory);atomic_save(directory/(digest(actor)+".json"),next);
+      auto next=save_preferences(home,workspace.root,actor,request);
       if(!flag(next,"auto_suggestions")||!flag(next,"side_chat"))for(auto& entry:side_chats){if(entry.second->side_actor==actor&&((!entry.second->suggestion_mode&&!flag(next,"side_chat"))||(entry.second->suggestion_mode&&!flag(next,"auto_suggestions"))))entry.second->rpc(obj({{"op",str("stop")}}));}
       return next;
     }
@@ -1517,6 +1521,7 @@ struct App {
         return obj({{"submitted", boolean(true)}, {"duplicate", boolean(true)}});
       }
       require(options.provider != "custom" || !display_model.empty(), "Select a model before sending");
+      options.carry_reasoning=flag(ui_preferences(actor),"carry_reasoning");
       start(prompt, rid);
       return obj({{"submitted", boolean(true)}});
     }
@@ -1585,6 +1590,23 @@ struct App {
     }
     if (op == "diff") {
       return git_review(workspace.root);
+    }
+    std::shared_ptr<portable::Lease> provider_guard;
+    if(op=="providers"||op.rfind("provider_",0)==0){
+      if(op!="providers")require(!busy,"Wait for current task to finish before changing providers");
+      provider_guard=lock_provider_registry(home);
+      if(!busy&&fs::exists(registry_path)){
+        const auto configuration=[&](){for(const auto& entry:registry.fields["providers"].items)if(text(entry,"id")==active)return entry;return obj();};
+        const auto prior=configuration();
+        auto saved=read_json(registry_path);require(saved.get("providers")&&saved.get("providers")->kind==J::Array,"Invalid saved providers");registry=std::move(saved);
+        if(op=="providers"&&active!="cli"){const auto selected=text(registry,"active","codex");
+          if(selected!=active)use_provider(selected,false);
+          else if(json_dump(prior)!=json_dump(configuration())){
+            const auto model=options.model,effort=options.reasoning_effort,display=display_model;
+            use_provider(selected,false);options.model=model;options.reasoning_effort=effort;display_model=display;
+          }
+        }
+      }
     }
     if (op == "providers") {
       std::vector<J> result = {provider("codex")};
@@ -1673,7 +1695,8 @@ struct App {
       require(id != "codex" && id != "cli", "Cannot delete a built-in provider");
       provider(id);
       if (active == id)
-        use_provider("codex");
+        use_provider("codex",false);
+      if(text(registry,"active")==id)registry.fields["active"]=str("codex");
       auto &list = registry.fields["providers"].items;
       list.erase(std::remove_if(list.begin(), list.end(), [&](const J &p) { return text(p, "id") == id; }),
                  list.end());
@@ -1687,6 +1710,7 @@ struct App {
       if (!id.empty())
         session_lines(id+".items.jsonl",[](const std::string&,uint64_t){return false;});
       sid = id;
+      model_activity=obj();
       messages = arr();
       events = arr();
       draft.clear();
@@ -1938,10 +1962,10 @@ struct Service {
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
-      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js")) {
+      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js" || req.path == "/markdown.js" || req.path == "/vendor/marked.umd.js")) {
         auto name = req.path == "/" ? "index.html" : req.path.substr(1);
         auto mime = req.path == "/"         ? "text/html; charset=utf-8"
-                    : (req.path == "/app.js" || req.path == "/plugin.js") ? "text/javascript; charset=utf-8"
+                    : (req.path != "/style.css") ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
         reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;

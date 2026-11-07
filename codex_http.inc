@@ -5,7 +5,7 @@ struct WebReply { long status=0; std::string body,error; std::map<std::string,st
 static WebReply native_http(const std::string& url,const std::string& body,
     const std::vector<std::string>& headers,bool get=false,
     const std::function<void(const char*,size_t)>& on_bytes={},
-    const std::function<void()>& on_tick={},bool watch_escape=false,bool honor_interrupt=true) {
+    const std::function<void()>& on_tick={},bool watch_escape=false,bool honor_interrupt=true,long response_timeout=0) {
   static const bool initialized=[](){return curl_global_init(CURL_GLOBAL_DEFAULT)==CURLE_OK;}();
   WebReply reply;if(!initialized){reply.error="HTTP initialization failed";return reply;}
   auto easy=curl_easy_init();auto multi=curl_multi_init();curl_slist* list=nullptr;
@@ -16,7 +16,7 @@ static WebReply native_http(const std::string& url,const std::string& body,
   curl_easy_setopt(easy,CURLOPT_PROTOCOLS_STR,"http,https");
   curl_easy_setopt(easy,CURLOPT_FOLLOWLOCATION,0L);
   curl_easy_setopt(easy,CURLOPT_CONNECTTIMEOUT,20L);
-  curl_easy_setopt(easy,CURLOPT_TIMEOUT,get?30L:300L);
+  curl_easy_setopt(easy,CURLOPT_TIMEOUT,response_timeout>0?response_timeout:(get?30L:300L));
   curl_easy_setopt(easy,CURLOPT_NOSIGNAL,1L);
   curl_easy_setopt(easy,CURLOPT_HTTPHEADER,list);
   struct HeaderSink { WebReply& reply;size_t bytes=0; } header_sink{reply};
@@ -43,7 +43,7 @@ static WebReply native_http(const std::string& url,const std::string& body,
 #endif
   if(!ca.empty())curl_easy_setopt(easy,CURLOPT_CAINFO,ca.c_str());
   if(!capath.empty())curl_easy_setopt(easy,CURLOPT_CAPATH,capath.c_str());
-  struct Sink { WebReply& reply;const std::function<void(const char*,size_t)>& callback; } sink{reply,on_bytes};
+  struct Sink { WebReply& reply;const std::function<void(const char*,size_t)>& callback;} sink{reply,on_bytes};
   auto write=+[](char* data,size_t size,size_t count,void* opaque)->size_t{
     auto& s=*static_cast<Sink*>(opaque);size_t n=size*count;
     try {if(n>8'000'000-s.reply.body.size()){s.reply.error="HTTP response exceeded 8 MB";return 0;}
