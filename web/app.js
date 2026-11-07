@@ -786,7 +786,7 @@ function streamMarkup(text) {
   const leaves = [];
   let leaf,
     offset = 0;
-  while ((leaf = walker.nextNode())) if(!leaf.parentElement.closest('button, .md-code-header'))leaves.push(leaf);
+  while ((leaf = walker.nextNode())) if(!leaf.parentElement.closest('button, .md-code-header, .md-math'))leaves.push(leaf);
   for (const textNode of leaves) {
     const span = el('span', undefined, 'stream-text');
     span._offset = offset;
@@ -854,7 +854,7 @@ function appendStreamText(leaf, delta, budget, offset) {
   leaf.append(tail);
 }
 function patchStreamMarkup(current, next, budget) {
-  CodexMarkdown.updateElement(current,next);
+  if(CodexMarkdown.updateElement(current,next))return;
   if (current.classList.contains('stream-text')) {
     const before = current.textContent,
       after = next.textContent;

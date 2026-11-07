@@ -11,17 +11,17 @@ let browser, server;
       if (req.url === '/') {
         res.setHeader('Content-Type', 'text/html');
         res.end(
-          '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><script src="/vendor/marked.umd.js"></script><script src="/markdown.js"></script><main id="fixture" style="display:block;max-width:740px;padding:20px;margin:auto"></main>',
+          '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/vendor/katex.css"><link rel="stylesheet" href="/style.css"><script src="/vendor/marked.umd.js"></script><script src="/vendor/katex.min.js"></script><script src="/math.js"></script><script src="/markdown.js"></script><main id="fixture" style="display:block;max-width:740px;padding:20px;margin:auto"></main>',
         );
         return;
       }
       const name = req.url.slice(1);
-      if (!['vendor/marked.umd.js', 'markdown.js', 'style.css'].includes(name)) {
+      if (!['vendor/marked.umd.js', 'vendor/katex.min.js','vendor/katex.css', 'math.js', 'markdown.js', 'style.css',...fs.readdirSync(path.join(__dirname,'../web/vendor/fonts')).map(file=>'vendor/fonts/'+file)].includes(name)) {
         res.writeHead(404);
         res.end();
         return;
       }
-      res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : 'text/css');
+      res.setHeader('Content-Type', name.endsWith('.woff2')?'font/woff2':name.endsWith('.js') ? 'text/javascript' : 'text/css');
       res.end(fs.readFileSync(path.join(__dirname, '../web', name)));
     });
     await new Promise((r) => server.listen(0, '127.0.0.1', r));

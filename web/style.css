@@ -497,3 +497,10 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .md .md-code pre { margin:0; border-radius:0; white-space:pre; overflow:auto; }
 .md pre code { padding:0; background:none; font:inherit; white-space:inherit; }
 .md-literal,.md-plain pre { white-space:pre-wrap; }
+
+/* Formula layout stays atomic during streaming; fonts are embedded and served locally. */
+.md-math { color:inherit; max-width:100%; }
+.md-math-block { display:block; overflow-x:auto; overflow-y:hidden; margin:18px 0; padding:8px 0; text-align:center; }
+.md-math-inline { display:inline-block; overflow-x:auto; vertical-align:middle; }
+.md-math math { color:inherit; font-size:1.1em; }
+.md-math-pending, .md-math-fallback { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; text-align:left; }
