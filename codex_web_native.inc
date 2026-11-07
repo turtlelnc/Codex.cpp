@@ -1426,7 +1426,21 @@ struct App {
     discussion.start(full,rid);discussion.submissions.fields[rid]=str(digest(prompt));discussion.save();
     return obj({{"submitted",boolean(true)}});
   }
-  fs::path assistance_root()const{return home/"web-assistance"/portable_project_key(workspace.root);}
+  fs::path assistance_root()const{
+    auto path=home/"web-assistance"/portable_project_key(workspace.root);
+#if defined(_WIN32)
+    // Atomic-save suffixes and private journals can exceed MAX_PATH after
+    // workspace namespacing. Keep the full identity and use wide extended paths.
+    auto native=fs::absolute(path).lexically_normal().make_preferred().native();
+    if(native.rfind(L"\\\\?\\",0)!=0){
+      if(native.rfind(L"\\\\",0)==0)native=L"\\\\?\\UNC\\"+native.substr(2);
+      else native=L"\\\\?\\"+native;
+    }
+    return fs::path(native);
+#else
+    return path;
+#endif
+  }
   J ui_preferences(const std::string& actor){auto value=read_json(assistance_root()/"ui-preferences"/(digest(actor)+".json"));return obj({{"side_chat",boolean(!value.get("side_chat")||flag(value,"side_chat"))},{"auto_suggestions",boolean(flag(value,"auto_suggestions"))}});}
   J suggestions_rpc(const J& request,const std::string& actor){
     const auto file=assistance_root()/"suggestions"/(digest(actor)+".json");auto saved=read_json(file);const auto op=text(request,"op");
