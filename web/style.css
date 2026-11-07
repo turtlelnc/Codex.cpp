@@ -427,3 +427,30 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .creator-review p { margin: 6px 0; font-size: 13px; color: var(--muted); }
 .creator-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .creator-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 180px; overflow: auto; }
+
+#history-status { margin: 8px auto; padding: 0 16px; color: var(--text-muted, #706b62); font-size: 12px; }
+
+/* Side discussion reuses the existing inspector; no extra persistent column. */
+.side-chat { display:flex; flex-direction:column; overflow:hidden; }
+.side-hint { font-size:12px; padding:14px 16px 0; margin-bottom:10px; }
+#side-messages { flex:1; min-height:0; overflow:auto; padding:0 16px; overflow-wrap:anywhere; }
+.side-message { padding:12px 0; line-height:1.65; }
+.side-message.user { padding:10px 12px; background:var(--bubble); border-radius:var(--radius); margin:10px 0; }
+.side-message.tool,.side-message.hint { color:var(--muted); font-size:12px; }
+.side-message button { font-size:12px; padding:4px 8px; }
+#side-status { padding:8px 16px; font-size:12px; margin:0; }
+#side-composer { padding:0 16px 16px; }
+#side-prompt { resize:vertical; max-height:30dvh; }
+.side-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+#dialog-body textarea { min-height:160px; resize:vertical; }
+
+.settings-links { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
+#workspace-settings fieldset { border:0; padding:0; margin:0; }
+#workspace-settings legend { font-weight:600; margin-bottom:12px; }
+#workspace-settings fieldset p { font-size:12px; }
+.preference { display:flex; align-items:start; gap:8px; margin:12px 0; line-height:1.5; }
+.preference input { width:auto; margin-top:4px; }
+.next-steps { max-width:var(--col); margin:20px auto; border-top:1px solid var(--line); padding-top:18px; }
+.next-steps h3 { font-size:14px; }
+.next-steps p { font-size:13px; margin-bottom:8px; }
+.sugg button { max-width:100%; overflow-wrap:anywhere; white-space:normal; }

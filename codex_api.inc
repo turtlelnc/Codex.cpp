@@ -54,7 +54,7 @@ struct ChatStreamDecoder{
     if(!result.text && result.calls.empty()){err="Chat Completions stream contained neither text nor tool calls";return{};}return result;
   }
 };
-struct ApiClient{std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
+struct ApiClient{size_t context_window=32768,output_reserve=4096;std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
 ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
 std::optional<std::string> post_codex(const std::string& body,std::string& err,const std::function<void(const std::string&)>& on_delta ={}, const std::function<void()>& on_tick ={},bool watch_escape = false,const std::function<void(const std::string&)>& on_reasoning ={})const{
   auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};
@@ -161,7 +161,7 @@ std::optional<ApiResponse> builtin_call_chat(const std::string& messages_json,co
     auto response=parse_api_response(reply.body,true,err);if(response && response->text && on_delta)on_delta(*response->text);return response;}
   return decoder.finish(err);
 }
-Json plugin_config()const{return plugin_object({{"base_url",plugin_string(base_url)},{"model",plugin_string(model)},{"reasoning_effort",plugin_string(reasoning_effort)},{"chatgpt_auth",plugin_bool(chatgpt_auth)},{"no_api_key",plugin_bool(no_api_key)}});}
+Json plugin_config()const{return plugin_object({{"base_url",plugin_string(base_url)},{"model",plugin_string(model)},{"context_window",plugin_string(std::to_string(context_window))},{"output_reserve",plugin_string(std::to_string(output_reserve))},{"reasoning_effort",plugin_string(reasoning_effort)},{"chatgpt_auth",plugin_bool(chatgpt_auth)},{"no_api_key",plugin_bool(no_api_key)}});}
 ApiClient plugin_client(const Json& request)const{auto config=request.get("config");if(!config)throw std::runtime_error("Plugin model config missing");ApiClient client=*this;
   client.base_url=plugin_text(*config,"base_url");client.model=plugin_text(*config,"model");client.reasoning_effort=plugin_text(*config,"reasoning_effort");
   client.chatgpt_auth=plugin_flag(*config,"chatgpt_auth");client.no_api_key=plugin_flag(*config,"no_api_key");return client;

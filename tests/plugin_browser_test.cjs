@@ -13,7 +13,7 @@ async function wait(fn){for(let i=0;i<300;i++){if(await fn())return;await new Pr
  await page.locator('#plugin-sidebar div').waitFor();assert((await page.locator('#plugin-sidebar').textContent()).includes('native model'));
  await page.locator('#prompt').fill('run_plugin_tool');await page.locator('#send').click();await page.waitForFunction(()=>document.getElementById('messages').textContent.includes('This reply came from a native module.'));
  assert.equal(await page.locator('.message.assistant .md[data-plugin="demo-plugin"] h3').textContent(),'Plugin');
- await page.locator('#plugin-button').click();await page.locator('#plugin-dialog').waitFor();assert((await page.locator('#plugin-services').textContent()).includes('model.request → demo-plugin'));assert((await page.locator('#plugin-services').textContent()).includes('markdown.render → demo-plugin'));await page.locator('#plugin-close').click();
+ await page.locator('#settings-button').click();await page.locator('#plugin-button').click();await page.locator('#plugin-dialog').waitFor();assert((await page.locator('#plugin-services').textContent()).includes('model.request → demo-plugin'));assert((await page.locator('#plugin-services').textContent()).includes('markdown.render → demo-plugin'));await page.locator('#plugin-close').click();
  const result=await page.evaluate(()=>{
    let rejected=false;try{CodexPlugin.mount({id:'broken',services:{fresh:{handler:x=>x},'markdown.render':{handler:x=>x}}});}catch{rejected=true;}
    const atomic=!CodexPlugin.inspect().some(s=>s.service==='fresh');

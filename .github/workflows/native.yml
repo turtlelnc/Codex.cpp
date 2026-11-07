@@ -54,10 +54,45 @@ jobs:
         run: |
           binary=build/codex-cpp
           if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; fi
+          node tests/long_session_test.cjs "$binary"
+          node tests/context_budget_test.cjs "$binary"
+          node tests/provider_budget_restart_test.cjs "$binary"
           node tests/portable_data_test.cjs "$binary"
           node tests/portable_update_test.cjs "$binary"
       - name: Build Creator lifecycle regression harness
         run: cmake --build build --config Release --target codex-self-test --parallel 2
+      - name: Build explicit team compatibility modules
+        run: cmake --build build --config Release --target team-protocol-compat team-protocol-fixture team-protocol-bad-fixture --parallel 2
+      - name: Verify team protocol negotiation and native adapter behavior
+        shell: bash
+        run: |
+          base=build
+          module_config=
+          if [ "$RUNNER_OS" = Windows ]; then base=build/Release; module_config=/Release; fi
+          binary="$base/codex-cpp"
+          probe="$base/codex-self-test"
+          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; probe="$probe.exe"; fi
+          node tests/team_protocol_test.cjs "$binary" "$probe" "build/team-protocol-compat$module_config/plugin.json" "build/team-protocol-fixture$module_config/plugin.json" "build/team-protocol-bad-fixture$module_config/plugin.json"
+      - name: Verify concurrent read-only side conversations
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          probe=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/Release/codex-self-test.exe; fi
+          "$probe" --side-boundary-checks "$RUNNER_TEMP/side-boundary"
+          node tests/side_chat_test.cjs "$binary"
+      - name: Verify bounded atomic journal replacement under reader locks
+        shell: bash
+        run: |
+          binary=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-self-test.exe; fi
+          "$binary" --journal-replacement-checks "$RUNNER_TEMP/journal-replacement"
+      - name: Verify login snapshot privacy and provider budget retention
+        shell: bash
+        run: |
+          binary=build/codex-self-test
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-self-test.exe; fi
+          "$binary" --web-boundary-checks "$RUNNER_TEMP/web-boundary-regressions"
       - name: Verify updater HTTPS, cancellation and partial cleanup
         shell: bash
         run: |
@@ -168,6 +203,12 @@ jobs:
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/plugin_creator_browser_test.cjs build/codex-cpp
+      - name: Verify large-session incremental snapshots in Chromium
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/long_session_test.cjs build/codex-cpp --browser
+      - name: Verify side discussion, settings and idle suggestions in Chromium
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/side_chat_test.cjs build/codex-cpp --browser
       - name: Verify portable WebUI bridge in Chromium
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/portable_web_test.cjs build/codex-cpp
       - name: Verify manual-trust startup also freezes worker resources

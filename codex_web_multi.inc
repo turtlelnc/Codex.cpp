@@ -484,6 +484,13 @@ J HostedService::dispatch(const std::string &user, const J &request) {
             job.fields.erase("request");
           }
         }
+      // Side discussions are not queued mutation jobs. Revocation must still
+      // terminate this actor's read-only workers before removing membership.
+      for(auto& entry:apps)if(entry.first.rfind(id+"/",0)==0){
+        std::lock_guard<std::recursive_mutex> app_lock(entry.second->mutex);
+        for(auto& channel:entry.second->side_chats)if(channel.second->side_actor==target)
+          channel.second->rpc(obj({{"op",str("stop")}}));
+      }
       members.erase(
           std::remove_if(members.begin(), members.end(), [&](const J &x) { return x.str() == target; }),
           members.end());
@@ -614,6 +621,7 @@ J HostedService::dispatch(const std::string &user, const J &request) {
   }
   init_repository(user, id, personal);
   auto application = app(user, id, personal);
+  if(op=="preferences"||op=="preferences_save"||op.rfind("suggestions_",0)==0||op.rfind("side_",0)==0)return application->rpc(request,personal||owner,user);
   if (op == "approve") {
     std::lock_guard<std::recursive_mutex> app_lock(application->mutex);
     auto decision = request.get("allow");
@@ -637,12 +645,5 @@ J HostedService::dispatch(const std::string &user, const J &request) {
     return application->rpc(request);
   }
   lock.unlock();
-  auto result = application->rpc(request);
-  if (op == "snapshot" && !personal && !owner) {
-    auto &events = result.fields["events"].items;
-    events.erase(std::remove_if(events.begin(), events.end(),
-                                [](const J &e) { return text(e, "type") == "login.notice"; }),
-                 events.end());
-  }
-  return result;
+  return application->rpc(request,personal || owner);
 }

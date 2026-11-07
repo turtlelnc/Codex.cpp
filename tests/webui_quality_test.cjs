@@ -15,6 +15,8 @@ let browser,
   session = "s1",
   snap = { timeline: [], messages: [], draft: "", busy: false, pending: null };
 const files = { "a.txt": "A", "b.txt": "B" };
+let peerWire = 1, assistance = false, noProjects = false, preferenceSaves = 0;
+let assistancePreferences = {side_chat:true,auto_suggestions:false};
 let version = 0,
   sends = 0,
   heldSnapshot = null,
@@ -57,16 +59,19 @@ function snapshot() {
           res.end(JSON.stringify(data));
         };
         if (req.url === "/api/me")
-          return reply({ mode, username: "local", csrf: "test" });
+          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1',...(assistance?['suggestions.v1']:[])]}}) });
         if (req.url === "/api/rpc") {
           const b = JSON.parse(raw);
           let result = {};
           switch (b.op) {
             case "projects":
-              result = { projects: ["p1", "p2"] };
+              result = { projects: noProjects ? [] : ["p1", "p2"] };
               break;
+            case "preferences": result = assistancePreferences; break;
+            case "preferences_save": preferenceSaves++; assistancePreferences={...assistancePreferences,...Object.fromEntries(Object.entries(b).filter(([key])=>["side_chat","auto_suggestions"].includes(key)))};result=assistancePreferences;break;
+            case "create": noProjects=false;result={project:"p1"};break;
             case "project_status":
-              result = { jobs: [], busy: false, blocked: false };
+              result = { jobs: [], busy: false, blocked: false, owner:"local", members:["local"],audit:[],branches:{} };
               break;
             case "status":
               result = { workspace: "/fixture" };
@@ -884,6 +889,7 @@ function snapshot() {
     // Device login uses authentication notices, never a model request or thinking spinner.
     const sendsBeforeLogin = sends;
     await page.locator("#settings-button").click();
+    await page.locator("#provider-button").click();
     await page.getByRole("button", { name: "设备登录", exact: true }).click();
     await page.locator("#device-login-dialog[open]").waitFor();
     await page.waitForFunction(
@@ -939,6 +945,25 @@ function snapshot() {
         path: process.env.WEBUI_SCREENSHOTS + "/webui-quality-mobile.png",
         fullPage: true,
       });
+    // Settings opened before the first project must recover without reloading.
+    assistance=true;noProjects=true;mode='server';await page.setViewportSize({width:1440,height:900});await page.reload();
+    await page.locator('#settings-button').click();
+    assert(await page.locator('#preference-side').isDisabled());assert(await page.locator('#preference-suggestions').isDisabled());
+    await page.locator('#team-button').click();await page.locator('#team-dialog').getByRole('button',{name:'创建项目',exact:true}).click();
+    await page.locator('#dialog [name=name]').fill('p1');await page.locator('#dialog-submit').click();
+    await page.locator('#team-body .team-row').filter({hasText:'local'}).waitFor();await page.locator('#team-close').click();
+    await page.locator('#settings-button').click();assert(!(await page.locator('#preference-side').isDisabled()));assert(!(await page.locator('#preference-suggestions').isDisabled()));
+    await page.locator('#preference-suggestions').check();await wait(()=>preferenceSaves===1);await page.locator('#preference-side').uncheck();await wait(()=>preferenceSaves===2);
+    assert(assistancePreferences.auto_suggestions&&!assistancePreferences.side_chat);await page.locator('#workspace-settings-close').click();assistance=false;
+    // Unknown old servers remain readable, but no write is sent without the
+    // negotiated safety contract. Unsupported explicit versions do not downgrade.
+    peerWire=0;mode='server';snap={...snap,busy:false,pending:null};await page.reload();
+    await page.waitForFunction(() => document.getElementById('connection').textContent.includes('兼容只读'));const beforeReadonly=sends;
+    await page.locator('#prompt').fill('must stay local while read-only');
+    await page.locator('#composer').evaluate(n=>n.requestSubmit());
+    await page.getByText(/兼容只读：服务器/).waitFor();assert.equal(sends,beforeReadonly);
+    assert.equal(await page.locator('#prompt').inputValue(),'must stay local while read-only');
+    peerWire=99;await page.reload();await page.getByText(/服务器协议不兼容/).waitFor();assert.equal(sends,beforeReadonly);
     assert.deepEqual(errors, []);
     console.log(
       "PASS WebUI layout breakpoints, save/edit race, out-of-order file reads, stable 600-message DOM/selection/tools/scroll, equal-length streaming updates, connection recovery, duplicate submit/input preservation, stale session responses, reload recovery, approval retry, stop, idempotent send retry project/scope isolation, execution summaries, inline patch/deny, full logs, tool focus scaled viewports, 1200-line diff, 200-call burst, device login and bounded streaming reveal",

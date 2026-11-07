@@ -9,6 +9,7 @@ static void plugin_builtins(){static const bool initialized=[](){auto& r=plugin_
   r.mount({"builtin.journal",{},{{"journal.append",{},{}},{"journal.replace",{},{}}}});
   r.mount({"builtin.tools",{},{{"tool.execute",{},{}}}});
   r.mount({"builtin.web",{},{}});
+  r.mount({"builtin.protocol",{},{{"team.protocol.adapters",{},{}}}});
   return true;}();(void)initialized;
 }
 static std::string plugin_inspect(){plugin_builtins();std::string out="[";for(const auto& service:plugin_runtime().inspect()){

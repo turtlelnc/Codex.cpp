@@ -121,6 +121,7 @@ static std::optional<std::string> external_hardlink_risk(const fs::path& root);
 static bool within_root(const fs::path& root,const fs::path& target);
 #include "codex_process.inc"
 #include "codex_portable_paths.inc"
+#include "codex_context.inc"
 static fs::path temp_path_in(const fs::path& dir,const char* stem){for(int attempt=0;attempt<10;++attempt){ fs::path p=dir/(std::string(stem)+"-"+random_id("tmp"));
 #if !defined(_WIN32)
   int fd=open(p.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600);if(fd>=0){close(fd);return p;}
@@ -330,6 +331,9 @@ bool can_write()const{return sandbox != SandboxMode::ReadOnly;}bool shell_allowe
 bool needs_write_approval()const{return approval == ApprovalPolicy::OnRequest && sandbox != SandboxMode::DangerFullAccess; } }; static bool approve(const std::string& action,bool default_yes = false){
 std::cerr << "Approval required: " << action <<(default_yes ? " [Y/n] " : " [y/N] ")<< std::flush;std::string s;std::getline(std::cin,s);s = trim(s);
 if(s.empty())return default_yes;return s == "y" || s == "Y" || s == "yes" || s == "YES"; }
+// Keep only a bounded display tail in memory; it must never replace the disk log.
+static constexpr size_t transcript_tail_limit=2'000'000;
+static std::string transcript_tail(const fs::path& path){std::ifstream file(path,std::ios::binary);if(!file)return {};file.seekg(0,std::ios::end);auto length=file.tellg();if(length<0)return {};const auto count=std::min<uint64_t>(static_cast<uint64_t>(length),transcript_tail_limit);file.seekg(length-static_cast<std::streamoff>(count));std::string tail(static_cast<size_t>(count),'\0');file.read(tail.data(),static_cast<std::streamsize>(count));tail.resize(static_cast<size_t>(file.gcount()));size_t first=0;while(first<tail.size()&&(static_cast<unsigned char>(tail[first])&0xc0)==0x80)++first;tail.erase(0,first);return tail;}
 // ---------- rollout/session ----------
 namespace portable{struct Lease;}// Per-session exclusive lock; implemented with the portable data lease.
 static std::function<void(const std::string&)> session_observer;
@@ -339,7 +343,8 @@ static const char* event_name(EventKind k){switch(k){case EventKind::SessionStar
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
-return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript;std::unique_ptr<portable::Lease> lease;void release_lock();
+return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
+size_t estimated_tokens=0;
 std::vector<std::string> items;// Responses input items, one JSON object per journal line
 size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size();size_t pos=0;
   while((pos=item.find("data:image/",pos))!=std::string::npos){const size_t end=item.find('"',pos);if(end==std::string::npos)break;
@@ -353,22 +358,37 @@ bool record_item(const std::string& item){try{auto value=parse_json(item);if(!va
   auto result=plugin_call("journal.append",plugin_object({{"path",plugin_string(items_path.u8string())},{"item",plugin_string(item)}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
     std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
-  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());return true;
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());estimated_tokens+=estimate_tokens(stored->str());return true;
   }catch(...){return false;}}
-bool replace_items(const std::vector<std::string>& compacted){try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
+bool replace_items(const std::vector<std::string>& compacted){storage_error.clear();try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
   auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
     // Unique staging name so concurrent writers never share a temporary file.
-    const fs::path staged=items_path.string()+"."+random_id("journal-new");{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
-    std::error_code ec;fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
-  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);return true;
-  }catch(...){return false;}}
+    fs::path staged=items_path;staged+="."+random_id("journal-new");{std::ofstream file(staged,std::ios::binary|std::ios::trunc);if(!file)throw std::runtime_error("Cannot stage journal");for(const auto& item:values->items){auto parsed=item.kind==Json::String?parse_json(item.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");file<<item.str()<<'\n';}file.flush();if(!file)throw std::runtime_error("Cannot save journal");}
+    std::error_code ec;
+#if defined(_WIN32)
+    // Readers and antivirus scanners can briefly hold a file without delete
+    // sharing. Retry only transient lock/access failures, keeping the original
+    // intact. Never truncate/unlink the destination to make replacement work.
+    DWORD code=ERROR_SUCCESS;bool replaced=false;
+    for(int attempt=0;attempt<40;++attempt){
+      if(MoveFileExW(staged.c_str(),items_path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){replaced=true;break;}
+      code=GetLastError();if(code!=ERROR_SHARING_VIOLATION&&code!=ERROR_LOCK_VIOLATION&&code!=ERROR_ACCESS_DENIED)break;
+      if(attempt<39)std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    if(!replaced){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal (Windows error "+std::to_string(code)+")");}
+#else
+    fs::rename(staged,items_path,ec);if(ec){fs::remove(staged,ec);throw std::runtime_error("Cannot replace journal");}
+#endif
+    return plugin_object({{"ok",plugin_bool(true)},{"items",*values}});
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("items");if(!stored || stored->kind!=Json::Array)return false;std::vector<std::string> replacement;for(const auto& value:stored->items){auto parsed=value.kind==Json::String?parse_json(value.str()):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object)return false;replacement.push_back(value.str());}items=std::move(replacement);estimated_tokens=0;for(const auto& item:items)estimated_tokens+=estimate_tokens(item);return true;
+  }catch(const std::exception& e){storage_error=e.what();return false;}catch(...){storage_error="Unknown journal replacement error";return false;}}
 
 void emit(EventKind kind,const std::string& payload = "{}")const{std::ostringstream line;line << "{\"timestamp\":\"" << json_escape(now_iso8601())
   << "\",\"session_id\":\"" << json_escape(id)<< "\",\"type\":\"" << event_name(kind)<< "\",\"payload\":" << payload << "}";
   std::ofstream f(events_path,std::ios::app | std::ios::binary);if(f)f << line.str()<< '\n';if(echo_json)std::cout << line.str()<< '\n'<<std::flush;if(session_observer)session_observer(line.str());
 }
-void append_transcript(const std::string& text){transcript += text;std::ofstream f(transcript_path,std::ios::binary | std::ios::trunc); if(f)f << transcript;
+bool append_transcript(const std::string& text){std::ofstream file(transcript_path,std::ios::binary|std::ios::app);if(!file)return false;file.write(text.data(),static_cast<std::streamsize>(text.size()));file.flush();if(!file)return false;transcript+=text;if(transcript.size()>transcript_tail_limit){size_t first=transcript.size()-transcript_tail_limit;while(first<transcript.size()&&(static_cast<unsigned char>(transcript[first])&0xc0)==0x80)++first;transcript.erase(0,first);}return true;
 }
 std::pair<std::string,std::string> pending_turn()const{
   std::pair<std::string,std::string> pending;std::ifstream f(events_path);std::string line;
@@ -390,7 +410,7 @@ bool close_unconfirmed_calls(){
 };
 static bool lock_session(Session& s,Session* previous,std::string& err);static void unlock_session(Session& s,Session* previous);// defined after the portable lease is included
 static bool init_session(Session& s,const fs::path& root,bool echo_json,const std::optional<std::string>& resume,std::string& err,Session* previous = nullptr){
-s.items.clear();s.transcript.clear();s.root = root;s.dir = project_state_root(root) / "sessions";std::error_code ec;fs::create_directories(s.dir,ec);
+s.items.clear();s.estimated_tokens=0;s.transcript.clear();s.root = root;s.dir = project_session_root(root);std::error_code ec;fs::create_directories(s.dir,ec);
 if(ec){err = "cannot create session dir: " + ec.message();return false;}s.echo_json = echo_json;s.id = resume ? *resume : random_id("session");
 s.events_path = s.dir /(s.id + ".jsonl");s.transcript_path = s.dir /(s.id + ".transcript");s.items_path = s.dir /(s.id + ".items.jsonl");
 s.meta_path = s.dir /(s.id + ".meta.json");
@@ -399,20 +419,27 @@ if(resume&&(s.id.empty()|| s.id=="." || s.id==".." ||
 // One process owns an open session: concurrent resumes must not interleave
 // transcript rewrites or journal compaction.
 if(!lock_session(s,previous,err))return false;
-if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = slurp(s.transcript_path,2'000'000);
+if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = transcript_tail(s.transcript_path);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
-    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";unlock_session(s,previous);return false;}s.items.push_back(line);
+    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";unlock_session(s,previous);return false;}s.items.push_back(line);s.estimated_tokens+=estimate_tokens(line);
   }
   if(!f.eof()){err="could not read session item journal";unlock_session(s,previous);return false;} }else if(!s.transcript.empty()){
   // Upgrade old flat transcripts once; subsequent turns use typed items.
-  if(!s.record_item("{\"role\":\"user\",\"content\":\""+json_escape(s.transcript)+"\"}")){err="could not migrate session transcript";unlock_session(s,previous);return false; } }
+  std::ifstream legacy(s.transcript_path,std::ios::binary);std::vector<std::string> migrated;std::string carry;std::vector<char> buffer(1024*1024);
+  if(!legacy){err="could not read legacy transcript";unlock_session(s,previous);return false;}
+  while(legacy){legacy.read(buffer.data(),static_cast<std::streamsize>(buffer.size()));std::string part=carry+std::string(buffer.data(),static_cast<size_t>(legacy.gcount()));carry.clear();if(part.empty())break;
+    size_t last=part.size()-1;while(last&&(static_cast<unsigned char>(part[last])&0xc0)==0x80)--last;const auto lead=static_cast<unsigned char>(part[last]);const size_t need=lead<128?1:lead<224?2:lead<240?3:4;
+    if(!legacy.eof()&&part.size()-last<need){carry=part.substr(last);part.resize(last);}if(!part.empty())migrated.push_back("{\"role\":\"user\",\"content\":\""+json_escape(part)+"\"}");
+  }
+  if(!carry.empty())migrated.push_back("{\"role\":\"user\",\"content\":\""+json_escape(carry)+"\"}");
+  if(legacy.bad()||!s.replace_items(migrated)){err="could not migrate session transcript";unlock_session(s,previous);return false; } }
   s.emit(EventKind::SessionResumed,"{\"cwd\":\"" + json_escape(root.string())+ "\"}");
 }else{
   std::ofstream meta(s.meta_path,std::ios::binary | std::ios::trunc);if(meta)meta << "{\"id\":\"" << json_escape(s.id)<< "\",\"created_at\":\""
     << json_escape(now_iso8601())<< "\",\"cwd\":\"" << json_escape(root.string())<< "\"}\n";
   s.emit(EventKind::SessionStarted,"{\"cwd\":\"" + json_escape(root.string())+ "\"}");
 }
-return true; } static std::vector<std::string> session_ids(const fs::path& root){const fs::path dir = project_state_root(root) / "sessions";std::error_code ec;
+return true; } static std::vector<std::string> session_ids(const fs::path& root){const fs::path dir = project_session_root(root);std::error_code ec;
 std::vector<fs::path> files;if(!fs::exists(dir,ec))return{};for(const auto& e : fs::directory_iterator(dir,ec)) if(e.is_regular_file(ec) && e.path().extension()== ".jsonl" && e.path().filename().string().find(".items.jsonl")==std::string::npos)files.push_back(e.path());
 std::sort(files.begin(),files.end(),[](const fs::path& a,const fs::path& b){std::error_code ea,eb; return fs::last_write_time(a,ea)> fs::last_write_time(b,eb);
 });
@@ -794,10 +821,10 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-struct Options{fs::path root = fs::current_path();fs::path mcp_config;RuntimePolicy policy;bool json = false;bool list_sessions = false;
-bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false;int max_steps = 64;
+struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
+bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
-std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
@@ -840,6 +867,7 @@ UI:
 
 Agent options:
   --root DIR                    workspace (default: current directory)
+  --session-dir DIR             host-selected separate session journal directory
   --resume SESSION_ID           resume a saved structured session
   --continue                    continue its unfinished turn (requires --resume)
   --wait-quota                  wait for confirmed Codex quota reset
@@ -852,6 +880,9 @@ Agent options:
   --sandbox read-only|workspace-write|danger-full-access
   --read-only                   alias for --sandbox read-only
   --danger-full-access          alias; also implies --approval never
+  --context-window N            model context tokens (default 32768; environment CODEX_CPP_CONTEXT_WINDOW)
+  --output-reserve N            reserved output tokens (default min(4096, window/8))
+  --no-tools                    discussion-only mode; reject tool calls
   --max-steps N                 agent step limit (default: 64)
   --mcp-config PATH             trusted MCP stdio server configuration JSON
   --image PATH                  attach an image to the next prompt (repeatable)
@@ -876,12 +907,15 @@ Security note:
   Example: {"mcpServers":{"demo":{"command":"python3","args":["/absolute/server.py"]}}}
 )HELP";
 }
-static std::optional<Options> parse_options(int argc,char** argv,std::string& err){Options o;for(int i = 1;i < argc;++i){std::string a = argv[i];
+static std::optional<Options> parse_options(int argc,char** argv,std::string& err){Options o;bool explicit_window=false,explicit_reserve=false;
+for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a=="--"){for(++i;i<argc;++i)o.prompt.emplace_back(argv[i]);break;}
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
+  if(a == "--session-dir" && i + 1 < argc){o.session_store=fs::absolute(fs::u8path(argv[++i]));continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a=="--no-tools"){o.no_tools=true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
   if(a == "--continue"){o.continue_turn=true;continue;}
@@ -897,10 +931,11 @@ static std::optional<Options> parse_options(int argc,char** argv,std::string& er
   else if(v == "never")o.policy.approval = ApprovalPolicy::Never;else{err = "invalid --approval: " + v;return std::nullopt;}continue; }
   if(a == "--sandbox" && i + 1 < argc){std::string v = argv[++i];if(v == "read-only")o.policy.sandbox = SandboxMode::ReadOnly; else if(v == "workspace-write")o.policy.sandbox = SandboxMode::WorkspaceWrite;
   else if(v == "danger-full-access")o.policy.sandbox = SandboxMode::DangerFullAccess;else{err = "invalid --sandbox: " + v;return std::nullopt;}continue; }
+  if(a=="--context-window"||a=="--output-reserve"){try{if(i+1>=argc)throw std::runtime_error("Missing context budget value");const auto n=ContextBudget::number(argv[++i]);if(a=="--context-window"){o.context_window=n;explicit_window=true;}else{o.output_reserve=n;explicit_reserve=true;}}catch(const std::exception& e){err=e.what();return {};}continue;}
   if(a == "--max-steps" && i + 1 < argc){try{o.max_steps = std::stoi(argv[++i]);}catch(...){err = "invalid --max-steps";return std::nullopt;}
   if(o.max_steps < 1 || o.max_steps > 512){err = "--max-steps must be 1..512";return std::nullopt;}continue; } o.prompt.push_back(a);
 }
-return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
+try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::vector<std::string> chat_history(const Session& session,const std::string& instructions){
 std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning;
 auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+(pending_reasoning.empty()?"":",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"")+"}"); calls.clear();pending_reasoning.clear(); }
@@ -921,27 +956,43 @@ for(const auto& item:session.items){auto j=parse_json(item);if(!j)continue;const
   }else {messages.push_back(item);pending_reasoning.clear();}
   }
 }
-flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err){if(session.items.empty())return true;std::string summary; std::vector<std::string> recent_images;
-// Summarize every piece in order, so the earliest decisions are not silently
-// dropped when the history reaches the context budget.
-std::string chunk;auto summarize=[&](){if(chunk.empty())return true;auto response=api.call_text_only(
-  "Summarize this coding session for continuation. Preserve user constraints, files changed, tests, unresolved work, and exact decisions. The first part is a prior summary; incorporate new events in order.",
-  "Previous summary:\n"+summary+"\n\nNew events:\n"+chunk,err); if(!response || !response->text || trim(*response->text).empty()){if(err.empty())err="context compaction failed";return false; }
-  summary=trim(*response->text);chunk.clear();return true;
-};
-for(const auto& item:session.items){std::string summarized=item;if(auto doc=parse_json(item)){
-  if(auto content=doc->get("content");content && content->kind==Json::Array){bool has_image=false;for(auto& part:doc->fields["content"].items){
-    auto kind=part.get("type"),url=part.get("image_url");if(kind && kind->str()=="input_image" && url){ part.fields["image_url"].value="[image retained separately]";has_image=true;
-    }
-    }
-    if(has_image){recent_images.push_back(item);if(recent_images.size()>2)recent_images.erase(recent_images.begin());summarized=json_dump(*doc); }
+flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err,size_t history_budget=0){
+  if(session.items.empty())return true;const ContextBudget budget{api.context_window,api.output_reserve};if(!history_budget)history_budget=budget.input();
+  const std::string marker="[prior conversation summary]\n";std::string summary;size_t previous=std::string::npos,latest=std::string::npos;std::vector<size_t> retained_indices;
+  for(size_t i=0;i<session.items.size();++i)if(auto item=parse_json(session.items[i]))if(json_string_field(session.items[i],"role")==std::optional<std::string>("user")){
+    auto content=item->get("content");if(i==0&&content&&content->kind==Json::String&&content->str().rfind(marker,0)==0){summary=content->str().substr(marker.size());previous=i;}else latest=i;
+    if(content&&content->kind==Json::Array&&std::any_of(content->items.begin(),content->items.end(),[](const Json& part){auto type=part.get("type");return type&&type->str()=="input_image";})){retained_indices.push_back(i);if(retained_indices.size()>2)retained_indices.erase(retained_indices.begin());}
   }
+  if(latest!=std::string::npos&&std::find(retained_indices.begin(),retained_indices.end(),latest)==retained_indices.end())retained_indices.push_back(latest);
+  size_t retained=0;for(const auto index:retained_indices)retained+=estimate_tokens(session.items[index]);
+  if(retained+512>=history_budget){err="Current user input does not fit the configured model context budget; shorten it or configure the actual model window. Input remains saved.";return false;}
+  const auto summary_limit=std::min<size_t>(2048,(history_budget-retained-256)/4);
+  if(summary_limit<128){err="Not enough context budget for a continuation summary";return false;}
+  const size_t summary_max=std::min(history_budget-retained-256,budget.input()/2);
+  ApiClient summarizer=api;summarizer.output_reserve=summary_limit;
+  const std::string instructions="Summarize ordered coding-session fragments for continuation. Incorporate the prior summary, preserve constraints, exact decisions, changed files, tool results, tests and unresolved work. The latest user message is retained separately. Be concise; do not invent results.";
+  std::string chunk;bool changed=false;
+  auto flush=[&](){if(chunk.empty())return true;auto response=summarizer.call_text_only(instructions,"Previous summary:\n"+summary+"\n\nNew events:\n"+chunk,err);if(!response||!response->text||trim(*response->text).empty()){if(err.empty())err="Context compaction failed; original context retained";return false;}auto next=trim(*response->text);if(estimate_tokens(next)>summary_max){err="Compaction summary exceeded its budget; original context retained";return false;}summary=std::move(next);chunk.clear();changed=true;return true;};
+  for(size_t index=0;index<session.items.size();++index){if(index==previous||std::find(retained_indices.begin(),retained_indices.end(),index)!=retained_indices.end())continue;
+    std::string event=session.items[index];if(auto item=parse_json(event)){if(auto content=item->get("content");content&&content->kind==Json::Array){for(auto& part:item->fields["content"].items)if(json_string_field(json_dump(part),"type")==std::optional<std::string>("input_image"))part.fields["image_url"]=plugin_string("[earlier image omitted from text summary]");event=json_dump(*item);}}
+    size_t offset=0;while(offset<event.size()){
+      const size_t overhead=estimate_tokens(instructions)+estimate_tokens(summary)+256;
+      if(overhead+256>=budget.input()){err="Prior summary leaves no room for compaction input; original context retained";return false;}
+      const size_t allowance=budget.input()-overhead;const auto room=allowance>estimate_tokens(chunk)?allowance-estimate_tokens(chunk):0;
+      if(room<64){if(!flush())return false;continue;}
+      size_t low=0,high=std::min(event.size()-offset,room*3);while(low<high){auto mid=low+(high-low+1)/2;if(estimate_tokens(event.substr(offset,mid))<=room)low=mid;else high=mid-1;}
+      while(low&&(offset+low<event.size())&&(static_cast<unsigned char>(event[offset+low])&0xc0)==0x80)--low;
+      if(!low){err="Cannot fit a compaction fragment in the configured model context";return false;}
+      chunk.append(event,offset,low);offset+=low;if(offset<event.size()&&!flush())return false;
+    }
+    chunk+='\n';
   }
-  if(chunk.size()+summarized.size()>100000 && !summarize())return false;chunk+=summarized+'\n';
+  if(!flush())return false;if(!changed)return true;
+  std::vector<std::string> replacement={"{\"role\":\"user\",\"content\":\""+json_escape(marker+summary)+"\"}"};for(const auto index:retained_indices)replacement.push_back(session.items[index]);
+  size_t tokens=0;for(const auto& item:replacement)tokens+=estimate_tokens(item);if(tokens>history_budget){err="Compacted context still exceeds model budget; original context retained";return false;}
+  if(!session.replace_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
+  session.append_transcript("\n[context compacted]\n"+summary+"\n");return true;
 }
-if(!summarize())return false;const std::string compacted="{\"role\":\"user\",\"content\":\"[prior conversation summary]\\n"+ json_escape(summary)+"\"}";
-std::vector<std::string> replacement={compacted};replacement.insert(replacement.end(),recent_images.begin(),recent_images.end());
-if(!session.replace_items(replacement)){err="could not save compacted session";return false;} session.append_transcript("\n[context compacted]\n"+summary+"\n");return true; }
 static bool configure_provider(Options& opt,std::string& error){
 if(opt.provider == "codex"){if(opt.model.empty())opt.model = "gpt-5.6-sol";opt.api_style = ApiStyle::Responses; }else if(opt.provider == "openai"){
   if(opt.base_url.empty())opt.base_url = getenv_or("OPENAI_BASE_URL","https://api.openai.com");
@@ -1013,7 +1064,7 @@ int main(int argc,char** argv){
 #if !defined(_WIN32)
 ::signal(SIGPIPE,SIG_IGN);// a terminated MCP stdio peer must return an error
 #endif
-std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
+std::string err;auto parsed = parse_options(argc,argv,err);if(!parsed){std::cerr << err << '\n';return 2;}Options opt = *parsed;session_store_override=opt.session_store;execution.initialize(opt.root);execution.unsafe=opt.unsafe_execution;if(execution.unsafe)std::cerr<<"[UNSAFE] OS process isolation disabled for this run.\n";
 if(!opt.frontend.empty()&&opt.policy.sandbox==SandboxMode::DangerFullAccess&&!opt.unsafe_execution){std::cerr<<"--frontend with danger-full-access requires explicit --unsafe-execution\n";return 2;}
 if(!opt.frontend.empty()&&(opt.json||opt.ui_mode==UiMode::Plain)){std::cerr<<"--frontend requires a real TUI terminal, without --json or --ui plain\n";return 2;}
 if(opt.unsafe_execution){if(!terminal_is_tty()||!approve("UNSAFE: disable OS isolation for this run?"))return 2;}
@@ -1042,7 +1093,7 @@ for(const auto& p:plugins.entries)if(p.enabled)if(auto m=p.manifest.get("mcp")){
   if(!within_root(p.dir,config)||!fs::is_regular_file(config,ec))std::cerr<<"[plugin "<<p.id<<"] invalid MCP config\n";
   else{auto report=load_mcp_tools(config,opt.root,router,mcp_servers,"p_"+p.id+"_",p.dir);if(!report.empty()){mcp_report+="[plugin "+p.id+"] "+report;std::cerr<<"[plugin "<<p.id<<"] "<<report;}}}
 for(const auto& error:plugins.errors)std::cerr<<"[plugin] "<<error<<'\n';
-ApiClient api;api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
+ApiClient api;api.context_window=opt.context_window;api.output_reserve=opt.output_reserve?opt.output_reserve:std::min<size_t>(4096,opt.context_window/8);api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
 api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";api.wait_quota=opt.wait_quota;
 auto design_reviewer=std::make_unique<DesignReviewTool>(api);auto* design_review=design_reviewer.get();router.add_dynamic(std::move(design_reviewer));
 while(!api.base_url.empty()&& api.base_url.back()== '/')api.base_url.pop_back();const bool interactive = opt.interactive || (opt.prompt.empty() && !opt.continue_turn);
@@ -1082,14 +1133,14 @@ auto load_catalog=[&](bool force)->bool{if(catalog_loaded && !force)return !mode
 using QuotaResult=std::pair<std::optional<CodexQuota>,std::string>;std::future<QuotaResult> quota_job;
 std::string quota_brief,quota_report,quota_error,quota_updated;bool quota_status_visible=false,quota_tried=false;std::chrono::steady_clock::time_point quota_at{};
 auto pin_text=[&]()->std::string{std::ostringstream pin;pin<<"session "<<session.id<<"  ·  approval "<<(opt.policy.approval==ApprovalPolicy::Never?"never":"on-request")<<(plan_mode?"  ·  plan mode":"")
-  <<"\ncontext "<<session.context_bytes()/1024<<" KiB / "<<session.items.size()<<" items"<<"  ·  workspace "<<opt.root.string();if(!goal.empty())pin<<"\ngoal "<<goal;
+  <<"\nestimated context "<<session.estimated_tokens<<" tokens / "<<session.items.size()<<" items"<<"  ·  workspace "<<opt.root.string();if(!goal.empty())pin<<"\ngoal "<<goal;
   if(!quota_error.empty())pin<<"\nQuota query failed: "<<quota_error;
   if(!quota_updated.empty())pin<<"\nQuota snapshot updated "<<quota_updated<<(quota_error.empty()?"":" (stale)");
   if(!quota_report.empty()){std::string q=quota_report;while(!q.empty()&&q.back()=='\n')q.pop_back();pin<<"\n"<<q;}return pin.str(); };
 auto accept_quota=[&](QuotaResult result){quota_error=std::move(result.second);if(result.first){quota_brief=result.first->brief;quota_report=result.first->report;quota_updated=now_iso8601();quota_error.clear();}
   if(tui)tui->set_quota_brief(quota_error.empty()?quota_brief:quota_brief.empty()?"unavailable":"stale "+quota_brief);};
 // Detached packaged tasks own their state: quitting never waits for the HTTP request.
-auto refresh_bar=[&](bool allow_quota){if(!tui)return;tui->set_context_usage(session.context_bytes(),350000);
+auto refresh_bar=[&](bool allow_quota){if(!tui)return;tui->set_context_usage(session.estimated_tokens,ContextBudget{api.context_window,api.output_reserve}.input());
   if(quota_job.valid() && quota_job.wait_for(std::chrono::seconds(0))==std::future_status::ready){try{accept_quota(quota_job.get());}catch(...){accept_quota({{},"Background query failed"});}}
   if(allow_quota && api.chatgpt_auth && !quota_job.valid() && (!quota_tried || std::chrono::steady_clock::now()-quota_at>=std::chrono::minutes(2))){
     quota_tried=true;quota_at=std::chrono::steady_clock::now();std::packaged_task<QuotaResult()> job([]{std::string err;auto q=read_codex_quota(err,false);return QuotaResult{std::move(q),std::move(err)};});
@@ -1105,10 +1156,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   else if(tui)busy_input=[&](const char* keys,size_t count){return tui->receive_busy_input(keys,count);};
   const auto pending=session.pending_turn();if(!session.close_unconfirmed_calls()){std::cerr << "cannot save interrupted tool results\n";return 3;}
   if(!pending_mentions.empty()){user_prompt += "\n\nMentioned file context:";for(const auto&[path,content]: pending_mentions) user_prompt += "\n\n--- " + path + " ---\n" + content;
-  pending_mentions.clear(); } if(session.context_bytes()>350000){if(tui)tui->render("compacting context...");if(!compact_session(session,api,err)){
-    if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;
-  }
-  }
+  pending_mentions.clear(); }
   if(tui){tui->add_user(trim(raw_prompt));tui->render("working...");}std::ostringstream start;start << "Workspace root: " << opt.root.string()<< "\n"
   << "Sandbox policy: " << sandbox_name(opt.policy.sandbox)<< "\n" << "User task:\n" << user_prompt << "\n";
   if(!continuing){if(session.transcript.empty())session.append_transcript(start.str());else session.append_transcript("\n[resumed user turn]\n" + user_prompt + "\n");}
@@ -1129,16 +1177,29 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
 #endif
   if(apply_steering()<0)return 3;
-  if(session.context_bytes()>450000 && !compact_session(session,api,err)){if(tui){tui->add_error(err);tui->render();} else std::cerr<<"[error] "<<err<<'\n';return 3;
+  const bool delivery_reminder=design_mode && (!turn_policy.can_write() || (!design_review->pending && (design_review->rounds || design_review->skipped)));
+  const ContextBudget context_budget{api.context_window,api.output_reserve};std::string request_input,request_tools;
+  const auto prepare_request=[&](){std::vector<std::string> input;
+    if(api.style==ApiStyle::Responses){input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);request_tools=router.specs_json();}
+    else{input=chat_history(session,turn_instructions);append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
+    if(opt.no_tools)request_tools="[]";
+    request_input=join_json_array(input);return estimate_tokens(request_input)+estimate_tokens(request_tools)+(api.style==ApiStyle::Responses?estimate_tokens(turn_instructions):0)+256;
+  };
+  if(prepare_request()>context_budget.input()){
+    const size_t overhead=estimate_tokens(turn_instructions)+estimate_tokens(request_tools)+512;
+    if(overhead+1024>=context_budget.input())err="System instructions and tools exceed the configured model context budget";
+    else if(compact_session(session,api,err,context_budget.input()-overhead)&&prepare_request()<=context_budget.input())err.clear();
+    else if(err.empty())err="Current request still exceeds the configured model context budget; input remains saved";
+    if(!err.empty()){session.emit(EventKind::Error,"{\"message\":\""+json_escape(err)+"\"}");if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
   }
   std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
-  const bool delivery_reminder=design_mode && (!turn_policy.can_write() || (!design_review->pending && (design_review->rounds || design_review->skipped)));
+
   auto update_elapsed=[&](){if(frontend&&frontend->active)frontend->pump();if(tui)tui->render("working...");};if(api.style == ApiStyle::Responses){
-    auto input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);const std::string input_json=join_json_array(input);response = api.call_responses(turn_instructions,input_json,router.specs_json(),err, std::nullopt,show_delta,update_elapsed,bool(tui),show_reasoning);
+    response = api.call_responses(turn_instructions,request_input,request_tools,err,std::nullopt,show_delta,update_elapsed,bool(tui),show_reasoning);
   }else{
-    auto messages=chat_history(session,turn_instructions);append_design_delivery_reminder(messages,delivery_reminder,true);response = api.call_chat(join_json_array(messages),router.chat_specs_json(),err,show_delta,update_elapsed,bool(tui),show_reasoning);
+    response = api.call_chat(request_input,request_tools,err,show_delta,update_elapsed,bool(tui),show_reasoning);
   }
 if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reasoning\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
 
@@ -1151,6 +1212,7 @@ if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reason
     }else if(!opt.json)std::cout<<"[interrupted]\n";
     return 0; } session.emit(EventKind::Error,"{\"message\":\"" + json_escape(err)+ "\"}");if(tui){tui->add_error(err);tui->render(); }else{ std::cerr << "[error] " << err << '\n'; } return 3;
   }
+  if(opt.no_tools&&!response->calls.empty()){session.emit(EventKind::Error,R"({"message":"Tool call refused: tools are disabled"})");return 3;}
   session.emit(EventKind::ModelOutput,"{\"step\":" + std::to_string(step)+ ",\"response_id\":\"" + json_escape(response->id)+ "\",\"text\":\""+json_escape(response->text.value_or(""))+"\"}");
   if(!response->calls.empty()){if(!streamed_text.empty()&& !opt.json){if(tui)tui->finish_assistant_stream(streamed_text);else std::cout<<'\n'; }
     if(response->text && !response->text->empty())session.record_item("{\"role\":\"assistant\",\"content\":\""+json_escape(*response->text)+"\"}");
@@ -1329,7 +1391,7 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   << "provider: " << opt.provider << " (" << api_style_name(api.style)<< ")\n" << "model: " << api.model;
   if(!api.reasoning_effort.empty())st << " " << api.reasoning_effort;st << "\nsandbox: " << sandbox_name(opt.policy.sandbox)
   << "\napproval: " <<(opt.policy.approval==ApprovalPolicy::Never?"never":"on-request")<< "\nplan mode: " <<(plan_mode?"on":"off")<< "\ndesign mode: " <<(design_mode?"on":"off")
-  << "\ntranscript: " << session.transcript.size()<< " bytes" << "\ncontext: " << session.context_bytes()<< " bytes / " << session.items.size()<< " items"
+  << "\ntranscript: " << session.transcript.size()<< " bytes" << "\nestimated history tokens: " << session.estimated_tokens << " / model window " << api.context_window << " / output reserve " << api.output_reserve << " / " << session.items.size()<< " items"
   << "\nshell sandbox: " <<(opt.policy.sandbox==SandboxMode::DangerFullAccess ? "disabled by danger-full-access"
     : restricted_shell_command(opt.root,"true",opt.policy.sandbox)? "available" : "unavailable (restricted shell denied)");
   if(!goal.empty())st << "\ngoal: " << goal;if(!personality.empty())st << "\npersonality: " << personality;
@@ -1412,10 +1474,11 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err,&session)){say(local_err,true);continue;}
   session=std::move(resumed);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
-  if(token == "/fork"){const std::string old=session.id;const std::string prior=session.transcript;const auto prior_items=session.items;
+  if(token == "/fork"){const std::string old=session.id;const auto prior_items=session.items;
   Session forked;std::string local_err;if(!init_session(forked,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);continue;}
   if(!forked.replace_items(prior_items)){say("Could not fork session items.",true);continue;}
-  forked.append_transcript(prior +"\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
+  std::error_code copy_error;if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
+  if(copy_error){say("Could not copy full session transcript: "+copy_error.message(),true);continue;}forked.transcript=transcript_tail(forked.transcript_path);forked.append_transcript("\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
   if(tui){tui->set_thread_name("fork");tui->reset_transcript();} say("Forked " + old + " → " + session.id);continue; }
   if(token == "/archive"){std::string local_err;if(!archive_session_files(session,local_err)){say(local_err,true);continue;} say("Archived session " + session.id);break; }
   if(token == "/delete"){bool ok=false;if(tui)ok=tui->choose("Permanently delete this session?",{"Cancel","Delete permanently"},0)==1;

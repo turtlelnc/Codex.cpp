@@ -115,3 +115,32 @@ endif()
 add_custom_command(TARGET plugin-demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/plugin.json $<TARGET_FILE_DIR:plugin-demo>/plugin.json
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/client.js $<TARGET_FILE_DIR:plugin-demo>/client.js)
+
+# Explicit protocol codecs remain optional native modules; the default host is
+# still one executable. Fixture codecs are never part of the shipped profile.
+foreach(codec IN ITEMS team-protocol-compat team-protocol-fixture team-protocol-bad-fixture)
+  add_library(${codec} MODULE EXCLUDE_FROM_ALL examples/team-compat/plugin.cpp)
+  target_compile_features(${codec} PRIVATE cxx_std_17)
+  target_include_directories(${codec} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/plugin")
+  if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_sources(${codec} PRIVATE examples/team-compat/native.def)
+  endif()
+  set_target_properties(${codec} PROPERTIES PREFIX "" OUTPUT_NAME "${codec}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${codec}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${codec}")
+  if(APPLE)
+    set_target_properties(${codec} PROPERTIES SUFFIX ".dylib")
+  endif()
+  if(codec STREQUAL "team-protocol-fixture")
+    target_compile_definitions(${codec} PRIVATE CODEX_PROTOCOL_FIXTURE)
+  elseif(codec STREQUAL "team-protocol-bad-fixture")
+    target_compile_definitions(${codec} PRIVATE CODEX_PROTOCOL_BAD_FIXTURE)
+  endif()
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/examples/team-compat/plugin.json" codec_manifest)
+  string(REPLACE "team-protocol-compat" "${codec}" codec_manifest "${codec_manifest}")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${codec}-manifest.json" CONTENT "${codec_manifest}")
+  add_custom_command(TARGET ${codec} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/${codec}-manifest.json" "$<TARGET_FILE_DIR:${codec}>/plugin.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/team-compat/plugin.cpp" "$<TARGET_FILE_DIR:${codec}>/plugin.cpp")
+endforeach()
