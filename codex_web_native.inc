@@ -1962,10 +1962,10 @@ struct Service {
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
-      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js" || req.path == "/markdown.js" || req.path == "/vendor/marked.umd.js")) {
+      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js" || req.path == "/markdown.js" || req.path == "/vendor/marked.umd.js" || req.path == "/vendor/katex.min.js" || req.path == "/math.js" || req.path == "/vendor/katex.css" || (req.path.rfind("/vendor/fonts/",0)==0 && !codex_resource(req.path.substr(1)).empty()))) {
         auto name = req.path == "/" ? "index.html" : req.path.substr(1);
-        auto mime = req.path == "/"         ? "text/html; charset=utf-8"
-                    : (req.path != "/style.css") ? "text/javascript; charset=utf-8"
+        auto mime = name.rfind("vendor/fonts/",0)==0 ? "font/woff2" : req.path == "/" ? "text/html; charset=utf-8"
+                    : (req.path != "/style.css" && req.path != "/vendor/katex.css") ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
         reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;

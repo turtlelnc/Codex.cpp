@@ -66,8 +66,8 @@ and 64 rendering levels. Highlighting is bounded to 20,000 code characters.
 
 All scripts and MIT notices are embedded in the single executable. There is no
 runtime CDN, Node.js, package installation, or frontend build tool requirement.
-Math/diagram engines and guesses about malformed model text are outside this
-change; incomplete code fences remain readable during streaming.
+Diagram engines and guesses about malformed model text are outside this
+module; incomplete code fences remain readable during streaming.
 
 ## Regression coverage
 
@@ -83,3 +83,35 @@ incomplete fences, large-input fallback and mobile overflow. The existing WebUI
 quality suite verifies live code highlighting/copying after updates as well as
 layout, scroll/selection preservation, file-save races and approvals. All model
 responses in these tests are local fixtures, not paid API calls.
+
+## Offline math formulas
+
+`web/math.js` adds a bounded KaTeX 0.19.1 renderer and Marked lexer extensions
+for `$$...$$`, `\[...\]`, `$...$` and `\(...\)`. Formula content is tokenized
+before Markdown formatting; fences, code spans and escaped currency stay literal.
+Standard KaTeX HTML layout preserves complex constructs such as boxes, matrices,
+underbraces and extensible operators across browsers, with accessible MathML.
+All twenty WOFF2 fonts are embedded in the executable and served as same-origin
+assets. Only exact embedded font names are allowed; the existing CSP is unchanged.
+There are no runtime CDN/font downloads, Node.js or build-tool requirements.
+
+Math nodes are atomic in streaming reconciliation: animation spans never enter
+KaTeX/MathML/SVG internals. Completed unchanged formulas reuse their existing DOM
+while adjacent text streams. Unfinished explicit delimiters preserve their source;
+invalid or unsupported TeX falls back to the original source rather than losing
+an answer. Literal single dollars use conservative inline delimiter rules.
+
+Untrusted commands cannot create links, HTML extensions or remote images
+(`trust: false`). Macro state is isolated per formula, expansion is limited to
+256, dimensions to 12em, and source to 8,192 characters. Rendering limits are
+128 formulas, 3,000 nodes per formula and 10,000 math nodes per message. A bounded
+64-entry/64Ki-character/10,000-node cache avoids repeated layout of unchanged
+expressions. Syntax failures are cached too. Oversized formulas retain source.
+Only KaTeX's supported TeX subset is rendered; arbitrary LaTeX packages, TikZ
+and executable TeX are not supported.
+
+`tests/math_test.cjs` covers a transcription of the reported complex formula,
+all delimiter forms, code/currency, partial formulas, malformed input, expansion
+and size/count limits, unsafe commands, offline assets and narrow-screen overflow.
+The WebUI quality suite checks partial-to-complete math updates, stable nodes,
+changed formula structure and absence of animation wrappers inside math output.

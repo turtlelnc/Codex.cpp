@@ -167,13 +167,13 @@ function snapshot() {
           return reply({ result });
         }
         const name = req.url === "/" ? "index.html" : req.url.slice(1);
-        if (!["index.html", "app.js", "style.css", "plugin.js", "markdown.js", "vendor/marked.umd.js"].includes(name)) {
+        if (!["index.html", "app.js", "style.css", "plugin.js", "markdown.js", "vendor/marked.umd.js", "vendor/katex.min.js", "math.js", "vendor/katex.css", ...fs.readdirSync(path.join(__dirname,"../web/vendor/fonts")).map(file=>"vendor/fonts/"+file)].includes(name)) {
           res.writeHead(404);
           return res.end();
         }
         res.setHeader(
           "Content-Type",
-          name.endsWith(".js")
+          name.endsWith(".woff2") ? "font/woff2" : name.endsWith(".js")
             ? "text/javascript"
             : name.endsWith(".css")
               ? "text/css"
@@ -527,6 +527,19 @@ function snapshot() {
     await page.evaluate(()=>{window.markdownCopied=null;Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.markdownCopied=text}},configurable:true});});
     await page.locator('.message.live .md-code-header button').click();
     assert.equal(await page.evaluate(()=>window.markdownCopied),'int main() {\n  return 0;\n}');
+    // Math stays atomic: no animated spans or attribute patching inside KaTeX.
+    snap.draft += '\n\n$$\\frac{a}{';
+    await page.locator('.message.live .md-math-pending').waitFor();
+    snap.draft += 'b}$$';
+    await page.locator('.message.live .md-math math mfrac').waitFor({state:'attached'});
+    assert.equal(await page.locator('.message.live .md-math .stream-text').count(),0);
+    await page.evaluate(()=>window.stableMath=document.querySelector('.message.live .md-math'));
+    snap.draft += ' trailing math text';
+    await page.waitForFunction(()=>document.querySelector('.message.live').textContent.endsWith(' trailing math text'));
+    assert(await page.evaluate(()=>window.stableMath===document.querySelector('.message.live .md-math')));
+    snap.draft=snap.draft.replace('\\frac{a}{b}','\\sqrt{a}');
+    await page.locator('.message.live .md-math math msqrt').waitFor({state:'attached'});
+    assert.equal(await page.locator('.message.live .md-math math mfrac').count(),0);
     await page.locator("#messages").evaluate((node) => (node.scrollTop = 0));
     snap.draft += " history reader tail";
     await page.waitForFunction(() =>

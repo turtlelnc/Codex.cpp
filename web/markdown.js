@@ -30,7 +30,7 @@
     const root = document.createElement('div');
     root.className = 'md';
     let budget = 10000;
-    const anchors = new Map();
+    const anchors = new Map(), mathState = { formulas: 0, nodes: 0 };
     const spend = () => {
       if (--budget < 0) throw RangeError('Markdown node budget exceeded');
     };
@@ -98,6 +98,9 @@
       depthCheck(depth);
       for (const token of tokens || []) {
         switch (token.type) {
+          case 'codex_math':
+            spend();parent.append(CodexMath.render(token, mathState));
+            break;
           case 'strong':
           case 'em':
           case 'del': {
@@ -212,6 +215,9 @@
       depthCheck(depth);
       for (const token of tokens || []) {
         switch (token.type) {
+          case 'codex_math':
+            spend();parent.append(CodexMath.render(token, mathState));
+            break;
           case 'space':
             break;
           case 'heading': {
@@ -307,7 +313,8 @@
     }
     try {
       if (source.length > 1000000) throw RangeError('Markdown source too large');
-      blocks(marked.lexer(source, { gfm: true, breaks: false, pedantic: false }), root, 0);
+      const lexer = new marked.Marked({ gfm: true, breaks: false, pedantic: false, extensions: window.CodexMath?.extensions || [] });
+      blocks(lexer.lexer(source), root, 0);
     } catch {
       root.replaceChildren();
       const pre = document.createElement('pre');
@@ -321,6 +328,12 @@
   // Keep interactive properties current when the app reuses streaming DOM nodes.
   function updateElement(current, next) {
     if (!current._codexMarkdown || !next._codexMarkdown) return;
+    if (next._mathKey !== undefined) {
+      if(current._mathKey !== next._mathKey || current.className !== next.className) {
+        current.replaceChildren(...next.childNodes);current.className=next.className;current.title=next.title;current._mathKey=next._mathKey;
+      }
+      return true;
+    }
     if ('_codeSource' in next) current._codeSource = next._codeSource;
     if (next.dataset.markdownUi === 'language' && current.textContent !== next.textContent)
       current.textContent = next.textContent;
