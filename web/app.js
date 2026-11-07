@@ -41,11 +41,11 @@ function onClick(id, fn) {
 
 /* ---------- 网络 ---------- */
 
-async function http(path, body) {
+async function http(path, body, wire = 1) {
   const generation = state.generation;
   const options = body === undefined ? {} : {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRF-Token': state.user?.csrf || ''},
+    headers: {'Content-Type': 'application/json', 'X-CSRF-Token': state.user?.csrf || '', 'X-Codex-Protocol': String(wire)},
     body: JSON.stringify(body),
   };
   const controller = new AbortController();
@@ -65,8 +65,20 @@ async function http(path, body) {
   return data;
 }
 
+const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','status']);
+function teamProtocol() {
+  const peer = state.user?.protocol;
+  if (!peer) return { wire: state.user?.mode === 'server' ? 0 : 1, readOnly: state.user?.mode === 'server' };
+  if (peer.application !== 'codex-cpp' || !Array.isArray(peer.protocols) || !peer.protocols.includes(1) ||
+      !Array.isArray(peer.capabilities) || !peer.capabilities.includes('scope-auth.v1') || !peer.capabilities.includes('snapshot.full.v1'))
+    throw Error('服务器协议不兼容，请更新网页或安装适用的服务端兼容插件');
+  return { wire: 1, readOnly: !['approval.bound.v1','request-id.v1','team.write.v1'].every(name => peer.capabilities.includes(name)) };
+}
 async function rpc(op, values = {}) {
-  const generation=state.generation;const result=(await http('/api/rpc', {op, project: state.project, scope: state.scope, ...values})).result;if(generation!==state.generation)throw Error(STALE);return result;
+  const protocol = teamProtocol();
+  if (op === 'snapshot' && !state.user?.protocol?.capabilities?.includes('snapshot.delta.v1')) delete values.since;
+  if (protocol.readOnly && !teamReadOperations.has(op)) throw Error('兼容只读：服务器尚未协商审批、去重和写入语义，操作未发送');
+  const generation=state.generation;const result=(await http('/api/rpc', {op, project: state.project, scope: state.scope, ...values}, protocol.wire)).result;if(generation!==state.generation)throw Error(STALE);return result;
 }
 
 /* ---------- 对话框 ---------- */
@@ -1355,7 +1367,7 @@ async function refresh() {
     }
     if (state.connectionError && $('notice').textContent === state.connectionError) notice('');
     state.connectionError = '';
-    setConnection('已连接', true);
+    setConnection(teamProtocol().readOnly ? '已连接（兼容只读）' : '已连接', true);
   } catch (e) {
     if (generation !== state.generation) return;
     if (deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) $('device-login-status').textContent = '连接中断，正在尝试恢复登录状态…';

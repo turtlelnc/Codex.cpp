@@ -203,6 +203,7 @@ bool identifier(const std::string &s) {
     return std::isalnum(c) || c == '_' || c == '-';
   });
 }
+#include "codex_team_protocol.inc"
 bool model_name(const std::string &s) {
   return s.size() <= 200 && std::all_of(s.begin(), s.end(), [](unsigned char c) {
            return std::isalnum(c) || std::string("._:/-").find(static_cast<char>(c)) != std::string::npos;
@@ -1842,6 +1843,7 @@ struct Service {
         reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;
       }
+      if(req.method=="GET"&&req.path=="/api/protocol"){response(fd,200,team_protocol_description(mode()));return;}
       auto authenticated = authenticate(req);
       if (req.method == "GET" && req.path == "/api/me") {
         bool fresh = false;
@@ -1859,7 +1861,7 @@ struct Service {
                       {"csrf", str(user.csrf)},
                       {"expires", number(user.expires)},
                       {"plugins", plugin_web_catalog()},
-                      {"mode", str(mode())}}),
+                      {"mode", str(mode())},{"protocol",team_protocol_description(mode())}}),
                  fresh ? cookie(authenticated.first) : "");
         return;
       }
@@ -1923,12 +1925,22 @@ struct Service {
         return;
       }
       require(req.path == "/api/rpc", "Unknown route");
-      response(fd, 200, obj({{"result", dispatch(authenticated.second.user, body)}}));
+      const TeamAdapter* codec=nullptr;auto selected=req.headers.find("x-codex-protocol");
+      if(hosted()||selected!=req.headers.end()){
+        int wire=selected==req.headers.end()?0:team_wire_version(selected->second);
+        if(wire!=1){codec=team_adapter(wire,false);if(!codec){response(fd,426,obj({{"error",str("Incompatible team protocol; reconnect with a supported client or explicitly install a trusted compatibility adapter")},{"protocol",team_protocol_description(mode())}}));return;}}
+      }
+      auto canonical=team_decode_request(body,codec);
+      // Decoding cannot create/move operation, actor, scope, approval, dedup or
+      // fingerprint fields. Existing dispatch validates their types and values.
+      auto result=dispatch(authenticated.second.user,canonical);
+      response(fd,200,obj({{"result",team_encode_result(std::move(result),codec)}}));
     } catch (const std::exception &e) {
       response(fd, 400, obj({{"error", str(e.what())}}));
     }
   }
   void listen() {
+    (void)team_protocol_description(mode());
     before_listen();
 #if defined(_WIN32)
     WSADATA data{};

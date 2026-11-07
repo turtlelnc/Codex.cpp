@@ -15,6 +15,7 @@ let browser,
   session = "s1",
   snap = { timeline: [], messages: [], draft: "", busy: false, pending: null };
 const files = { "a.txt": "A", "b.txt": "B" };
+let peerWire = 1;
 let version = 0,
   sends = 0,
   heldSnapshot = null,
@@ -57,7 +58,7 @@ function snapshot() {
           res.end(JSON.stringify(data));
         };
         if (req.url === "/api/me")
-          return reply({ mode, username: "local", csrf: "test" });
+          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1']}}) });
         if (req.url === "/api/rpc") {
           const b = JSON.parse(raw);
           let result = {};
@@ -939,6 +940,15 @@ function snapshot() {
         path: process.env.WEBUI_SCREENSHOTS + "/webui-quality-mobile.png",
         fullPage: true,
       });
+    // Unknown old servers remain readable, but no write is sent without the
+    // negotiated safety contract. Unsupported explicit versions do not downgrade.
+    peerWire=0;mode='server';snap={...snap,busy:false,pending:null};await page.reload();
+    await page.waitForFunction(() => document.getElementById('connection').textContent.includes('兼容只读'));const beforeReadonly=sends;
+    await page.locator('#prompt').fill('must stay local while read-only');
+    await page.locator('#composer').evaluate(n=>n.requestSubmit());
+    await page.getByText(/兼容只读：服务器/).waitFor();assert.equal(sends,beforeReadonly);
+    assert.equal(await page.locator('#prompt').inputValue(),'must stay local while read-only');
+    peerWire=99;await page.reload();await page.getByText(/服务器协议不兼容/).waitFor();assert.equal(sends,beforeReadonly);
     assert.deepEqual(errors, []);
     console.log(
       "PASS WebUI layout breakpoints, save/edit race, out-of-order file reads, stable 600-message DOM/selection/tools/scroll, equal-length streaming updates, connection recovery, duplicate submit/input preservation, stale session responses, reload recovery, approval retry, stop, idempotent send retry project/scope isolation, execution summaries, inline patch/deny, full logs, tool focus scaled viewports, 1200-line diff, 200-call burst, device login and bounded streaming reveal",
