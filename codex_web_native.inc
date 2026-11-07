@@ -1073,6 +1073,14 @@ struct App {
     if(!session_directory.empty())return read_bytes(session_directory/fs::u8path(name));
     return portable_config.root.empty()?workspace.read(".codex_cpp/sessions/"+name,true):read_bytes(journal_directory()/fs::u8path(name));
   }
+  std::map<std::string,bool> legacy_summary_proofs;
+  bool legacy_summary_record(const std::string& id,const std::string& value,uint64_t position){
+    const std::string marker="[prior conversation summary]\n";
+    if(position!=0||value.rfind(marker,0)!=0)return false;
+    const auto key=id+":"+digest(value);auto found=legacy_summary_proofs.find(key);if(found!=legacy_summary_proofs.end())return found->second;
+    bool confirmed=false;try{confirmed=session_read(id+".transcript").find("\n[context compacted]\n"+value.substr(marker.size())+"\n")!=std::string::npos;}catch(...){}
+    legacy_summary_proofs[key]=confirmed;return confirmed;
+  }
   bool journal_truncated=false;std::string journal_error;
   // Stream under the existing workspace path checks. Preview reads seek to a
   // bounded tail; explicit raw tool-log requests scan records without a file cap.
@@ -1137,9 +1145,10 @@ struct App {
         else
           for (auto &p : content.items)
             value += text(p, "text");
-        if (role == "user") value = visible_user_message(value);
+        const bool legacy_summary=role=="user"&&legacy_summary_record(sid,value,position);
+        if (role == "user"&&!legacy_summary) value = visible_user_message(value);
         if (!value.empty())
-          rows.push_back(obj({{"k", str(role)}, {"text", str(value)}}));
+          rows.push_back(obj({{"k", str(legacy_summary?"context":role)}, {"text", str(value)}}));
       } else if (kind == "function_call") {
         calls[text(*item, "call_id")] = row_base+rows.size();
         rows.push_back(obj({{"k", str("tool")},
@@ -1189,7 +1198,7 @@ struct App {
           title = found->second;
         else
           try {
-            session_lines(id+".items.jsonl",[&](const std::string& line,uint64_t){
+            session_lines(id+".items.jsonl",[&](const std::string& line,uint64_t position){
               auto item = parse_json(line);
               if (!item || text(*item, "role") != "user")
                 return true;
@@ -1198,6 +1207,7 @@ struct App {
               if (content.kind == J::Array)
                 for (auto &part : content.items)
                   value += text(part, "text");
+              if(legacy_summary_record(id,value,position))return true;
               value = visible_user_message(value);
               title = value.substr(0, value.find('\n')).substr(0, 72);
               if (!title.empty())

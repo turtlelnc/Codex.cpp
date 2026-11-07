@@ -343,9 +343,20 @@ static const char* event_name(EventKind k){switch(k){case EventKind::SessionStar
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
-return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
+return "unknown"; }
+// Context checkpoints live in the append-only journal but are never API input
+// items or user messages. The original conversation and tool logs stay intact.
+static std::optional<std::vector<std::string>> checkpoint_context(const Json& record){
+  auto type=record.get("type");if(!type||type->str()!="codex_context_checkpoint")return {};
+  auto version=record.get("version"),list=record.get("items");
+  if(!version||version->kind!=Json::Other||version->value!="1"||!list||list->kind!=Json::Array)throw std::runtime_error("Invalid context checkpoint");
+  std::vector<std::string> context;
+  for(const auto& item:list->items){if(item.kind!=Json::Object||(item.get("type")&&item.get("type")->str()=="codex_context_checkpoint"))throw std::runtime_error("Invalid context checkpoint item");context.push_back(json_dump(item));}
+  return context;
+}
+struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
 size_t estimated_tokens=0;
-std::vector<std::string> items;// Responses input items, one JSON object per journal line
+std::vector<std::string> items;// Current model context; restored by replaying journal checkpoints
 size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size();size_t pos=0;
   while((pos=item.find("data:image/",pos))!=std::string::npos){const size_t end=item.find('"',pos);if(end==std::string::npos)break;
     if(end-pos>1000)n-=end-pos-1000;// image bytes are not text tokens
@@ -357,9 +368,21 @@ size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size(
 bool record_item(const std::string& item){try{auto value=parse_json(item);if(!value || value->kind!=Json::Object)return false;
   auto result=plugin_call("journal.append",plugin_object({{"path",plugin_string(items_path.u8string())},{"item",plugin_string(item)}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
+    (void)checkpoint_context(*parsed);
     std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
-  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());estimated_tokens+=estimate_tokens(stored->str());return true;
-  }catch(...){return false;}}
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;apply_journal_item(stored->str(),*parsed);return true;
+  }catch(const std::exception& e){storage_error=e.what();return false;}catch(...){return false;}}
+void apply_journal_item(const std::string& raw,const Json& parsed){
+  auto checkpoint=checkpoint_context(parsed);
+  if(checkpoint){items=std::move(*checkpoint);estimated_tokens=0;for(const auto& item:items)estimated_tokens+=estimate_tokens(item);}
+  else {items.push_back(raw);estimated_tokens+=estimate_tokens(raw);}
+}
+bool checkpoint_items(const std::vector<std::string>& compacted){
+  Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item||item->kind!=Json::Object)return false;list.items.push_back(*item);}
+  const auto record=json_dump(plugin_object({{"type",plugin_string("codex_context_checkpoint")},{"version",Json{Json::Other,"1"}},{"items",list}}));
+  if(record.size()>12'000'000){storage_error="Context checkpoint exceeds the journal record limit; original context retained";return false;}
+  return record_item(record);
+}
 bool replace_items(const std::vector<std::string>& compacted){storage_error.clear();try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
   auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
@@ -421,7 +444,8 @@ if(resume&&(s.id.empty()|| s.id=="." || s.id==".." ||
 if(!lock_session(s,previous,err))return false;
 if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = transcript_tail(s.transcript_path);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
-    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";unlock_session(s,previous);return false;}s.items.push_back(line);s.estimated_tokens+=estimate_tokens(line);
+    auto parsed=line.size()<=12'000'000?parse_json(line):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object){err="invalid session item journal";unlock_session(s,previous);return false;}
+    try{s.apply_journal_item(line,*parsed);}catch(const std::exception& e){err=e.what();unlock_session(s,previous);return false;}
   }
   if(!f.eof()){err="could not read session item journal";unlock_session(s,previous);return false;} }else if(!s.transcript.empty()){
   // Upgrade old flat transcripts once; subsequent turns use typed items.
@@ -993,7 +1017,7 @@ flush_calls();return messages; } static bool compact_session(Session& session,co
   if(!flush())return false;if(!changed)return true;
   std::vector<std::string> replacement={"{\"role\":\"user\",\"content\":\""+json_escape(marker+summary)+"\"}"};for(const auto index:retained_indices)replacement.push_back(session.items[index]);
   size_t tokens=0;for(const auto& item:replacement)tokens+=estimate_tokens(item);if(tokens>history_budget){err="Compacted context still exceeds model budget; original context retained";return false;}
-  if(!session.replace_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
+  if(!session.checkpoint_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
   session.append_transcript("\n[context compacted]\n"+summary+"\n");return true;
 }
 static bool configure_provider(Options& opt,std::string& error){
@@ -1496,8 +1520,11 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
   if(token == "/fork"){const std::string old=session.id;const auto prior_items=session.items;
   Session forked;std::string local_err;if(!init_session(forked,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);continue;}
-  if(!forked.replace_items(prior_items)){say("Could not fork session items.",true);continue;}
-  std::error_code copy_error;if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
+  std::error_code copy_error;
+  if(fs::exists(session.items_path))fs::copy_file(session.items_path,forked.items_path,fs::copy_options::overwrite_existing,copy_error);
+  if(copy_error){say("Could not fork full session journal: "+copy_error.message(),true);continue;}
+  forked.items=prior_items;forked.estimated_tokens=session.estimated_tokens;
+  if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
   if(copy_error){say("Could not copy full session transcript: "+copy_error.message(),true);continue;}forked.transcript=transcript_tail(forked.transcript_path);forked.append_transcript("\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
   if(tui){tui->set_thread_name("fork");tui->reset_transcript();} say("Forked " + old + " → " + session.id);continue; }
   if(token == "/archive"){std::string local_err;if(!archive_session_files(session,local_err)){say(local_err,true);continue;} say("Archived session " + session.id);break; }
