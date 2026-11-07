@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           file build-preview/codex-cpp
-          lipo -verify_arch arm64 build-preview/codex-cpp
+          lipo build-preview/codex-cpp -verify_arch arm64
           codesign --verify --strict build-preview/codex-cpp
           build-preview/codex-cpp --help > /dev/null
           node tests/runtime_dependencies.cjs build-preview/codex-cpp
