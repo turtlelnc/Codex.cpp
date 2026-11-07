@@ -1596,8 +1596,16 @@ struct App {
       if(op!="providers")require(!busy,"Wait for current task to finish before changing providers");
       provider_guard=lock_provider_registry(home);
       if(!busy&&fs::exists(registry_path)){
+        const auto configuration=[&](){for(const auto& entry:registry.fields["providers"].items)if(text(entry,"id")==active)return entry;return obj();};
+        const auto prior=configuration();
         auto saved=read_json(registry_path);require(saved.get("providers")&&saved.get("providers")->kind==J::Array,"Invalid saved providers");registry=std::move(saved);
-        if(op=="providers"&&active!="cli")use_provider(text(registry,"active","codex"),false);
+        if(op=="providers"&&active!="cli"){const auto selected=text(registry,"active","codex");
+          if(selected!=active)use_provider(selected,false);
+          else if(json_dump(prior)!=json_dump(configuration())){
+            const auto model=options.model,effort=options.reasoning_effort,display=display_model;
+            use_provider(selected,false);options.model=model;options.reasoning_effort=effort;display_model=display;
+          }
+        }
       }
     }
     if (op == "providers") {
@@ -1687,7 +1695,8 @@ struct App {
       require(id != "codex" && id != "cli", "Cannot delete a built-in provider");
       provider(id);
       if (active == id)
-        use_provider("codex");
+        use_provider("codex",false);
+      if(text(registry,"active")==id)registry.fields["active"]=str("codex");
       auto &list = registry.fields["providers"].items;
       list.erase(std::remove_if(list.begin(), list.end(), [&](const J &p) { return text(p, "id") == id; }),
                  list.end());

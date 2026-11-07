@@ -38,6 +38,9 @@ static std::string settings_console(TuiRenderer& ui,Options& options,ApiClient& 
   using namespace native_web;
   options.model=api.model;options.reasoning_effort=api.reasoning_effort;
   App application(options.root,binary,own_auth_path().parent_path(),options,true);
+  // Saved credentials need not exist in the environment. A cancelled menu must
+  // retain the live credential just as it retains the selected model.
+  if(!options.no_api_key&&!options.api_key_env.empty())application.secrets[options.api_key_env]=api.api_key;
   LocalModelSettings models(application);
   for(;;){try{
     int section=ui.settings_menu("Settings","Shared with WebUI for this local profile and workspace. No model usage to open settings.",

@@ -22,6 +22,19 @@
   auto providers=app.rpc(obj({{"op",str("providers")}}));
   check(field(providers,"providers",arr()).items.size()==4,"Provider editors reload saved registry instead of losing other interface changes");
   {auto lease=lock_provider_registry(home);bool busy=false;try{app.rpc(obj({{"op",str("provider_use")},{"id",field(provider_one,"id")}}));}catch(...){busy=true;}check(busy,"Provider writes respect cross-interface lease");}
+  app.use_provider(text(provider_one,"id"));
+  app.rpc(obj({{"op",str("model")},{"model",str("selected-model")}}));app.rpc(obj({{"op",str("reasoning")},{"effort",str("high")}}));
+  app.rpc(obj({{"op",str("providers")}}));app.rpc(obj({{"op",str("providers")}}));
+  check(app.options.model=="selected-model"&&app.options.reasoning_effort=="high","Inspecting unchanged providers preserves model and reasoning effort");
+  other.rpc(obj({{"op",str("provider_save")},{"id",field(provider_one,"id")},{"name",str("first")},{"base_url",str("http://127.0.0.1:9")},{"api",str("chat")},{"models",str("fixture")},{"key",str("rotated-fixture-key")}}));
+  app.rpc(obj({{"op",str("providers")}}));
+  check(app.secrets.at("MY_API_KEY")=="rotated-fixture-key"&&app.options.model=="selected-model"&&app.options.reasoning_effort=="high","Provider refresh adopts rotated credentials without resetting model selection");
+  App stale(workspace,{},home,options,true); // Its local selection is CLI, persisted selection belongs to app.
+  stale.rpc(obj({{"op",str("provider_delete")},{"id",field(provider_one,"id")}}));
+  auto disk=read_json(home/"web-providers.json");
+  check(text(disk,"active")=="codex","Deleting another interface's selected provider repairs the persisted selection");
+  App restarted(workspace,{},home,options,false);
+  check(restarted.active=="codex","Restart succeeds after cross-interface provider deletion");
   Session history;history.items={R"({"type":"codex_reasoning","text":"returned reasoning"})",R"({"role":"assistant","content":"answer"})",R"({"role":"user","content":"next"})"};
   auto automatic=chat_history(history,"test"),carried=chat_history(history,"test",true);
   check(!json_string_field(automatic[1],"reasoning_content")&&json_string_field(carried[1],"reasoning_content")==std::optional<std::string>("returned reasoning")&&!json_string_field(carried[2],"reasoning_content"),"Optional reasoning attaches only to its returned assistant reply");

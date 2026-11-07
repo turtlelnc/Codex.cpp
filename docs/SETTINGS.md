@@ -61,3 +61,9 @@ responses are local fixtures. The core self-test covers actor/workspace
 isolation, concurrent writer rejection, cross-interface provider updates,
 optional reasoning association and tool preambles. Existing WebUI, side-chat,
 plugin and team regression suites retain their coverage.
+
+Provider-registry refresh preserves the current model/effort when the provider
+ID is unchanged, while adopting rotated credentials. Cancelling a TUI provider
+menu preserves in-memory credentials even if no matching environment variable
+exists. Deleting a provider also repairs a persisted active ID selected by
+another interface, so restarting cannot reference the deleted entry.

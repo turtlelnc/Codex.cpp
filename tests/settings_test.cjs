@@ -16,6 +16,7 @@ const env = {
   CODEX_CPP_PORTABLE_PROJECT: '',
   NO_PROXY: '127.0.0.1',
   no_proxy: '127.0.0.1',
+  MY_API_KEY: '',
 };
 let service,
   model,
@@ -23,7 +24,8 @@ let service,
   tui,
   logs = '',
   stage = 'startup';
-const requests = [];
+const requests = [],
+  authorizations = [];
 async function wait(fn) {
   for (let i = 0; i < 1000; i++) {
     const value = await fn();
@@ -46,6 +48,7 @@ async function port() {
       for await (const data of req) body += data;
       const request = JSON.parse(body);
       requests.push(request);
+      authorizations.push(req.headers.authorization);
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
@@ -209,7 +212,7 @@ async function port() {
       base_url: 'http://127.0.0.1:' + model.address().port,
       api: 'chat',
       models: 'fixture',
-      key: '',
+      key: 'fixture-key',
     });
     await rpc('provider_use', { id: provider.id });
     async function task(text) {
@@ -223,7 +226,15 @@ async function port() {
       });
     }
     await task('first');
+    await rpc('model', { model: 'selected-fixture' });
+    await rpc('reasoning', { effort: 'high' });
+    await rpc('providers');
+    await rpc('providers');
+    const inspected = await rpc('snapshot');
+    assert.equal(inspected.model, 'selected-fixture');
+    assert.equal(inspected.reasoning, 'high');
     await task('second');
+    assert.equal(requests[1].model, 'selected-fixture');
     assert(
       requests[1].messages.some(
         (m) => m.role === 'assistant' && m.reasoning_content === 'returned reasoning 1',
@@ -235,6 +246,42 @@ async function port() {
       requests[2].messages.filter((m) => m.role === 'assistant').every((m) => !m.reasoning_content),
       'disabled optional reasoning must not reappear',
     );
+    assert(authorizations.every((value) => value === 'Bearer fixture-key'));
+    if (process.argv.includes('--tui')) {
+      const quote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
+      let output = '';
+      tui = spawn(
+        'script',
+        ['-q', '-e', '-c', quote(binary) + ' --root ' + quote(root) + ' --ui tui', '/dev/null'],
+        { detached: true, env: { ...env, TERM: 'xterm-256color', COLUMNS: '120', LINES: '40' } },
+      );
+      tui.stdout.on('data', (b) => (output += b));
+      tui.stderr.on('data', (b) => (output += b));
+      async function send(keys, title) {
+        const mark = output.length;
+        tui.stdin.write(keys);
+        if (title) {
+          stage = title;
+          await wait(() => output.slice(mark).includes(title));
+        }
+      }
+      stage = 'saved provider TUI';
+      await wait(() => output.includes('Codex'));
+      await send('/settings\r', 'Shared with WebUI');
+      await send('3', 'Providers and account');
+      await send('5', 'Shared with WebUI');
+      await send('7');
+      await send('/', '/settings');
+      await send('\x7fcredential_check\r');
+      stage = 'credential preserved after settings cancel';
+      await wait(() => requests.length === 4);
+      assert.equal(authorizations[3], 'Bearer fixture-key');
+      await wait(() => output.includes('fixture reply 4'));
+      await send('/', '/settings');
+      await send('quit\r');
+      await wait(() => tui.exitCode !== null);
+      assert.equal(tui.exitCode, 0);
+    }
     console.log(
       'PASS shared settings persistence/validation, actual request reasoning carry on/off' +
         (browser ? ', real browser categories/theme/focus/mobile/reload/no model calls' : '') +
