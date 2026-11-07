@@ -36,9 +36,10 @@ async function freePort() {
 (async () => {
   try {
     model = http.createServer((req, res) => {
-      let raw = "";
-      req.on("data", (b) => (raw += b));
+      const chunks = [];
+      req.on("data", (b) => chunks.push(b));
       req.on("end", () => {
+        let raw;try{raw = new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks));}catch{res.writeHead(400,{"Content-Type":"application/json"});res.end(JSON.stringify({error:"Fixture rejected invalid UTF-8 request"}));return;}
         const body = JSON.parse(raw),
           items = body.input || [],
           index = items.map((x) => x.role).lastIndexOf("user"),
@@ -194,7 +195,7 @@ async function freePort() {
       key: "",
     });
     await rpc("provider_use", { id: p.id });
-    await rpc("send", { text: "MAIN_HOLD", request_id: "main" });
+    await rpc("send", { text: "MAIN_HOLD" + "中".repeat(1400), request_id: "main" });
     const main = await wait(async () => {
       const s = await rpc("snapshot");
       return s.session_id && s.busy ? s : null;

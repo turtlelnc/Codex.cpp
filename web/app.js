@@ -156,6 +156,8 @@ function applyPreferences(value) {
     side_chat: value.side_chat !== false,
     auto_suggestions: value.auto_suggestions === true,
   });
+  $('preference-side').disabled = false;
+  $('preference-suggestions').disabled = false;
   $('preference-side').checked = preferences.side_chat;
   $('preference-suggestions').checked = preferences.auto_suggestions;
   $('side-chat-toggle').hidden = !preferences.side_chat;

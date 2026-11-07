@@ -76,3 +76,5 @@ model or OAuth usage. Screenshots are retained in `CODEX_ARTIFACT_DIR`.
 `codex-self-test --side-boundary-checks DIR` checks authenticated-actor isolation,
 private journal navigation and per-user settings without platform sandbox
 assumptions. The existing browser and three-platform runtime suites remain enabled.
+
+Assistance state is namespaced by canonical workspace identity (or the explicit portable project ID), then authenticated actor. The earlier unscoped assistance directories are retained on disk but are not automatically migrated: their workspace owner is ambiguous. Re-enable automatic suggestions separately in each project if wanted. Old shared cached recommendations and side histories are not automatically shown in another workspace.
