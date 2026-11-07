@@ -949,7 +949,7 @@ for(size_t item_index=0;item_index<session.items.size();++item_index){const auto
   }else if(type && type->str()=="function_call_output"){
   flush_calls();const auto id=at(&*j,"call_id"),out=at(&*j,"output");if(id&&out)messages.push_back("{\"role\":\"tool\",\"tool_call_id\":\""+ json_escape(id->str())+"\",\"content\":\""+json_escape(out->str())+"\"}");
   }else if(role &&(role->str()=="user" || role->str()=="assistant")){
-  flush_calls();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
+  flush_calls();if(role->str()=="user")pending_reasoning.clear();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
     for(const auto& part:content->items){const auto type=part.get("type"),value=part.get("text"),url=part.get("image_url");
     if(type && type->str()=="input_text" && value)parts.push_back("{\"type\":\"text\",\"text\":\""+json_escape(value->str())+"\"}"); else if(type && type->str()=="input_image" && url)
       parts.push_back("{\"type\":\"image_url\",\"image_url\":{\"url\":\""+json_escape(url->str())+"\"}}");

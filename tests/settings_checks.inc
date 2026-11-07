@@ -28,5 +28,8 @@
   history.items={R"({"type":"codex_reasoning","text":"tool reasoning"})",R"({"role":"assistant","content":"preamble"})",R"({"type":"function_call","name":"read_file","call_id":"r1","arguments":"{}"})",R"({"type":"function_call_output","call_id":"r1","output":"ok"})"};
   automatic=chat_history(history,"test",false);
   check(json_string_field(automatic[2],"reasoning_content")==std::optional<std::string>("tool reasoning"),"Required tool reasoning survives an assistant preamble with optional carry disabled");
+  history.items={R"({"type":"codex_reasoning","text":"abandoned response"})",R"({"role":"user","content":[{"type":"input_text","text":"new image question"},{"type":"input_image","image_url":"data:image/png;base64,eA=="}]})",R"({"role":"assistant","content":"new answer without reasoning"})"};
+  carried=chat_history(history,"test",true);
+  check(!json_string_field(carried.back(),"reasoning_content"),"New image user turn clears reasoning from an interrupted response");
   check(find_slash_command("/settings")!=nullptr,"Settings appears in TUI slash command registry");
 }
