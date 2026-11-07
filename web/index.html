@@ -129,13 +129,34 @@
 
 <dialog id="workspace-settings" aria-labelledby="workspace-settings-title">
   <div class="dialog-heading"><h2 id="workspace-settings-title">设置</h2><button id="workspace-settings-close" aria-label="关闭设置">×</button></div>
-  <div class="settings-links"><button id="provider-button">模型提供商</button><button id="team-button" disabled>团队</button><button id="plugin-button">模组</button></div>
-  <fieldset><legend>模型用量与辅助功能</legend>
-    <label class="preference"><input type="checkbox" id="preference-side">显示独立只读侧聊（手动提问会使用模型额度）</label>
-    <label class="preference"><input type="checkbox" id="preference-suggestions">空闲时自动生成下一步建议（额外模型用量，默认关闭）</label>
-    <p>每个会话最多自动生成一次。关闭后停止正在生成的自动建议，不再发起后台请求；已有缓存保留。</p>
-    <p id="preference-status" role="status"></p>
-  </fieldset>
+  <div class="settings-layout">
+    <nav class="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+      <button id="settings-general" role="tab" data-settings="general" aria-controls="settings-panel-general" aria-selected="true">常规</button>
+      <button id="settings-model" role="tab" data-settings="model" aria-controls="settings-panel-model" aria-selected="false" tabindex="-1">模型与上下文</button>
+      <button id="provider-button" role="tab" data-settings="providers" aria-controls="settings-panel-providers" aria-selected="false" tabindex="-1">模型提供商</button>
+      <button id="team-button" role="tab" data-settings="team" aria-controls="settings-panel-team" aria-selected="false" tabindex="-1" disabled>团队</button>
+      <button id="plugin-button" role="tab" data-settings="plugins" aria-controls="settings-panel-plugins" aria-selected="false" tabindex="-1">插件</button>
+      <button id="settings-about" role="tab" data-settings="about" aria-controls="settings-panel-about" aria-selected="false" tabindex="-1">关于与数据</button>
+    </nav>
+    <div class="settings-content">
+      <section id="settings-panel-general" role="tabpanel" aria-labelledby="settings-general" tabindex="0">
+        <h3>常规</h3><p class="settings-description">对话辅助功能。设置按当前账号和工作区保存，与 TUI 共用。</p>
+        <label class="preference"><span><strong>独立只读侧聊</strong><small>讨论时不打断主任务。手动提问会使用模型额度。</small></span><input type="checkbox" id="preference-side"></label>
+        <label class="preference"><span><strong>自动生成下一步建议</strong><small>在聊天界面空闲时生成；每个会话最多一次，会额外使用模型额度。默认关闭。</small></span><input type="checkbox" id="preference-suggestions"></label>
+        <p class="settings-description">关闭后停止对应的后台辅助任务，已有建议缓存保留。TUI 不会自动生成建议。</p>
+      </section>
+      <section id="settings-panel-model" role="tabpanel" aria-labelledby="settings-model" tabindex="0" hidden>
+        <h3>模型与上下文</h3><p class="settings-description">推理回传与推理强度是不同设置。模型和强度仍可在对话输入框中选择。</p>
+        <label class="preference"><span><strong>请求时携带已有推理</strong><small>将提供商返回的历史推理文本随回复回传给兼容的 Chat API，可能增加输入 token。下次任务生效。</small></span><input type="checkbox" id="preference-reasoning"></label>
+        <p class="settings-description">关闭时仍保留协议要求的工具续接推理。无法获取模型的隐藏思考链；Responses API 的原生推理项目保持原有处理方式。</p>
+      </section>
+      <section id="settings-panel-providers" role="tabpanel" aria-labelledby="provider-button" tabindex="0" hidden><h3>模型提供商</h3><div id="settings-providers"></div><p id="provider-error" role="alert"></p></section>
+      <section id="settings-panel-team" role="tabpanel" aria-labelledby="team-button" tabindex="0" hidden></section>
+      <section id="settings-panel-plugins" role="tabpanel" aria-labelledby="plugin-button" tabindex="0" hidden></section>
+      <section id="settings-panel-about" role="tabpanel" aria-labelledby="settings-about" tabindex="0" hidden><h3>关于与数据</h3><p>Codex.cpp · 以对话为中心的 Coding Agent</p><p class="settings-description">会话、提供商和辅助偏好保存在运行 Agent 的设备上。远程团队数据留在服务器；API 密钥不通过读取接口返回。</p><p class="settings-description">本地 TUI 使用 /settings 打开相同设置，使用 /update 管理更新。安装更新仍需明确确认。</p><p id="settings-location"></p></section>
+    </div>
+  </div>
+  <p id="preference-status" role="status" aria-live="polite"></p>
 </dialog>
 
 <template id="empty-state">

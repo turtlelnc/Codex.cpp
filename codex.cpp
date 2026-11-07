@@ -823,7 +823,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 // ---------- CLI ----------
 struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false;int max_steps = 64;
-ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;
+ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
@@ -855,6 +855,7 @@ Provider/API options:
   --api responses|chat          protocol backend
   --base-url URL                provider root URL
   --model MODEL                 model name
+  --carry-reasoning auto|always  include available Chat reasoning in historical replies
   --reasoning EFFORT            low|medium|high|xhigh (Responses API)
   --api-key-env NAME            read key from this environment variable
   --no-api-key                  for trusted local endpoints such as LM Studio
@@ -931,29 +932,31 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   else if(v == "never")o.policy.approval = ApprovalPolicy::Never;else{err = "invalid --approval: " + v;return std::nullopt;}continue; }
   if(a == "--sandbox" && i + 1 < argc){std::string v = argv[++i];if(v == "read-only")o.policy.sandbox = SandboxMode::ReadOnly; else if(v == "workspace-write")o.policy.sandbox = SandboxMode::WorkspaceWrite;
   else if(v == "danger-full-access")o.policy.sandbox = SandboxMode::DangerFullAccess;else{err = "invalid --sandbox: " + v;return std::nullopt;}continue; }
+  if(a=="--carry-reasoning"){if(i+1>=argc){err="--carry-reasoning requires auto|always";return {};}std::string value=argv[++i];if(value!="auto"&&value!="always"){err="--carry-reasoning requires auto|always";return {};}o.carry_reasoning=value=="always";continue;}
   if(a=="--context-window"||a=="--output-reserve"){try{if(i+1>=argc)throw std::runtime_error("Missing context budget value");const auto n=ContextBudget::number(argv[++i]);if(a=="--context-window"){o.context_window=n;explicit_window=true;}else{o.output_reserve=n;explicit_reserve=true;}}catch(const std::exception& e){err=e.what();return {};}continue;}
   if(a == "--max-steps" && i + 1 < argc){try{o.max_steps = std::stoi(argv[++i]);}catch(...){err = "invalid --max-steps";return std::nullopt;}
   if(o.max_steps < 1 || o.max_steps > 512){err = "--max-steps must be 1..512";return std::nullopt;}continue; } o.prompt.push_back(a);
 }
 try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
-static std::vector<std::string> chat_history(const Session& session,const std::string& instructions){
+static std::vector<std::string> chat_history(const Session& session,const std::string& instructions,bool carry_reasoning=false){
 std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning;
 auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+(pending_reasoning.empty()?"":",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"")+"}"); calls.clear();pending_reasoning.clear(); }
 };
-for(const auto& item:session.items){auto j=parse_json(item);if(!j)continue;const auto type=at(&*j,"type"),role=at(&*j,"role");
+for(size_t item_index=0;item_index<session.items.size();++item_index){const auto& item=session.items[item_index];auto j=parse_json(item);if(!j)continue;const auto type=at(&*j,"type"),role=at(&*j,"role");
   if(type && type->str()=="codex_reasoning"){pending_reasoning=json_string_field(item,"text").value_or("");
   }else if(type && type->str()=="function_call"){const auto name=at(&*j,"name"),id=at(&*j,"call_id"),args=at(&*j,"arguments");
   if(name&&id&&args)calls.push_back("{\"id\":\""+json_escape(id->str())+ "\",\"type\":\"function\",\"function\":{\"name\":\""+json_escape(name->str())+ "\",\"arguments\":\""+json_escape(args->str())+"\"}}");
   }else if(type && type->str()=="function_call_output"){
   flush_calls();const auto id=at(&*j,"call_id"),out=at(&*j,"output");if(id&&out)messages.push_back("{\"role\":\"tool\",\"tool_call_id\":\""+ json_escape(id->str())+"\",\"content\":\""+json_escape(out->str())+"\"}");
   }else if(role &&(role->str()=="user" || role->str()=="assistant")){
-  flush_calls();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
+  flush_calls();if(role->str()=="user")pending_reasoning.clear();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
     for(const auto& part:content->items){const auto type=part.get("type"),value=part.get("text"),url=part.get("image_url");
     if(type && type->str()=="input_text" && value)parts.push_back("{\"type\":\"text\",\"text\":\""+json_escape(value->str())+"\"}"); else if(type && type->str()=="input_image" && url)
       parts.push_back("{\"type\":\"image_url\",\"image_url\":{\"url\":\""+json_escape(url->str())+"\"}}");
     }
     messages.push_back("{\"role\":\"user\",\"content\":"+join_json_array(parts)+"}");
-  }else {messages.push_back(item);pending_reasoning.clear();}
+  }else {const bool tool_preamble=role->str()=="assistant"&&item_index+1<session.items.size()&&json_string_field(session.items[item_index+1],"type")==std::optional<std::string>("function_call");
+    if(role->str()=="assistant"&&carry_reasoning&&!pending_reasoning.empty()&&!tool_preamble){j->fields["reasoning_content"]=Json{Json::String,pending_reasoning};messages.push_back(json_dump(*j));}else messages.push_back(item);if(!tool_preamble)pending_reasoning.clear();}
   }
 }
 flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err,size_t history_budget=0){
@@ -1023,6 +1026,7 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_portable.inc"
 #include "codex_update.inc"
 #include "codex_local_web.inc"
+#include "codex_settings_tui.inc"
 // Session locks use the portable Lease implementation, so they are defined here.
 void Session::release_lock(){lease.reset();}
 static bool lock_session(Session& s,Session* previous,std::string& err){
@@ -1097,6 +1101,11 @@ ApiClient api;api.context_window=opt.context_window;api.output_reserve=opt.outpu
 api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";api.wait_quota=opt.wait_quota;
 auto design_reviewer=std::make_unique<DesignReviewTool>(api);auto* design_review=design_reviewer.get();router.add_dynamic(std::move(design_reviewer));
 while(!api.base_url.empty()&& api.base_url.back()== '/')api.base_url.pop_back();const bool interactive = opt.interactive || (opt.prompt.empty() && !opt.continue_turn);
+if(interactive&&!opt.json){bool explicit_provider=false;for(int i=1;i<argc;++i){std::string arg=argv[i];if(arg=="--")break;if(std::set<std::string>{"--provider","--base-url","--model","--api","--api-key-env","--no-api-key"}.count(arg))explicit_provider=true;}
+  if(!explicit_provider&&getenv_or("CODEX_CPP_BASE_URL").empty()&&getenv_or("CODEX_CPP_MODEL").empty())try{
+    if(fs::exists(own_auth_path().parent_path()/"web-providers.json")){native_web::App saved(opt.root,native_web::executable(argv[0]),own_auth_path().parent_path(),opt,false);apply_settings_provider(saved,opt,api);}
+  }catch(const std::exception& e){std::cerr<<"[settings] "<<e.what()<<'\n';return 2;}
+}
 bool use_tui = false;if(interactive && !opt.json){const bool vt = enable_and_detect_vt();if(opt.ui_mode == UiMode::Tui && !vt){
   std::cerr << "[ui] TUI requested but this terminal has no usable VT support; falling back to plain mode.\n"; } use_tui =(opt.ui_mode == UiMode::Tui && vt)||(opt.ui_mode == UiMode::Auto && vt);
 }
@@ -1181,7 +1190,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   const ContextBudget context_budget{api.context_window,api.output_reserve};std::string request_input,request_tools;
   const auto prepare_request=[&](){std::vector<std::string> input;
     if(api.style==ApiStyle::Responses){input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);request_tools=router.specs_json();}
-    else{input=chat_history(session,turn_instructions);append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
+    else{input=chat_history(session,turn_instructions,(opt.carry_reasoning?*opt.carry_reasoning:native_web::flag(native_web::load_preferences(own_auth_path().parent_path(),opt.root),"carry_reasoning")));append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
     if(opt.no_tools)request_tools="[]";
     request_input=join_json_array(input);return estimate_tokens(request_input)+estimate_tokens(request_tools)+(api.style==ApiStyle::Responses?estimate_tokens(turn_instructions):0)+256;
   };
@@ -1309,7 +1318,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   if(tui_interrupt_requested)return 130;
 #endif
   line = trim(line);if(line.empty())continue;if(input_history.empty()|| input_history.back()!= line)input_history.push_back(line);
-  quota_status_visible=false;if(tui)tui->set_status_details("");const std::string token = slash_command_token(line);const std::string args = command_arguments(line);
+  quota_status_visible=false;if(tui)tui->set_status_details("");std::string token = slash_command_token(line);std::string args = command_arguments(line);
   auto say =[&](const std::string& text,bool is_error=false){if(tui){if(is_error)tui->add_error(text);else tui->add_system(text);tui->render();}
   else{std::cout << text;if(text.empty()|| text.back()!='\n')std::cout << '\n';} }; auto fresh_session =[&]()->bool{Session next;std::string local_err;
   if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
@@ -1318,7 +1327,17 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
     if(!init_session(refreshed,opt.root,opt.json,session.id,why,&session)){say("Cannot resume terminal session: "+why,true);continue;}
     session=std::move(refreshed);project_memory=load_project_memory(opt.root);local_web.paused=false;
     say("Web service ended; terminal session reloaded.");
-  } if(local_web.running()&&token!="/web"&&token!="/quit"&&token!="/help"&&token!="/status"&&token!="/update"){say("WebUI is active; use it, or /web stop to resume terminal tasks.");continue;}
+  } if(local_web.running()&&token!="/settings"&&token!="/web"&&token!="/quit"&&token!="/help"&&token!="/status"&&token!="/update"){say("WebUI is active; use it, or /web stop to resume terminal tasks.");continue;}
+if(token=="/settings"){
+    if(!tui){say("Settings require TUI mode (--ui tui), or open WebUI. No model request was made.");continue;}
+    if(!team_console)team_console=std::make_unique<TeamConsole>(argv[0]);
+    try{line=settings_console(*tui,opt,api,*team_console,native_web::executable(argv[0]));}
+    catch(const std::exception& e){say(std::string("Settings: ")+e.what(),true);continue;}
+    model_catalog.clear();catalog_loaded=false;model_err.clear();
+    quota_job=std::future<QuotaResult>{};quota_brief.clear();quota_report.clear();quota_error.clear();quota_updated.clear();quota_tried=false;quota_status_visible=false;
+    tui->set_quota_brief("");tui->set_status_details("");if(tui->pinned_status())tui->set_pinned_status(pin_text());
+    token=slash_command_token(line);args=command_arguments(line);if(line.empty())continue;
+  }
 if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const auto& command : slash_commands()){
     const std::string name = command.name;if(name == "/sessions" || name == "/history" || name == "/quit")continue;
     h << name << "  " << command.description;h << '\n';

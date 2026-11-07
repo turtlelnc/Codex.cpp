@@ -963,7 +963,7 @@ function snapshot() {
     assert(await page.locator('#preference-side').isDisabled());assert(await page.locator('#preference-suggestions').isDisabled());
     await page.locator('#team-button').click();await page.locator('#team-dialog').getByRole('button',{name:'创建项目',exact:true}).click();
     await page.locator('#dialog [name=name]').fill('p1');await page.locator('#dialog-submit').click();
-    await page.locator('#team-body .team-row').filter({hasText:'local'}).waitFor();await page.locator('#team-close').click();
+    await page.locator('#team-body .team-row').filter({hasText:'local'}).waitFor();await page.locator('#workspace-settings-close').click();
     await page.locator('#settings-button').click();assert(!(await page.locator('#preference-side').isDisabled()));assert(!(await page.locator('#preference-suggestions').isDisabled()));
     await page.locator('#preference-suggestions').check();await wait(()=>preferenceSaves===1);await page.locator('#preference-side').uncheck();await wait(()=>preferenceSaves===2);
     assert(assistancePreferences.auto_suggestions&&!assistancePreferences.side_chat);await page.locator('#workspace-settings-close').click();assistance=false;
