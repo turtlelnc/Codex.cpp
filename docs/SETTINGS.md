@@ -33,18 +33,25 @@ not copied between unrelated devices or accounts automatically.
 
 ## Returned reasoning
 
-**请求时携带已有推理** is off by default. For Chat Completions, enabling it
-includes provider-returned `reasoning_content` on historical assistant replies.
+**请求时携带已有推理** controls optional reasoning replay and is off by default.
+For Chat requests without tools, enabling it includes provider-returned
+`reasoning_content` on historical assistant replies.
 It can increase input tokens, latency and cost; token budgeting includes the
 serialized reasoning. No hidden chain of thought is obtained or fabricated.
 Providers must support the field to use this option.
 
-Disabling it still preserves reasoning required for tool-call continuation,
-including when the tool response has a visible assistant preamble. Responses
+Tool-enabled requests automatically preserve all available returned reasoning,
+including earlier completed replies without tool calls. Current DeepSeek thinking
+mode requires this when tools are supplied. Disabling the optional setting does
+not drop protocol-required history. Tool preamble text, reasoning and calls are
+round-tripped as one assistant message. Responses
 API native reasoning items retain their existing protocol behavior; this option
 does not inject Chat fields into Responses requests. Explicit
 `--carry-reasoning auto|always` overrides the saved preference for a CLI run.
-`auto` means only required tool continuation, not requesting extra reasoning.
+`auto` preserves required tool-mode history; `always` also resends available
+reasoning when tools are disabled. No-tools Chat requests omit `tools` and
+`tool_choice` completely. Neither option requests or invents hidden reasoning.
+Reference: https://api-docs.deepseek.com/guides/thinking_mode
 
 The other shared preferences control WebUI read-only side discussions and
 one-time idle suggestions. TUI can configure both, but does not run an idle

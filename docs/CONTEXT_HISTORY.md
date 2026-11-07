@@ -49,3 +49,28 @@ Regression coverage:
   synthetic user summaries, browser reload, service restart and task continuation.
 - `context_budget_test.cjs`: model budgets, incremental summaries, failed-summary
   retention, recent images, and full-journal fork/resume after compaction.
+
+## Failures after successful tool execution
+
+A completed tool followed by Agent exit 3 does not identify a tool, credential
+or sandbox failure. The native service now retains the last structured Agent
+`error` event when the process fails, reports it with the exit code, and persists
+it across page/service restarts. Successful recovery/new tasks clear the error.
+If no structured error is emitted, the UI explicitly says the cause was not
+reported instead of guessing that credentials or sandbox availability are wrong.
+
+Raw provider bodies and unstructured stderr are not disclosed. API errors may
+include only fixed categories recognized from structured provider errors, such
+as missing `reasoning_content`, context overflow, invalid credentials, quota, or
+mismatched tool-call results. These hints do not echo arbitrary provider messages
+that could contain secrets. A bare old `HTTP 400` log cannot establish the
+original rejection reason after its response body has been discarded.
+
+Chat tool continuations round-trip content, returned reasoning and tool calls
+as a single assistant message. Tool-enabled requests preserve returned reasoning
+on earlier non-tool replies too, matching current DeepSeek thinking-mode
+requirements. Optional no-tools reasoning replay remains configurable; no-tools
+requests omit tool parameters. `reasoning_continuation_test.cjs` validates these
+requests against a strict local provider fixture. `agent_failure_test.cjs`
+checks a successful read followed by a model HTTP error, safe diagnostics,
+persisted failures, invalid responses and successful recovery.

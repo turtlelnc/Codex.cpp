@@ -963,24 +963,25 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
 }
 try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::vector<std::string> chat_history(const Session& session,const std::string& instructions,bool carry_reasoning=false){
-std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning;
-auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+(pending_reasoning.empty()?"":",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"")+"}"); calls.clear();pending_reasoning.clear(); }
+std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning,pending_content="null";bool pending_reasoning_present=false;
+const bool uses_reasoning_extension=std::any_of(session.items.begin(),session.items.end(),[](const std::string& raw){return json_string_field(raw,"type")==std::optional<std::string>("codex_reasoning")&&json_string_field(raw,"format")!=std::optional<std::string>("responses");});
+auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":"+pending_content+",\"tool_calls\":"+join_json_array(calls)+((pending_reasoning_present||(carry_reasoning&&uses_reasoning_extension))?",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"":"")+"}"); calls.clear();pending_reasoning.clear();pending_reasoning_present=false;pending_content="null"; }
 };
 for(size_t item_index=0;item_index<session.items.size();++item_index){const auto& item=session.items[item_index];auto j=parse_json(item);if(!j)continue;const auto type=at(&*j,"type"),role=at(&*j,"role");
-  if(type && type->str()=="codex_reasoning"){pending_reasoning=json_string_field(item,"text").value_or("");
+  if(type && type->str()=="codex_reasoning"){pending_reasoning_present=json_string_field(item,"format")!=std::optional<std::string>("responses");pending_reasoning=pending_reasoning_present?json_string_field(item,"text").value_or(""):"";
   }else if(type && type->str()=="function_call"){const auto name=at(&*j,"name"),id=at(&*j,"call_id"),args=at(&*j,"arguments");
   if(name&&id&&args)calls.push_back("{\"id\":\""+json_escape(id->str())+ "\",\"type\":\"function\",\"function\":{\"name\":\""+json_escape(name->str())+ "\",\"arguments\":\""+json_escape(args->str())+"\"}}");
   }else if(type && type->str()=="function_call_output"){
   flush_calls();const auto id=at(&*j,"call_id"),out=at(&*j,"output");if(id&&out)messages.push_back("{\"role\":\"tool\",\"tool_call_id\":\""+ json_escape(id->str())+"\",\"content\":\""+json_escape(out->str())+"\"}");
   }else if(role &&(role->str()=="user" || role->str()=="assistant")){
-  flush_calls();if(role->str()=="user")pending_reasoning.clear();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
+  flush_calls();if(role->str()=="user"){pending_reasoning.clear();pending_reasoning_present=false;pending_content="null";}auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
     for(const auto& part:content->items){const auto type=part.get("type"),value=part.get("text"),url=part.get("image_url");
     if(type && type->str()=="input_text" && value)parts.push_back("{\"type\":\"text\",\"text\":\""+json_escape(value->str())+"\"}"); else if(type && type->str()=="input_image" && url)
       parts.push_back("{\"type\":\"image_url\",\"image_url\":{\"url\":\""+json_escape(url->str())+"\"}}");
     }
     messages.push_back("{\"role\":\"user\",\"content\":"+join_json_array(parts)+"}");
   }else {const bool tool_preamble=role->str()=="assistant"&&item_index+1<session.items.size()&&json_string_field(session.items[item_index+1],"type")==std::optional<std::string>("function_call");
-    if(role->str()=="assistant"&&carry_reasoning&&!pending_reasoning.empty()&&!tool_preamble){j->fields["reasoning_content"]=Json{Json::String,pending_reasoning};messages.push_back(json_dump(*j));}else messages.push_back(item);if(!tool_preamble)pending_reasoning.clear();}
+    if(tool_preamble){pending_content=content?json_dump(*content):"null";}else if(role->str()=="assistant"&&carry_reasoning&&(pending_reasoning_present||uses_reasoning_extension)){j->fields["reasoning_content"]=Json{Json::String,pending_reasoning};messages.push_back(json_dump(*j));}else messages.push_back(item);if(!tool_preamble){pending_reasoning.clear();pending_reasoning_present=false;pending_content="null";}}
   }
 }
 flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err,size_t history_budget=0){
@@ -1214,7 +1215,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   const ContextBudget context_budget{api.context_window,api.output_reserve};std::string request_input,request_tools;
   const auto prepare_request=[&](){std::vector<std::string> input;
     if(api.style==ApiStyle::Responses){input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);request_tools=router.specs_json();}
-    else{input=chat_history(session,turn_instructions,(opt.carry_reasoning?*opt.carry_reasoning:native_web::flag(native_web::load_preferences(own_auth_path().parent_path(),opt.root),"carry_reasoning")));append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
+    else{request_tools=opt.no_tools?"[]":router.chat_specs_json();input=chat_history(session,turn_instructions,(request_tools!="[]"||(opt.carry_reasoning?*opt.carry_reasoning:native_web::flag(native_web::load_preferences(own_auth_path().parent_path(),opt.root),"carry_reasoning"))));append_design_delivery_reminder(input,delivery_reminder,true);}
     if(opt.no_tools)request_tools="[]";
     request_input=join_json_array(input);return estimate_tokens(request_input)+estimate_tokens(request_tools)+(api.style==ApiStyle::Responses?estimate_tokens(turn_instructions):0)+256;
   };
@@ -1226,7 +1227,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
     if(!err.empty()){session.emit(EventKind::Error,"{\"message\":\""+json_escape(err)+"\"}");if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
   }
   api.on_activity=[&session](const std::string& payload){session.emit(EventKind::ModelActivity,payload);};
-  std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
+  std::optional<ApiResponse> response;std::string streamed_reasoning;bool reasoning_received=false;auto show_reasoning=[&](const std::string& delta){reasoning_received=true;if(delta.empty())return;streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
 
@@ -1235,7 +1236,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   }else{
     response = api.call_chat(request_input,request_tools,err,show_delta,update_elapsed,bool(tui),show_reasoning);
   }
-if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reasoning\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
+if(reasoning_received && !session.record_item("{\"type\":\"codex_reasoning\",\"format\":\""+std::string(api.style==ApiStyle::ChatCompletions?"chat":"responses")+"\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
 
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}

@@ -243,8 +243,8 @@ async function port() {
     await rpc('preferences_save', { carry_reasoning: false });
     await task('third');
     assert(
-      requests[2].messages.filter((m) => m.role === 'assistant').every((m) => !m.reasoning_content),
-      'disabled optional reasoning must not reappear',
+      requests[2].messages.filter((m) => m.role === 'assistant').every((m) => m.reasoning_content),
+      'tool-enabled requests must preserve required returned reasoning even in automatic mode',
     );
     assert(authorizations.every((value) => value === 'Bearer fixture-key'));
     if (process.argv.includes('--tui')) {

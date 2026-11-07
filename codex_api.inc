@@ -86,6 +86,19 @@ struct ResponsesStreamProgress{
       if(auto delta=event.get("delta");delta&&!delta->str().empty()){signal("reasoning");if(on_reasoning)on_reasoning(delta->str());}
   }
 };
+// Only fixed categories from structured provider errors are exposed. Never echo
+// arbitrary response bodies/messages, which can include credentials or prompts.
+static std::string model_failure_hint(const std::string& body){
+  auto parsed=parse_json(body);if(!parsed)return {};auto error=parsed->get("error");if(!error||error->kind!=Json::Object)return {};
+  auto field=[&](const char* key){auto value=error->get(key);auto text=value?value->str():"";std::transform(text.begin(),text.end(),text.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});return text;};
+  const auto code=field("code"),message=field("message");
+  if(message.find("reasoning_content")!=std::string::npos&&message.find("missing")!=std::string::npos)return ": provider reports missing reasoning_content in conversation history";
+  if(code=="context_length_exceeded"||(message.find("maximum context")!=std::string::npos))return ": provider reports context length exceeded";
+  if(code=="invalid_api_key")return ": provider reports invalid API credentials";
+  if(code=="insufficient_quota"||code=="credit_balance_exhausted")return ": provider reports insufficient quota";
+  if(message.find("tool_call_id")!=std::string::npos&&(message.find("missing")!=std::string::npos||message.find("not found")!=std::string::npos))return ": provider reports mismatched tool call/result history";
+  return {};
+}
 struct ApiClient{size_t context_window=32768,output_reserve=4096;std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
 ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
 std::function<void(const std::string&)> on_activity;
@@ -196,7 +209,7 @@ std::optional<std::string> post(const std::string& path,const std::string& body,
   if(!no_api_key){if(api_key.empty()){err="API key is not set";return{};}headers.push_back("Authorization: Bearer "+api_key);}
   bool body_started=false;
   auto reply=model_http(base_url+path,body,headers,[&](const char* bytes,size_t size){if(!body_started){for(size_t i=0;i<size;++i)if(!std::isspace(static_cast<unsigned char>(bytes[i]))){body_started=true;break;}if(!body_started)activity("heartbeat");}},tick,watch||bool(busy_input),[&](){body_started=false;});
-  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
+  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")"+model_failure_hint(reply.body):reply.error;return{};}
   return reply.body;
 }
 std::optional<ApiResponse> builtin_call_text_only(const std::string& instructions,const std::string& text,std::string& err)const{
@@ -221,12 +234,14 @@ std::optional<ApiResponse> builtin_call_chat(const std::string& messages_json,co
  const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& on_tick={},bool watch_escape=false,const std::function<void(const std::string&)>& on_reasoning={})const{
   if(chatgpt_auth){err="ChatGPT login requires the Responses backend";return{};}
   if(!no_api_key && api_key.empty()){err="API key is not set";return{};}
-  std::string body="{\"model\":\""+json_escape(model)+"\",\"messages\":"+messages_json+",\"tools\":"+tools_json+",\"tool_choice\":\"auto\",\"stream\":true}";
+  std::string body="{\"model\":\""+json_escape(model)+"\",\"messages\":"+messages_json;
+  if(tools_json!="[]")body+=",\"tools\":"+tools_json+",\"tool_choice\":\"auto\"";
+  body+=",\"stream\":true}";
   std::vector<std::string> headers={"Content-Type: application/json","Accept: text/event-stream"};if(!no_api_key)headers.push_back("Authorization: Bearer "+api_key);
   ChatStreamDecoder decoder;
   auto reset=[&](){decoder=ChatStreamDecoder{};decoder.on_delta=[&](const std::string& text){activity("text");if(on_delta)on_delta(text);};decoder.on_reasoning=[&](const std::string& text){if(!text.empty())activity("reasoning");if(on_reasoning)on_reasoning(text);};decoder.on_activity=[&](const std::string& phase,const std::string& name,const std::string& id){activity(phase,name,id);};};
   auto reply=model_http(base_url+"/chat/completions",body,headers,[&](const char* data,size_t size){decoder.feed(data,size);},on_tick,watch_escape,reset);
-  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
+  if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")"+model_failure_hint(reply.body):reply.error;return{};}
   // Some compatible servers ignore stream=true and return a complete JSON response.
   if(auto doc=parse_json(reply.body)){if(on_reasoning){auto choices=doc->get("choices");if(choices && !choices->items.empty())if(auto reasoning=at(choices->items[0].get("message"),"reasoning_content");reasoning && reasoning->kind==Json::String)on_reasoning(reasoning->value);}
     auto response=parse_api_response(reply.body,true,err);if(response && response->text && on_delta)on_delta(*response->text);return response;}

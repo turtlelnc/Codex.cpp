@@ -4,7 +4,7 @@ static const std::vector<PreferenceDefinition>& preference_definitions(){
   static const std::vector<PreferenceDefinition> definitions={
     {"side_chat","Read-only side discussion","Manual questions use model quota; never writes project files.",true},
     {"auto_suggestions","Automatic next-step suggestions","Additional model usage. At most once per main session; off by default.",false},
-    {"carry_reasoning","Carry available reasoning in requests","Chat API only: include returned reasoning on historical replies. Required tool continuation reasoning is always retained. May increase input tokens.",false}
+    {"carry_reasoning","Carry available reasoning in requests","Chat API: also return available reasoning in requests without tools. Tool-enabled requests always preserve returned reasoning required by the protocol. May increase input tokens.",false}
   };return definitions;
 }
 static fs::path assistance_directory(const fs::path& home,const fs::path& root){
