@@ -1,0 +1,51 @@
+name: macOS test binaries (artifacts only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apple-silicon:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      SOURCE_COMMIT: ec97336cd4906f610642e3db03c50a37a393cbcc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compile standalone Apple Silicon executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sh scripts/build-macos-openssl.sh arm64 "$PWD/openssl-preview"
+          PKG_CONFIG_PATH="$PWD/openssl-preview/lib/pkgconfig" PKG_CONFIG_LIBDIR="$PWD/openssl-preview/lib/pkgconfig" cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DOPENSSL_ROOT_DIR="$PWD/openssl-preview" -DOPENSSL_INCLUDE_DIR="$PWD/openssl-preview/include" -DOPENSSL_SSL_LIBRARY="$PWD/openssl-preview/lib/libssl.a" -DOPENSSL_CRYPTO_LIBRARY="$PWD/openssl-preview/lib/libcrypto.a"
+          cmake --build build-preview --target codex-cpp --parallel 3
+          strip build-preview/codex-cpp
+          codesign --force --sign - build-preview/codex-cpp
+      - name: Verify embedded runtime and package executable permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          file build-preview/codex-cpp
+          lipo build-preview/codex-cpp -verify_arch arm64
+          codesign --verify --strict build-preview/codex-cpp
+          build-preview/codex-cpp --help > /dev/null
+          node tests/runtime_dependencies.cjs build-preview/codex-cpp
+          CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs build-preview/codex-cpp
+          mkdir -p dist
+          cp build-preview/codex-cpp dist/codex-cpp-macos-arm64
+          node scripts/package-posix-release.cjs dist macos-arm64
+          printf 'Codex.cpp Apple Silicon acceptance build\nSource: %s\nmacOS 12 or newer. Extract the inner ZIP to preserve executable permissions.\nRun: ./codex-cpp-macos-arm64 web --root /path/to/project\nAd-hoc signed; not Apple-notarized.\n' "$SOURCE_COMMIT" > dist/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-cpp-macos-arm64
+          path: |
+            dist/*.zip
+            dist/DOWNLOADS_SHA256SUMS.txt
+            dist/BUILD.txt
+          if-no-files-found: error
+          retention-days: 14
