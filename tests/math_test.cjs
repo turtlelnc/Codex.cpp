@@ -97,6 +97,10 @@ let server, browser, service, nativeRoot;
     const bad = String.raw`$$\unknownmacro{bad}$$`;
     await render(bad);
     assert.equal(await page.locator('.md-math-fallback').textContent(), bad);
+    for(const original of [String.raw`\[\unknownmacro{bad}\]`,String.raw`   $$\unknownmacro{bad}$$`,String.raw`$\unknownmacro{bad}$`,String.raw`\(\unknownmacro{bad}\)`]){
+      await render(original);
+      assert.equal(await page.locator('.md-math-fallback').textContent(),original,'cached failures preserve each message source');
+    }
     await render(String.raw`$$\def\loop{\loop}\loop$$`);
     assert.equal(await page.locator('.md-math-fallback').count(), 1);
     await render(

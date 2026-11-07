@@ -105,7 +105,9 @@
     if (++state.formulas > MAX_FORMULAS || token.text.length > MAX_SOURCE)
       return fallback('公式超过渲染上限，已保留源码');
     if (!window.katex) return fallback('当前浏览器无法显示数学公式，已保留源码');
-    const key = (token.display ? 'block:' : 'inline:') + token.text;
+    // Failed renders include the literal delimiters/indentation in their DOM.
+    // Cache by complete source so another message cannot inherit that fallback.
+    const key = (token.display ? 'block:' : 'inline:') + token.raw;
     if (cache.has(key)) {
       const saved = cache.get(key);
       if (state.nodes + saved.nodes > 10000) return fallback('公式节点超过上限，已保留源码');
