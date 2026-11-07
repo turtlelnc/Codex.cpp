@@ -13,6 +13,8 @@ extern "C" {
 /* Strings are UTF-8, lengths exclude NUL. Callbacks and buffers are borrowed only
    for the duration of a call. Never throw exceptions across this C boundary. */
 typedef void (*PluginEmitV1)(void*, const char* channel, const char* bytes, size_t length);
+/* Streaming channels: text, reasoning, activity (JSON progress metadata).
+   result and error complete the call; unknown channels are rejected. */
 typedef int (*PluginNextV1)(void*, const char* json, size_t length, PluginEmitV1, void*);
 typedef struct PluginCallV1 {
   uint32_t version, size;

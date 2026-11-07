@@ -35,6 +35,17 @@ for(char byte:chat_events)chat_stream.feed(&byte,1);
 auto chat_result=chat_stream.finish(parse_err);
 check(chat_result && live_reasoning=="private reasoning" && live_chat=="你好" && chat_result->calls.size()==1 && chat_result->calls[0].arguments==R"({"path":"a.txt"})","Chat SSE byte chunks, UTF-8, reasoning isolation and tool assembly");
 std::vector<std::string> phases;ResponsesStreamProgress progress;
+{
+  std::vector<std::string> events;
+  plugin::Emit emit=[&](const std::string& kind,const std::string& value){events.push_back(kind+":"+value);};
+  plugin::Next next=[](const std::string&,const plugin::Emit& emit){emit("activity",R"({"phase":"waiting"})");emit("text","hello");return std::string("done");};
+  PluginNativeCall bridge{emit,next,{},{},{},0,false};
+  const int code=PluginNativeCall::forward(&bridge,"{}",2,PluginNativeCall::send,&bridge);
+  check(code==0&&!bridge.exception&&bridge.has_result&&bridge.result=="done"&&events==std::vector<std::string>{"activity:{\"phase\":\"waiting\"}","text:hello"},"Native model middleware forwards activity and final result");
+  PluginNativeCall invalid{emit,next,{},{},{},0,false};
+  PluginNativeCall::send(&invalid,"unknown-channel","{}",2);
+  check(bool(invalid.exception),"Native bridge still rejects unknown event channels");
+}
 progress.on_activity=[&](const std::string& phase,const std::string& name,const std::string&){phases.push_back(phase+":"+name);};
 progress.event(*parse_json(R"({"type":"response.in_progress"})"));check(phases.back()=="waiting:","Responses in_progress does not claim hidden reasoning");
 progress.event(*parse_json(R"({"type":"response.output_item.added","item":{"id":"item-1","type":"function_call","call_id":"call-1","name":"write_file"}})"));

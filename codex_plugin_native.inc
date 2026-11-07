@@ -34,7 +34,7 @@ struct PluginNativeCall{
       std::string kind(channel),value(bytes?bytes:"",length);
       if(kind=="result"){if(call.has_result)throw std::runtime_error("Plugin returned multiple results");call.result=std::move(value);call.has_result=true;}
       else if(kind=="error")call.error=std::move(value);
-      else if(kind=="text"||kind=="reasoning"){if(call.emit)call.emit(kind,value);}
+      else if(kind=="text"||kind=="reasoning"||kind=="activity"){if(call.emit)call.emit(kind,value);}
       else throw std::runtime_error("Unknown Plugin event channel");
     }catch(...){call.exception=std::current_exception();}
   }
