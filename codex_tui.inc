@@ -37,7 +37,7 @@ winsize ws{};if(ioctl(STDOUT_FILENO,TIOCGWINSZ,&ws)== 0 && ws.ws_row > 10)return
 }
 #endif
 return 32; } struct SlashCommandDef{const char* name;const char* description; }; static const std::vector<SlashCommandDef>& slash_commands(){static const std::vector<SlashCommandDef> kCommands =[]{std::vector<SlashCommandDef> result={
-  {"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
+  {"/settings","open shared settings, providers, team and plugins"},{"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
   {"/web","open or manage the loopback WebUI"},{"/update","check/download updates in background; install only after confirmation"},{"/auth","show ChatGPT login status"},{"/team","configure team service, accounts and connection"},
   {"/permissions","choose what Codex is allowed to do"},
   {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},{"/plugin","inspect active native module services"},

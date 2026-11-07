@@ -445,12 +445,33 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .side-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
 #dialog-body textarea { min-height:160px; resize:vertical; }
 
-.settings-links { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 24px; }
-#workspace-settings fieldset { border:0; padding:0; margin:0; }
-#workspace-settings legend { font-weight:600; margin-bottom:12px; }
-#workspace-settings fieldset p { font-size:12px; }
-.preference { display:flex; align-items:start; gap:8px; margin:12px 0; line-height:1.5; }
-.preference input { width:auto; margin-top:4px; }
+#workspace-settings { width:min(900px,calc(100vw - 32px)); padding:24px; overflow:hidden; }
+#workspace-settings > .dialog-heading { margin-bottom:22px; }
+.settings-layout { display:grid; grid-template-columns:180px minmax(0,1fr); gap:28px; height:min(510px,calc(100dvh - 190px)); min-height:230px; }
+.settings-nav { display:flex; flex-direction:column; gap:5px; overflow:auto; }
+.settings-nav button { text-align:left; border:0; padding:11px 13px; background:transparent; border-radius:9px; flex-shrink:0; }
+.settings-nav button[aria-selected="true"] { background:var(--hover); font-weight:600; color:var(--ink); }
+.settings-content { min-width:0; overflow:auto; padding-right:5px; overscroll-behavior:contain; }
+.settings-content h3 { font-size:18px; margin:0 0 12px; }
+.settings-description { color:var(--muted); font-size:13px; line-height:1.65; }
+#workspace-settings .preference { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:18px 0; margin:0; border-bottom:1px solid var(--line); }
+.preference span { min-width:0; }
+.preference strong { color:var(--ink); display:block; font-weight:500; font-size:14px; }
+.preference small { display:block; color:var(--muted); font-size:12px; line-height:1.6; margin-top:5px; }
+#workspace-settings .preference input { width:18px; height:18px; margin:0; flex-shrink:0; accent-color:var(--accent); }
+#preference-status { min-height:20px; margin:12px 0 0; color:var(--muted); font-size:12px; }
+#workspace-settings #team-dialog, #workspace-settings #plugin-dialog { position:static; width:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; box-shadow:none; background:transparent; overflow:visible; }
+#workspace-settings #team-close, #workspace-settings #plugin-close { font-size:13px; }
+#workspace-settings .prov { flex-wrap:wrap; }
+#workspace-settings .prov-info { overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  #workspace-settings { padding:18px; width:calc(100vw - 20px); }
+  .settings-layout { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:18px; height:calc(100dvh - 180px); }
+  .settings-nav { flex-direction:row; padding-bottom:4px; }
+  .settings-nav button { padding:10px; font-size:12px; white-space:nowrap; }
+  #workspace-settings .preference { gap:10px; }
+}
+
 .next-steps { max-width:var(--col); margin:20px auto; border-top:1px solid var(--line); padding-top:18px; }
 .next-steps h3 { font-size:14px; }
 .next-steps p { font-size:13px; margin-bottom:8px; }

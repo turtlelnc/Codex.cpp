@@ -141,7 +141,7 @@ onClick('dialog-close', () => $('dialog').close());
 onClick('dialog-cancel', () => $('dialog').close());
 
 /* ---------- 设置与缓存的模型建议 ---------- */
-const preferences = { loaded: false, side_chat: true, auto_suggestions: false };
+const preferences = { loaded: false, side_chat: true, auto_suggestions: false, carry_reasoning: false };
 const suggestions = {
   cache: null,
   node: el('section', undefined, 'next-steps'),
@@ -155,7 +155,11 @@ function applyPreferences(value) {
     loaded: true,
     side_chat: value.side_chat !== false,
     auto_suggestions: value.auto_suggestions === true,
+    carry_reasoning: value.carry_reasoning === true,
   });
+  $('preference-reasoning').disabled = !state.user?.protocol?.capabilities?.includes('settings.reasoning.v1');
+  $('preference-reasoning').checked = preferences.carry_reasoning;
+  $('preference-reasoning').title = $('preference-reasoning').disabled?'当前服务器尚未支持推理回传设置':'';
   $('preference-side').disabled = false;
   $('preference-suggestions').disabled = false;
   $('preference-side').checked = preferences.side_chat;
@@ -169,6 +173,7 @@ async function loadPreferences() {
     (state.user?.mode === 'server' && !state.project) ||
     !state.user?.protocol?.capabilities?.includes('suggestions.v1')
   ) {
+    $('preference-reasoning').disabled = true;
     $('preference-side').disabled = true;
     $('preference-suggestions').disabled = true;
     return;
@@ -180,12 +185,13 @@ async function loadPreferences() {
 for (const [id, name] of [
   ['preference-side', 'side_chat'],
   ['preference-suggestions', 'auto_suggestions'],
+  ['preference-reasoning', 'carry_reasoning'],
 ])
   $(id).onchange = async () => {
     const input = $(id),
       value = input.checked,
       generation = state.generation;
-    input.disabled = true;
+    for(const id of ['preference-side','preference-suggestions','preference-reasoning'])$(id).disabled=true;
     try {
       const next = await rpc('preferences_save', { [name]: value });
       if (generation !== state.generation) return;
@@ -193,10 +199,11 @@ for (const [id, name] of [
       $('preference-status').textContent = '已保存';
       suggestions.lastActivity = Date.now();
     } catch (e) {
+      if(generation!==state.generation)return;
       input.checked = !value;
       $('preference-status').textContent = e.message;
     } finally {
-      input.disabled = false;
+      if(generation===state.generation)applyPreferences(preferences);
     }
   };
 function suggestionButton(action) {
@@ -2200,12 +2207,14 @@ function providerForm(p) {
 }
 
 async function fillProviders() {
+  const generation=state.generation,ticket=settingsTicket,inside=$('workspace-settings').open&&settingsTab==='providers';
   const data = await rpc('providers');
+  if(generation!==state.generation||(inside&&(ticket!==settingsTicket||!$('workspace-settings').open)))return;
   const editable=state.user.mode!=='server'||state.scope==='personal'||state.projectInfo?.owner===state.user.username;
   const list = el('div', undefined, 'prov-list');
   const act = (label, fn, cls) => {
     const b = el('button', label, cls); b.type = 'button';
-    b.onclick = async () => { try { await fn(); if (fn !== startDeviceLogin) await fillProviders(); await refresh(); } catch (e) { $('dialog-error').textContent = e.message; } };
+    b.onclick = async () => { b.disabled=true;try { await fn(); if (fn !== startDeviceLogin&&settingsTab==='providers'&&$('workspace-settings').open) await fillProviders(); await refresh(); } catch (e) { $(settingsTab==='providers'?'provider-error':'dialog-error').textContent = e.message; }finally{if(b.isConnected)b.disabled=false;} };
     return b;
   };
   for (const p of data.providers) {
@@ -2233,15 +2242,80 @@ async function fillProviders() {
   add.onclick = () => { $('dialog').close(); providerForm(null); };
   if(editable) list.append(add);
   list.append(el('p', '只内置 Codex；其他兼容服务可手动添加。密钥只写入当前会话所属的私有凭据目录，不提供读取接口。', 'prov-note'));
-  showDialog('模型提供商', list);
+  if($('workspace-settings').open&&settingsTab==='providers')$('settings-providers').replaceChildren(list);
+  else showDialog('模型提供商', list);
 }
 
-async function openProviders() { await fillProviders(); }
-function openSettings() { return openProviders(); }
+async function openProviders() { return showSettings('providers'); }
+function openSettings() { return showSettings('providers'); }
 
-onClick('settings-button', async()=>{await loadPreferences();$('workspace-settings').showModal();});
-onClick('provider-button',()=>{$('workspace-settings').close();return openProviders();});
-onClick('workspace-settings-close',()=>$('workspace-settings').close());
+const settingsNarrow = matchMedia('(max-width:600px)');
+function settingsOrientation() {
+  document
+    .querySelector('.settings-nav')
+    ?.setAttribute('aria-orientation', settingsNarrow.matches ? 'horizontal' : 'vertical');
+}
+let settingsTab = 'general',
+  settingsTicket = 0;
+settingsNarrow.addEventListener('change', settingsOrientation);
+settingsOrientation();
+function selectSettings(tab, focus = false) {
+  settingsTab = tab;
+  settingsTicket++;
+  if (tab !== 'team') closeTeam();
+  if (tab !== 'plugins' && $('plugin-dialog').open) $('plugin-dialog').close();
+  for (const button of document.querySelectorAll('[data-settings]')) {
+    const active = button.dataset.settings === tab;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    $(button.getAttribute('aria-controls')).hidden = !active;
+    if (active && focus) button.focus();
+  }
+  $('preference-status').textContent = '';
+}
+async function showSettings(tab = 'general', focus = false) {
+  if (!$('workspace-settings').open) $('workspace-settings').showModal();
+  selectSettings(tab, focus);
+  const ticket = settingsTicket;
+  try {
+    await loadPreferences();
+    if (ticket !== settingsTicket || !$('workspace-settings').open) return;
+    if (tab === 'providers') await fillProviders();
+    if (tab === 'team') await openTeam();
+    if (tab === 'plugins') await openPluginSettings(ticket);
+    if (focus && ticket === settingsTicket && $('workspace-settings').open)
+      document.querySelector('[data-settings="' + tab + '"]').focus();
+    if (tab === 'about')
+      $('settings-location').textContent =
+        state.user?.mode === 'server' ? '当前为远程团队模式' : '当前为本机模式';
+  } catch (e) {
+    if (ticket === settingsTicket) $('preference-status').textContent = e.message;
+  }
+}
+onClick('settings-button', () => showSettings());
+for (const button of document.querySelectorAll('[data-settings]')) {
+  button.onclick = () => showSettings(button.dataset.settings);
+  button.onkeydown = (event) => {
+    const buttons = [...document.querySelectorAll('[data-settings]')].filter((b) => !b.disabled);
+    let index = buttons.indexOf(button);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight')
+      index = (index + 1) % buttons.length;
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft')
+      index = (index + buttons.length - 1) % buttons.length;
+    else if (event.key === 'Home') index = 0;
+    else if (event.key === 'End') index = buttons.length - 1;
+    else return;
+    event.preventDefault();
+    showSettings(buttons[index].dataset.settings, true);
+  };
+}
+onClick('workspace-settings-close', () => $('workspace-settings').close());
+$('workspace-settings').addEventListener('close', () => {
+  settingsTicket++;
+  closeTeam();
+  if ($('plugin-dialog').open) $('plugin-dialog').close();
+  $('settings-button').focus();
+});
 
 async function openSessions() {
   const snap = await rpc('snapshot');
@@ -2345,16 +2419,14 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-onClick('plugin-button', async () => {
-  $('workspace-settings').close();
-  const rows = await http('/api/plugins');
-  const body = $('plugin-services'); body.replaceChildren();
-  for (const service of [...rows, ...CodexPlugin.inspect()]) {
-    const row = el('p'); row.append(el('code', service.service), document.createTextNode(' → ' + service.owner)); body.append(row);
-  }
-  $('plugin-dialog').showModal();
-});
-onClick('plugin-close', () => $('plugin-dialog').close());
+async function openPluginSettings(ticket){
+  const rows=await http('/api/plugins');if(ticket!==settingsTicket||settingsTab!=='plugins')return;
+  const body=$('plugin-services');body.replaceChildren();
+  for(const service of [...rows,...CodexPlugin.inspect()]){const row=el('p');row.append(el('code',service.service),document.createTextNode(' → '+service.owner));body.append(row);}
+  $('settings-panel-plugins').append($('plugin-dialog'));
+  if(!$('plugin-dialog').open)$('plugin-dialog').show();
+}
+onClick('plugin-close',()=>showSettings());
 onClick('retry-connection',async()=>{if(state.user)await refresh();else await initialize();});
 onClick('jump-bottom',()=>{$('messages').scrollTop=$('messages').scrollHeight;$('jump-bottom').hidden=true;});
 $('messages').addEventListener('scroll',()=>{const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<120)$('jump-bottom').hidden=true;},{passive:true});
@@ -2493,9 +2565,9 @@ onClick('team-token-show',()=>{const input=$('team-token');const show=input.type
 onClick('team-token-copy',async()=>{try{await navigator.clipboard.writeText($('team-token').value);$('team-token-feedback').textContent='已复制';}catch{$('team-token').type='text';$('team-token').select();$('team-token-feedback').textContent='请手动复制选中的令牌';}});
 onClick('team-token-close',()=>{$('team-token-dialog').close();});
 $('team-token-dialog').addEventListener('close',()=>{$('team-token').value='';$('team-token').type='password';openTeam('accounts').catch(e=>notice(e.message));});
-onClick('team-close',closeTeam);
+onClick('team-close',()=>showSettings());
 $('team-dialog').addEventListener('close',()=>{teamTicket++;clearTimeout(teamTimer);teamTimer=null;});
-onClick('team-button',()=>{$('workspace-settings').close();return openTeam();});
+
 async function openTeam(selected,keyboard=false){
  const ticket=++teamTicket;clearTimeout(teamTimer);$('team-error').textContent='';
  const local=state.user?.mode==='local';const tabs=local?[['service','本机服务'],['accounts','账号'],['remote','连接远程']]:[['members','成员'],['models','共同模型'],['branches','分支'],['activity','活动']];
@@ -2503,7 +2575,10 @@ async function openTeam(selected,keyboard=false){
  $('team-title').textContent='团队设置';$('team-subtitle').textContent=local?'在本机管理团队服务，或连接已有服务器':state.project?'项目：'+state.project:'先创建项目，或请创建者邀请你';
  $('team-tabs').replaceChildren();for(const [id,label] of tabs){const button=el('button',label);button.type='button';button.id='team-tab-'+id;button.setAttribute('role','tab');button.setAttribute('aria-selected',String(id===selected));button.setAttribute('aria-controls','team-body');button.tabIndex=id===selected?0:-1;button.onclick=()=>openTeam(id,true).catch(e=>notice(e.message));button.onkeydown=event=>{const i=tabs.findIndex(t=>t[0]===id);let next;if(event.key==='ArrowRight')next=(i+1)%tabs.length;else if(event.key==='ArrowLeft')next=(i+tabs.length-1)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;else return;event.preventDefault();openTeam(tabs[next][0],true).catch(e=>notice(e.message));};$('team-tabs').append(button);}
  $('team-body').setAttribute('aria-labelledby','team-tab-'+selected);$('team-body').replaceChildren(el('p','正在加载…'));
- if(!$('team-dialog').open)$('team-dialog').showModal();if(keyboard)$('team-tab-'+selected).focus();
+ if(!$('workspace-settings').open)$('workspace-settings').showModal();
+ if(settingsTab!=='team')selectSettings('team');
+ $('settings-panel-team').append($('team-dialog'));
+ if(!$('team-dialog').open)$('team-dialog').show();if(keyboard)$('team-tab-'+selected).focus();
  try {if(local){const data=await rpc('team_get');if(ticket!==teamTicket)return;renderLocalTeam(selected,data,ticket);}else {if(!state.project){$('team-body').replaceChildren(teamNote('创建项目后即可管理成员、共同模型和分支。'),teamAction('创建项目',openTeamProjectCreate,true));return;}const info=await rpc('project_status');if(ticket!==teamTicket)return;state.projectInfo=info;await renderHostedTeam(selected,info,ticket);}}catch(e){if(ticket===teamTicket){$('team-body').replaceChildren();$('team-error').textContent=e.message;}}
 }
 function renderLocalTeam(tab,data,ticket){

@@ -5,6 +5,7 @@
 
 static bool self_test(const fs::path& root){int failed = 0;std::error_code root_ec;fs::create_directories(root,root_ec);
 auto check =[&](bool ok,const char* what){std::cout <<(ok ? "PASS " : "FAIL ")<< what << '\n';if(!ok)++failed; };
+#include "settings_checks.inc"
 check(native_web::visible_user_message("# Available skills\nexample\n\n<environment_context>\nmetadata\n</environment_context>\n\n你好")=="你好","WebUI hides injected context");
 check(native_web::visible_user_message("<environment_context>\nmetadata\n</environment_context>\n\n<current_goal>goal</current_goal>\n\nhello")=="hello","WebUI hides injected goal");
 check(native_web::visible_user_message("Workspace root: /tmp\nSandbox policy: read-only\nUser task:\nhello")=="hello","WebUI legacy user text");

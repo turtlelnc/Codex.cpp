@@ -1,8 +1,9 @@
 struct RemoteTeamConsole {
+  virtual ~RemoteTeamConsole()=default;
   using J=native_web::J;
   TeamConnection connection;
   std::string project;
-  J rpc(const std::string& op,J values=native_web::obj(),bool personal=false){
+  virtual J rpc(const std::string& op,J values=native_web::obj(),bool personal=false){
     values.fields["project"]=native_web::str(project);
     values.fields["scope"]=native_web::str(personal?"personal":"shared");
     return connection.rpc(op,values);
@@ -29,7 +30,7 @@ struct RemoteTeamConsole {
     for(;;){int selected=ui.settings_menu(title+" ("+std::to_string(page+1)+"/"+std::to_string(pages.size())+")",pages[page],{"Next page","Previous page","Back"});
       if(selected<0||selected==2)return;if(selected==0&&page+1<pages.size())++page;if(selected==1&&page)--page;}
   }
-  J enqueue(TuiRenderer& ui,const std::string& op,J values=native_web::obj(),bool personal=false){
+  virtual J enqueue(TuiRenderer& ui,const std::string& op,J values=native_web::obj(),bool personal=false){
     values.fields["request_id"]=native_web::str(native_web::entropy());auto result=rpc(op,values,personal);
     view(ui,"Task queued",pretty(result)+"\nCheck Activity for completion or errors. Conflicts do not overwrite the target branch.");return result;
   }
@@ -67,7 +68,7 @@ struct RemoteTeamConsole {
     auto catalog=rpc("providers",obj(),personal);auto providers=field(catalog,"providers",arr()).items;
     std::vector<std::string> names;for(const auto& p:providers)names.push_back(text(p,"name")+(text(p,"id")==text(catalog,"active")?" (active)":""));
     if(editable)names.push_back("Add provider");names.push_back("Back");
-    int selected=ui.settings_menu(personal?"Personal models":"Shared models",editable?"Credentials stay on the server; secret inputs are masked.":"Only the project creator can configure shared credentials. You can use them.",names);
+    int selected=ui.settings_menu(!connection.connected()?"Providers and account":personal?"Personal models":"Shared models",editable?"Credentials stay with the Agent; secret inputs are masked.":"Only the project creator can configure shared credentials. You can use them.",names);
     if(selected<0||selected==static_cast<int>(names.size()-1))return;
     if(static_cast<size_t>(selected)==providers.size()){save_provider(ui,obj(),personal);return;}
     const auto provider=providers[static_cast<size_t>(selected)];const auto id=text(provider,"id");
@@ -116,12 +117,20 @@ struct RemoteTeamConsole {
       if(confirm(ui,"Recover interrupted queue?","First inspect the files and ensure old processes have exited. Affected Agent conversations restart."))
         rpc("recover",obj({{"fingerprint",field(preview,"fingerprint")},{"confirmed",boolean(true)}}));}
   }
+  void preferences(TuiRenderer& ui,bool personal){using namespace native_web;
+    for(;;){auto values=rpc("preferences",obj(),personal);std::vector<std::string> names;std::vector<const PreferenceDefinition*> supported;
+      for(const auto& entry:preference_definitions())if(values.get(entry.key)){supported.push_back(&entry);names.push_back(std::string(flag(values,entry.key)?"[on] ":"[off] ")+entry.label);}names.push_back("Back");
+      int choice=ui.settings_menu("Server settings",personal?"Personal project/account scope":"Shared project/account scope",names);
+      if(choice<0||choice==static_cast<int>(names.size()-1))return;const auto& entry=*supported[static_cast<size_t>(choice)];
+      if(confirm(ui,entry.label,entry.help))rpc("preferences_save",obj({{entry.key,boolean(!flag(values,entry.key))}}),personal);
+    }
+  }
   void project_menu(TuiRenderer& ui){using namespace native_web;
     for(;;){try{auto info=rpc("project_status");bool owner=text(info,"owner")==connection.username;
       int action=ui.settings_menu("Project: "+project,"Server workspace | Signed in: "+connection.username+"\nCreator: "+text(info,"owner")+(flag(info,"blocked")?"\nQueue requires recovery":""),
-        {"Members","Shared models","Personal models","Branches","Activity","Back","Agent tasks on server"});
+        {"Members","Shared models","Personal models","Branches","Activity","Back","Agent tasks on server","Shared workspace settings","Personal workspace settings"});
       if(action<0||action==5)return;
-      if(action==0)members(ui,rpc("project_status"));else if(action==1||action==2)models(ui,action==2,owner);else if(action==3)branches(ui);else if(action==4)activity(ui,rpc("project_status"),owner);else agent(ui);
+      if(action==0)members(ui,rpc("project_status"));else if(action==1||action==2)models(ui,action==2,owner);else if(action==3)branches(ui);else if(action==4)activity(ui,rpc("project_status"),owner);else if(action==6)agent(ui);else preferences(ui,action==8);
     }catch(const std::exception& e){view(ui,"Team request failed",e.what());return;}}
   }
   void agent(TuiRenderer& ui){using namespace native_web;

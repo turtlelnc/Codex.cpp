@@ -326,7 +326,7 @@ struct HostedService : Service {
               std::lock_guard<std::recursive_mutex> lock(mutex);
               require(!stopping, "Service is stopping");
               body.fields["request_id"] = str(text(task, "id"));
-              result = application->rpc(body);
+              result = application->rpc(body,true,user);
             }
             while (true) {
               {

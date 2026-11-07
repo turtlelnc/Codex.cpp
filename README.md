@@ -349,3 +349,5 @@ WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量
 WebUI 的独立只读侧聊、设置入口和默认关闭的自动下一步建议，见 [WebUI 辅助功能](docs/WEBUI_ASSISTANCE.md)。
 
 WebUI 的模型运行状态、重试规则和独立 Markdown 渲染模块，见 [WebUI 流式状态与渲染](docs/WEBUI_RENDERING.md)。
+
+WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和团队配置；远程设置按服务器账号和工作区隔离。支持选择是否回传提供商实际返回的历史推理文本，默认仅保留工具续接所需内容。详见 [设置与同步](docs/SETTINGS.md)。
