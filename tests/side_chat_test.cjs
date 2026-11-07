@@ -245,8 +245,19 @@ async function freePort() {
       assert((await rpc("snapshot")).busy);
       await page.getByRole("button", { name: "转交主 Agent", exact: true }).click();
       await page.locator("#dialog-body textarea").fill("FORWARDED user reviewed conclusion");
+      let stopRequests = 0;
+      await page.route('**/api/rpc',route=>{
+        const body=route.request().postDataJSON();
+        if(body?.op==='stop'&&++stopRequests===1)return route.abort('failed');
+        return route.continue();
+      });
+      await page.locator('#dialog-submit').click();
+      await page.waitForFunction(()=>document.getElementById('dialog-error').textContent.length>0&&!document.getElementById('dialog-submit').disabled);
+      assert((await rpc('snapshot')).busy,'Rejected stop must leave main running');
+      assert.equal(await page.locator('#dialog-body textarea').inputValue(),'FORWARDED user reviewed conclusion');
       await page.locator("#dialog-submit").click();
       await wait(async () => !(await rpc("snapshot")).busy);
+      assert.equal(stopRequests,2,"Retry must resend a failed stop request");
       await wait(async () => JSON.stringify(await rpc("snapshot")).includes("FORWARDED_FINISHED"));
       await page.setViewportSize({ width: 390, height: 844 });
       await page.keyboard.press("Escape");

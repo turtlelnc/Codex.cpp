@@ -468,8 +468,8 @@ function forwardSide(text) {
       if (generation !== state.generation || key !== sideKey())
         throw Error('会话已切换，请重新转交');
       if (!interrupted) {
-        interrupted = true;
         await rpc('stop', { expected_session: session });
+        interrupted = true;
       }
       for (let i = 0; i < 100; i++) {
         const snap = await rpc('snapshot');
