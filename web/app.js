@@ -1102,7 +1102,9 @@ function buildChat(snap, wasBusy = false) {
   };
   for (const [index, row] of rows.entries()) {
     const key = snap.session_id + ':' + row.k + ':' + (row.id || row.row_key || index);
-    if (row.k === 'reasoning') {
+    if(row.k==='context'){
+      flushGroup();nodes.push(cached(key,row.text,()=>{const box=el('details',undefined,'context-summary');box.append(el('summary','旧格式上下文摘要（内部记录）'),markdown(row.text));return box;}));
+    } else if (row.k === 'reasoning') {
       flushGroup();
       const live = messageCache.get('reasoning-draft');
       if (!messageCache.has(key) && live && live.node.querySelector('.reasoning-body').textContent === row.text) {

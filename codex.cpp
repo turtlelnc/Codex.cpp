@@ -343,9 +343,20 @@ static const char* event_name(EventKind k){switch(k){case EventKind::SessionStar
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
-return "unknown"; } struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
+return "unknown"; }
+// Context checkpoints live in the append-only journal but are never API input
+// items or user messages. The original conversation and tool logs stay intact.
+static std::optional<std::vector<std::string>> checkpoint_context(const Json& record){
+  auto type=record.get("type");if(!type||type->str()!="codex_context_checkpoint")return {};
+  auto version=record.get("version"),list=record.get("items");
+  if(!version||version->kind!=Json::Other||version->value!="1"||!list||list->kind!=Json::Array)throw std::runtime_error("Invalid context checkpoint");
+  std::vector<std::string> context;
+  for(const auto& item:list->items){if(item.kind!=Json::Object||(item.get("type")&&item.get("type")->str()=="codex_context_checkpoint"))throw std::runtime_error("Invalid context checkpoint item");context.push_back(json_dump(item));}
+  return context;
+}
+struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
 size_t estimated_tokens=0;
-std::vector<std::string> items;// Responses input items, one JSON object per journal line
+std::vector<std::string> items;// Current model context; restored by replaying journal checkpoints
 size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size();size_t pos=0;
   while((pos=item.find("data:image/",pos))!=std::string::npos){const size_t end=item.find('"',pos);if(end==std::string::npos)break;
     if(end-pos>1000)n-=end-pos-1000;// image bytes are not text tokens
@@ -357,9 +368,21 @@ size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size(
 bool record_item(const std::string& item){try{auto value=parse_json(item);if(!value || value->kind!=Json::Object)return false;
   auto result=plugin_call("journal.append",plugin_object({{"path",plugin_string(items_path.u8string())},{"item",plugin_string(item)}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
+    (void)checkpoint_context(*parsed);
     std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
-  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;items.push_back(stored->str());estimated_tokens+=estimate_tokens(stored->str());return true;
-  }catch(...){return false;}}
+  });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;apply_journal_item(stored->str(),*parsed);return true;
+  }catch(const std::exception& e){storage_error=e.what();return false;}catch(...){return false;}}
+void apply_journal_item(const std::string& raw,const Json& parsed){
+  auto checkpoint=checkpoint_context(parsed);
+  if(checkpoint){items=std::move(*checkpoint);estimated_tokens=0;for(const auto& item:items)estimated_tokens+=estimate_tokens(item);}
+  else {items.push_back(raw);estimated_tokens+=estimate_tokens(raw);}
+}
+bool checkpoint_items(const std::vector<std::string>& compacted){
+  Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item||item->kind!=Json::Object)return false;list.items.push_back(*item);}
+  const auto record=json_dump(plugin_object({{"type",plugin_string("codex_context_checkpoint")},{"version",Json{Json::Other,"1"}},{"items",list}}));
+  if(record.size()>12'000'000){storage_error="Context checkpoint exceeds the journal record limit; original context retained";return false;}
+  return record_item(record);
+}
 bool replace_items(const std::vector<std::string>& compacted){storage_error.clear();try{Json list;list.kind=Json::Array;for(const auto& raw:compacted){auto item=parse_json(raw);if(!item || item->kind!=Json::Object)return false;list.items.push_back(plugin_string(raw));}
   auto result=plugin_call("journal.replace",plugin_object({{"path",plugin_string(items_path.u8string())},{"items",list}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto values=request.get("items");if(!values || values->kind!=Json::Array)throw std::runtime_error("Invalid journal items");
@@ -421,7 +444,8 @@ if(resume&&(s.id.empty()|| s.id=="." || s.id==".." ||
 if(!lock_session(s,previous,err))return false;
 if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = transcript_tail(s.transcript_path);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
-    if(line.size()>12'000'000 || !parse_json(line)){err="invalid session item journal";unlock_session(s,previous);return false;}s.items.push_back(line);s.estimated_tokens+=estimate_tokens(line);
+    auto parsed=line.size()<=12'000'000?parse_json(line):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object){err="invalid session item journal";unlock_session(s,previous);return false;}
+    try{s.apply_journal_item(line,*parsed);}catch(const std::exception& e){err=e.what();unlock_session(s,previous);return false;}
   }
   if(!f.eof()){err="could not read session item journal";unlock_session(s,previous);return false;} }else if(!s.transcript.empty()){
   // Upgrade old flat transcripts once; subsequent turns use typed items.
@@ -939,24 +963,25 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
 }
 try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::vector<std::string> chat_history(const Session& session,const std::string& instructions,bool carry_reasoning=false){
-std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning;
-auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":null,\"tool_calls\":"+join_json_array(calls)+(pending_reasoning.empty()?"":",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"")+"}"); calls.clear();pending_reasoning.clear(); }
+std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning,pending_content="null";bool pending_reasoning_present=false;
+const bool uses_reasoning_extension=std::any_of(session.items.begin(),session.items.end(),[](const std::string& raw){return json_string_field(raw,"type")==std::optional<std::string>("codex_reasoning")&&json_string_field(raw,"format")!=std::optional<std::string>("responses");});
+auto flush_calls=[&](){if(!calls.empty()){messages.push_back("{\"role\":\"assistant\",\"content\":"+pending_content+",\"tool_calls\":"+join_json_array(calls)+((pending_reasoning_present||(carry_reasoning&&uses_reasoning_extension))?",\"reasoning_content\":\""+json_escape(pending_reasoning)+"\"":"")+"}"); calls.clear();pending_reasoning.clear();pending_reasoning_present=false;pending_content="null"; }
 };
 for(size_t item_index=0;item_index<session.items.size();++item_index){const auto& item=session.items[item_index];auto j=parse_json(item);if(!j)continue;const auto type=at(&*j,"type"),role=at(&*j,"role");
-  if(type && type->str()=="codex_reasoning"){pending_reasoning=json_string_field(item,"text").value_or("");
+  if(type && type->str()=="codex_reasoning"){pending_reasoning_present=json_string_field(item,"format")!=std::optional<std::string>("responses");pending_reasoning=pending_reasoning_present?json_string_field(item,"text").value_or(""):"";
   }else if(type && type->str()=="function_call"){const auto name=at(&*j,"name"),id=at(&*j,"call_id"),args=at(&*j,"arguments");
   if(name&&id&&args)calls.push_back("{\"id\":\""+json_escape(id->str())+ "\",\"type\":\"function\",\"function\":{\"name\":\""+json_escape(name->str())+ "\",\"arguments\":\""+json_escape(args->str())+"\"}}");
   }else if(type && type->str()=="function_call_output"){
   flush_calls();const auto id=at(&*j,"call_id"),out=at(&*j,"output");if(id&&out)messages.push_back("{\"role\":\"tool\",\"tool_call_id\":\""+ json_escape(id->str())+"\",\"content\":\""+json_escape(out->str())+"\"}");
   }else if(role &&(role->str()=="user" || role->str()=="assistant")){
-  flush_calls();if(role->str()=="user")pending_reasoning.clear();auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
+  flush_calls();if(role->str()=="user"){pending_reasoning.clear();pending_reasoning_present=false;pending_content="null";}auto content=j->get("content");if(role->str()=="user" && content && content->kind==Json::Array){std::vector<std::string> parts;
     for(const auto& part:content->items){const auto type=part.get("type"),value=part.get("text"),url=part.get("image_url");
     if(type && type->str()=="input_text" && value)parts.push_back("{\"type\":\"text\",\"text\":\""+json_escape(value->str())+"\"}"); else if(type && type->str()=="input_image" && url)
       parts.push_back("{\"type\":\"image_url\",\"image_url\":{\"url\":\""+json_escape(url->str())+"\"}}");
     }
     messages.push_back("{\"role\":\"user\",\"content\":"+join_json_array(parts)+"}");
   }else {const bool tool_preamble=role->str()=="assistant"&&item_index+1<session.items.size()&&json_string_field(session.items[item_index+1],"type")==std::optional<std::string>("function_call");
-    if(role->str()=="assistant"&&carry_reasoning&&!pending_reasoning.empty()&&!tool_preamble){j->fields["reasoning_content"]=Json{Json::String,pending_reasoning};messages.push_back(json_dump(*j));}else messages.push_back(item);if(!tool_preamble)pending_reasoning.clear();}
+    if(tool_preamble){pending_content=content?json_dump(*content):"null";}else if(role->str()=="assistant"&&carry_reasoning&&(pending_reasoning_present||uses_reasoning_extension)){j->fields["reasoning_content"]=Json{Json::String,pending_reasoning};messages.push_back(json_dump(*j));}else messages.push_back(item);if(!tool_preamble){pending_reasoning.clear();pending_reasoning_present=false;pending_content="null";}}
   }
 }
 flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err,size_t history_budget=0){
@@ -993,7 +1018,7 @@ flush_calls();return messages; } static bool compact_session(Session& session,co
   if(!flush())return false;if(!changed)return true;
   std::vector<std::string> replacement={"{\"role\":\"user\",\"content\":\""+json_escape(marker+summary)+"\"}"};for(const auto index:retained_indices)replacement.push_back(session.items[index]);
   size_t tokens=0;for(const auto& item:replacement)tokens+=estimate_tokens(item);if(tokens>history_budget){err="Compacted context still exceeds model budget; original context retained";return false;}
-  if(!session.replace_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
+  if(!session.checkpoint_items(replacement)){err="Could not save compacted session"+(session.storage_error.empty()?std::string{}:": "+session.storage_error);return false;}
   session.append_transcript("\n[context compacted]\n"+summary+"\n");return true;
 }
 static bool configure_provider(Options& opt,std::string& error){
@@ -1190,7 +1215,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   const ContextBudget context_budget{api.context_window,api.output_reserve};std::string request_input,request_tools;
   const auto prepare_request=[&](){std::vector<std::string> input;
     if(api.style==ApiStyle::Responses){input=session.items;input.erase(std::remove_if(input.begin(),input.end(),[](const std::string& item){return json_string_field(item,"type")==std::optional<std::string>("codex_reasoning");}),input.end());append_design_delivery_reminder(input,delivery_reminder,false);request_tools=router.specs_json();}
-    else{input=chat_history(session,turn_instructions,(opt.carry_reasoning?*opt.carry_reasoning:native_web::flag(native_web::load_preferences(own_auth_path().parent_path(),opt.root),"carry_reasoning")));append_design_delivery_reminder(input,delivery_reminder,true);request_tools=router.chat_specs_json();}
+    else{request_tools=opt.no_tools?"[]":router.chat_specs_json();input=chat_history(session,turn_instructions,(request_tools!="[]"||(opt.carry_reasoning?*opt.carry_reasoning:native_web::flag(native_web::load_preferences(own_auth_path().parent_path(),opt.root),"carry_reasoning"))));append_design_delivery_reminder(input,delivery_reminder,true);}
     if(opt.no_tools)request_tools="[]";
     request_input=join_json_array(input);return estimate_tokens(request_input)+estimate_tokens(request_tools)+(api.style==ApiStyle::Responses?estimate_tokens(turn_instructions):0)+256;
   };
@@ -1202,7 +1227,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
     if(!err.empty()){session.emit(EventKind::Error,"{\"message\":\""+json_escape(err)+"\"}");if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
   }
   api.on_activity=[&session](const std::string& payload){session.emit(EventKind::ModelActivity,payload);};
-  std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
+  std::optional<ApiResponse> response;std::string streamed_reasoning;bool reasoning_received=false;auto show_reasoning=[&](const std::string& delta){reasoning_received=true;if(delta.empty())return;streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };
 
@@ -1211,7 +1236,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   }else{
     response = api.call_chat(request_input,request_tools,err,show_delta,update_elapsed,bool(tui),show_reasoning);
   }
-if(!streamed_reasoning.empty() && !session.record_item("{\"type\":\"codex_reasoning\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
+if(reasoning_received && !session.record_item("{\"type\":\"codex_reasoning\",\"format\":\""+std::string(api.style==ApiStyle::ChatCompletions?"chat":"responses")+"\",\"text\":\""+json_escape(streamed_reasoning)+"\"}")){err="could not save reasoning";return 3;}
 
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
@@ -1496,8 +1521,11 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
   if(token == "/fork"){const std::string old=session.id;const auto prior_items=session.items;
   Session forked;std::string local_err;if(!init_session(forked,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);continue;}
-  if(!forked.replace_items(prior_items)){say("Could not fork session items.",true);continue;}
-  std::error_code copy_error;if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
+  std::error_code copy_error;
+  if(fs::exists(session.items_path))fs::copy_file(session.items_path,forked.items_path,fs::copy_options::overwrite_existing,copy_error);
+  if(copy_error){say("Could not fork full session journal: "+copy_error.message(),true);continue;}
+  forked.items=prior_items;forked.estimated_tokens=session.estimated_tokens;
+  if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
   if(copy_error){say("Could not copy full session transcript: "+copy_error.message(),true);continue;}forked.transcript=transcript_tail(forked.transcript_path);forked.append_transcript("\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
   if(tui){tui->set_thread_name("fork");tui->reset_transcript();} say("Forked " + old + " → " + session.id);continue; }
   if(token == "/archive"){std::string local_err;if(!archive_session_files(session,local_err)){say(local_err,true);continue;} say("Archived session " + session.id);break; }

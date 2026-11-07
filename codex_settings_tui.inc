@@ -51,7 +51,7 @@ static std::string settings_console(TuiRenderer& ui,Options& options,ApiClient& 
         std::vector<const PreferenceDefinition*> entries;std::vector<std::string> labels;
         for(const auto& entry:preference_definitions())if((section==1)==(std::string(entry.key)=="carry_reasoning")){entries.push_back(&entry);labels.push_back(std::string(flag(values,entry.key)?"[on] ":"[off] ")+entry.label);}
         if(section==1)labels.push_back("Choose model / reasoning effort");labels.push_back("Back");
-        int choice=ui.settings_menu(section==0?"General / assistance":"Models and reasoning",section==0?"Applies to WebUI assistance; TUI does not generate background suggestions.":"Only provider-returned Chat reasoning can be resent. Hidden reasoning is unavailable. Required tool reasoning stays automatic. Changes apply to the next task; explicit CLI overrides take precedence.",labels);
+        int choice=ui.settings_menu(section==0?"General / assistance":"Models and reasoning",section==0?"Applies to WebUI assistance; TUI does not generate background suggestions.":"Only provider-returned Chat reasoning can be resent. Hidden reasoning is unavailable. Required tool-mode reasoning history stays automatic. Changes apply to the next task; explicit CLI overrides take precedence.",labels);
         if(choice<0||choice==static_cast<int>(labels.size()-1))break;
         if(static_cast<size_t>(choice)==entries.size())return "/model";
         const auto& entry=*entries[static_cast<size_t>(choice)];

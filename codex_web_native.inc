@@ -955,6 +955,7 @@ struct App {
     require(sid.empty() || identifier(sid), "Invalid saved session");
     messages = field(saved, "messages", arr());
     submissions = field(saved, "submissions", obj());
+    error=text(saved,"error");
     if (flag(saved, "busy"))
       error = "Previous task was interrupted. Inspect files before submitting again.";
     if (fs::exists(registry_path))
@@ -986,7 +987,7 @@ struct App {
     atomic_save(state_path, obj({{"session_id", str(sid)},
                                  {"messages", messages},
                                  {"submissions", submissions},
-                                 {"busy", boolean(busy)}}));
+                                 {"busy", boolean(busy)},{"error",str(error)}}));
   }
   J provider(const std::string &id) {
     if (id == "codex")
@@ -1073,6 +1074,14 @@ struct App {
     if(!session_directory.empty())return read_bytes(session_directory/fs::u8path(name));
     return portable_config.root.empty()?workspace.read(".codex_cpp/sessions/"+name,true):read_bytes(journal_directory()/fs::u8path(name));
   }
+  std::map<std::string,bool> legacy_summary_proofs;
+  bool legacy_summary_record(const std::string& id,const std::string& value,uint64_t position){
+    const std::string marker="[prior conversation summary]\n";
+    if(position!=0||value.rfind(marker,0)!=0)return false;
+    const auto key=id+":"+digest(value);auto found=legacy_summary_proofs.find(key);if(found!=legacy_summary_proofs.end())return found->second;
+    bool confirmed=false;try{confirmed=session_read(id+".transcript").find("\n[context compacted]\n"+value.substr(marker.size())+"\n")!=std::string::npos;}catch(...){}
+    legacy_summary_proofs[key]=confirmed;return confirmed;
+  }
   bool journal_truncated=false;std::string journal_error;
   // Stream under the existing workspace path checks. Preview reads seek to a
   // bounded tail; explicit raw tool-log requests scan records without a file cap.
@@ -1128,7 +1137,7 @@ struct App {
         return true;
       const auto before=row_base+rows.size();auto role = text(*item, "role"), kind = text(*item, "type");
       if (kind == "codex_reasoning") {
-        rows.push_back(obj({{"k", str("reasoning")}, {"text", field(*item, "text")}}));
+        if(!text(*item,"text").empty())rows.push_back(obj({{"k", str("reasoning")}, {"text", field(*item, "text")}}));
       } else if (role == "user" || role == "assistant") {
         auto content = field(*item, "content");
         std::string value;
@@ -1137,9 +1146,10 @@ struct App {
         else
           for (auto &p : content.items)
             value += text(p, "text");
-        if (role == "user") value = visible_user_message(value);
+        const bool legacy_summary=role=="user"&&legacy_summary_record(sid,value,position);
+        if (role == "user"&&!legacy_summary) value = visible_user_message(value);
         if (!value.empty())
-          rows.push_back(obj({{"k", str(role)}, {"text", str(value)}}));
+          rows.push_back(obj({{"k", str(legacy_summary?"context":role)}, {"text", str(value)}}));
       } else if (kind == "function_call") {
         calls[text(*item, "call_id")] = row_base+rows.size();
         rows.push_back(obj({{"k", str("tool")},
@@ -1189,7 +1199,7 @@ struct App {
           title = found->second;
         else
           try {
-            session_lines(id+".items.jsonl",[&](const std::string& line,uint64_t){
+            session_lines(id+".items.jsonl",[&](const std::string& line,uint64_t position){
               auto item = parse_json(line);
               if (!item || text(*item, "role") != "user")
                 return true;
@@ -1198,6 +1208,7 @@ struct App {
               if (content.kind == J::Array)
                 for (auto &part : content.items)
                   value += text(part, "text");
+              if(legacy_summary_record(id,value,position))return true;
               value = visible_user_message(value);
               title = value.substr(0, value.find('\n')).substr(0, 72);
               if (!title.empty())
@@ -1307,7 +1318,7 @@ struct App {
           std::lock_guard<std::recursive_mutex> lock(mutex);
           child = std::move(local);
         }
-        std::string buffer;
+        std::string buffer,reported_error;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30),
              approval_deadline = deadline;
         while (true) {
@@ -1348,6 +1359,7 @@ struct App {
                 sid = id;
               auto kind = text(*event, "type");
               auto payload = field(*event, "payload", obj());
+              if(kind=="error"&&!text(payload,"message").empty())reported_error=utf8_prefix(text(payload,"message"),4000);
               if(kind=="model.activity")model_progress(payload);
               if (kind == "model.reasoning.delta"){
                 reasoning_draft += text(payload, "text");if(!text(payload,"text").empty())model_progress(obj({{"phase",str("reasoning")}}));
@@ -1384,9 +1396,10 @@ struct App {
         std::lock_guard<std::recursive_mutex> lock(mutex);
         if (stopping)
           error = "Task stopped";
-        else if (child->status)
-          error = "Agent failed (exit " + std::to_string(child->status) +
-                  "). Check provider credentials or sandbox availability.";
+        else if (child->status){
+          const auto status="Agent failed (exit "+std::to_string(child->status)+")";
+          error=reported_error.empty()?status+". No structured error was received; the cause could not be determined.":status+": "+reported_error;
+        }
       } catch (const std::exception &e) {
         std::lock_guard<std::recursive_mutex> lock(mutex);
         error = e.what();
