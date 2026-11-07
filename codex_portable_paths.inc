@@ -22,3 +22,6 @@ static void portable_arguments(int& argc,char**& argv,std::vector<char*>& storag
 }
 static std::string portable_project_key(const fs::path& root){return portable_config.project.empty()?native_web::digest(fs::weakly_canonical(root).generic_u8string()):portable_config.project;}
 static fs::path project_state_root(const fs::path& root){return portable_config.root.empty()?root/".codex_cpp":portable_config.root/"projects"/portable_project_key(root);}
+// Host-selected journal location, separate from credentials and workspace data.
+static fs::path session_store_override;
+static fs::path project_session_root(const fs::path& root){return session_store_override.empty()?project_state_root(root)/"sessions":session_store_override;}

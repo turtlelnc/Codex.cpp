@@ -28,7 +28,6 @@
     </details>
     <div class="sidebar-footer">
       <span id="connection" role="status" data-state="pending">连接中</span>
-      <button type="button" id="plugin-button">模组</button>
       <button type="button" id="retry-connection" hidden>重新连接</button>
     </div>
   </aside>
@@ -42,8 +41,8 @@
       </div>
       <div class="header-actions">
         <span id="queue-state" class="status-pill" data-busy="false">就绪</span>
-        <button id="team-button" disabled>团队</button>
-        <button id="settings-button" title="模型提供商">提供商</button>
+        <button id="side-chat-toggle" aria-controls="side-panel" title="独立只读讨论，不打断主任务">侧聊</button>
+        <button id="settings-button" title="设置">设置</button>
         <button id="inspector-toggle" aria-label="显示或隐藏侧面板" aria-controls="workspace-inspector" aria-expanded="false" aria-pressed="false" title="侧面板"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button>
       </div>
     </header>
@@ -75,12 +74,23 @@
 
       <aside id="workspace-inspector" class="inspector" aria-label="检查器">
         <div class="tabs" role="group" aria-label="面板">
+          <button data-panel="side" aria-pressed="false">侧聊</button>
           <button data-panel="code" aria-pressed="true">代码</button>
           <button data-panel="changes" aria-pressed="false">变更<span id="diff-stat" class="diff-stat"></span></button>
           <button data-panel="terminal" aria-pressed="false">终端</button>
           <button type="button" id="inspector-close" aria-label="关闭检查器" title="关闭检查器（Esc）">×</button>
         </div>
 
+        <section id="side-panel" class="panel side-chat" hidden aria-label="独立只读侧聊">
+          <p class="side-hint">独立只读讨论 · 主 Agent 继续工作。可读取代码，使用当前提供商，另计模型用量。</p>
+          <div id="side-messages" role="log" aria-label="侧聊记录"></div>
+          <p id="side-status" role="status"></p>
+          <form id="side-composer">
+            <label class="sr-only" for="side-prompt">侧聊问题</label>
+            <textarea id="side-prompt" rows="3" maxlength="16000" required placeholder="问个问题，不打断正在执行的任务…"></textarea>
+            <div class="side-actions"><button type="button" id="side-stop" hidden>停止侧聊</button><button class="primary" id="side-send">发送侧聊</button></div>
+          </form>
+        </section>
         <div id="plugin-inspector"></div>
         <section id="code-panel" class="panel">
           <div id="file-view"><div class="none"><b>未打开文件</b>在左侧“项目文件”中选择一个文件，即可在这里查看和编辑</div></div>
@@ -115,16 +125,23 @@
   </main>
 </div>
 
+<dialog id="workspace-settings" aria-labelledby="workspace-settings-title">
+  <div class="dialog-heading"><h2 id="workspace-settings-title">设置</h2><button id="workspace-settings-close" aria-label="关闭设置">×</button></div>
+  <div class="settings-links"><button id="provider-button">模型提供商</button><button id="team-button" disabled>团队</button><button id="plugin-button">模组</button></div>
+  <fieldset><legend>模型用量与辅助功能</legend>
+    <label class="preference"><input type="checkbox" id="preference-side">显示独立只读侧聊（手动提问会使用模型额度）</label>
+    <label class="preference"><input type="checkbox" id="preference-suggestions">空闲时自动生成下一步建议（额外模型用量，默认关闭）</label>
+    <p>每个会话最多自动生成一次。关闭后停止正在生成的自动建议，不再发起后台请求；已有缓存保留。</p>
+    <p id="preference-status" role="status"></p>
+  </fieldset>
+</dialog>
+
 <template id="empty-state">
   <div class="empty">
     <i class="empty-logo"></i>
-    <h2>今天想构建什么？</h2>
+    <h2>让想法跑起来。</h2>
     <p>Codex 会读取代码、运行命令，并在你批准后修改文件。</p>
-    <div class="sugg">
-      <button type="button" data-q="解释一下这个项目的结构">解释项目结构</button>
-      <button type="button" data-q="检查代码中可能的崩溃和边界问题，并给出修复">排查潜在崩溃</button>
-      <button type="button" data-q="为核心函数补充单元测试">补充单元测试</button>
-    </div>
+    <div class="sugg" aria-label="缓存的模型建议"></div>
   </div>
 </template>
 

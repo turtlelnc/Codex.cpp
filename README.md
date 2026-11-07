@@ -345,3 +345,5 @@ GitHub Actions 配置包含 Linux/macOS/Windows 构建与基础冒烟测试，�
 WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量说明](docs/WEBUI_QUALITY.md)。
 
 对话优先布局、真实工具摘要及完整日志接口的实现与验证边界见 [WebUI 对话布局说明](docs/WEBUI_CONVERSATION.md)。
+
+WebUI 的独立只读侧聊、设置入口和默认关闭的自动下一步建议，见 [WebUI 辅助功能](docs/WEBUI_ASSISTANCE.md)。

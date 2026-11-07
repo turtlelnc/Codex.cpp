@@ -885,6 +885,7 @@ function snapshot() {
     // Device login uses authentication notices, never a model request or thinking spinner.
     const sendsBeforeLogin = sends;
     await page.locator("#settings-button").click();
+    await page.locator("#provider-button").click();
     await page.getByRole("button", { name: "设备登录", exact: true }).click();
     await page.locator("#device-login-dialog[open]").waitFor();
     await page.waitForFunction(
