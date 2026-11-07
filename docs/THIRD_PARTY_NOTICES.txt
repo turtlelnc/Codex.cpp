@@ -5,3 +5,6 @@ The pinned source URLs and build instructions are in CMakeLists.txt and
 .github/workflows/release.yml. The embedded bubblewrap is an unmodified,
 separate executable extracted at runtime; it is not linked into Codex.cpp.
 Use --licenses to display these notices from the single-file executable.
+
+WebUI Markdown parsing includes Marked 18.1.3 (MIT). Its license is included below.
+The pinned vendored source and npm integrity are recorded in web/vendor/README.md.

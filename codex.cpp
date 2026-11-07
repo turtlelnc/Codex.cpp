@@ -337,9 +337,9 @@ static std::string transcript_tail(const fs::path& path){std::ifstream file(path
 // ---------- rollout/session ----------
 namespace portable{struct Lease;}// Per-session exclusive lock; implemented with the portable data lease.
 static std::function<void(const std::string&)> session_observer;
-enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelReasoningDelta,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
+enum class EventKind{SessionStarted,SessionResumed,TurnStarted,ModelDelta,ModelReasoningDelta,ModelActivity,ModelOutput,ToolRequested,ApprovalRequested,ApprovalDecision,ToolStarted,ToolCompleted, TurnCompleted,Error };
 static const char* event_name(EventKind k){switch(k){case EventKind::SessionStarted: return "session.started"; case EventKind::SessionResumed: return "session.resumed";case EventKind::TurnStarted: return "turn.started";
-  case EventKind::ModelReasoningDelta: return "model.reasoning.delta";case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
+  case EventKind::ModelActivity: return "model.activity";case EventKind::ModelReasoningDelta: return "model.reasoning.delta";case EventKind::ModelDelta: return "model.delta";case EventKind::ModelOutput: return "model.output";case EventKind::ToolRequested: return "tool.requested";
   case EventKind::ApprovalRequested: return "approval.requested";case EventKind::ApprovalDecision: return "approval.decision";
   case EventKind::ToolStarted: return "tool.started";case EventKind::ToolCompleted: return "tool.completed"; case EventKind::TurnCompleted: return "turn.completed";case EventKind::Error: return "error";
 }
@@ -1192,6 +1192,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
     else if(err.empty())err="Current request still exceeds the configured model context budget; input remains saved";
     if(!err.empty()){session.emit(EventKind::Error,"{\"message\":\""+json_escape(err)+"\"}");if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n';return 3;}
   }
+  api.on_activity=[&session](const std::string& payload){session.emit(EventKind::ModelActivity,payload);};
   std::optional<ApiResponse> response;std::string streamed_reasoning;auto show_reasoning=[&](const std::string& delta){streamed_reasoning+=delta;session.emit(EventKind::ModelReasoningDelta,"{\"text\":\""+json_escape(delta)+"\"}");};std::string streamed_text;auto show_delta=[&](const std::string& delta){streamed_text+=delta;if(frontend&&frontend->active){frontend->event("model.delta","{\"text\":\""+json_escape(delta)+"\"}");frontend->pump();}if(opt.json){session.emit(EventKind::ModelDelta,"{\"text\":\""+json_escape(delta)+"\"}");return;}
     if(tui)tui->append_assistant_delta(delta);else{if(streamed_text.size()==delta.size())std::cout<<"[assistant]\n";std::cout<<delta<<std::flush; }
   };

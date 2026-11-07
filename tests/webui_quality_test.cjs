@@ -167,7 +167,7 @@ function snapshot() {
           return reply({ result });
         }
         const name = req.url === "/" ? "index.html" : req.url.slice(1);
-        if (!["index.html", "app.js", "style.css", "plugin.js"].includes(name)) {
+        if (!["index.html", "app.js", "style.css", "plugin.js", "markdown.js", "vendor/marked.umd.js"].includes(name)) {
           res.writeHead(404);
           return res.end();
         }
@@ -254,6 +254,14 @@ function snapshot() {
     );
     assert.equal(files["a.txt"], "new edits during save");
 
+    snap={...snap,timeline:[{k:'assistant',text:'[打开 B](b.txt)'}]};
+    await page.locator('.md a').getByText('打开 B',{exact:true}).waitFor();
+    await page.locator('#editor-text').fill('unsaved Markdown link edits');
+    await page.locator('.md a').getByText('打开 B',{exact:true}).click();
+    await page.getByText('放弃未保存的修改？',{exact:true}).waitFor();
+    await page.locator('#dialog-cancel').click();
+    assert.equal(await page.locator('#editor-text').inputValue(),'unsaved Markdown link edits');
+
     failWrite = true;
     await page.locator("#editor-text").fill("keep failed save");
     await page.locator("#editor-save").click();
@@ -301,7 +309,7 @@ function snapshot() {
 
     const headingMarkdown = '# 一级\n正文紧邻标题\n### **三级加粗标题**\n后续正文\n## 二级 ##\n#### 四级\n##### 五级\n###### 六级\n###没有空格\n####### 七个井号\n\n' + '```text\n### 代码里的标题\n```\n\n### <img src=x onerror=alert(1)>';
     snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: headingMarkdown }] };
-    await wait(async () => (await page.locator('.md h3 b').textContent()) === '三级加粗标题');
+    await wait(async () => (await page.locator('.md h3 strong').textContent()) === '三级加粗标题');
     for (const level of [1, 2, 3, 4, 5, 6]) assert(await page.locator('.md h' + level).count());
     assert.equal(await page.locator('.md h2').textContent(), '二级');
     assert((await page.locator('.md p').allTextContents()).some(text => text.includes('###没有空格')));
@@ -312,10 +320,10 @@ function snapshot() {
     snap = { ...snap, busy: true, draft: '### **流式标', timeline: [] };
     await wait(async () => (await page.locator('.message.live h3').textContent()).includes('流式标'));
     snap.draft += '题**\n流式正文';
-    await wait(async () => (await page.locator('.message.live h3 b').textContent()) === '流式标题');
+    await wait(async () => (await page.locator('.message.live h3 strong').textContent()) === '流式标题');
     assert.equal(await page.locator('.message.live p').textContent(), '流式正文');
     snap = { ...snap, busy: false, draft: '', timeline: [{ k: 'assistant', text: '### **流式标题**\n流式正文' }] };
-    await wait(async () => (await page.locator('.message.assistant:not(.live) h3 b').textContent()) === '流式标题');
+    await wait(async () => (await page.locator('.message.assistant:not(.live) h3 strong').textContent()) === '流式标题');
 
     snap = {
       ...snap,
@@ -515,6 +523,10 @@ function snapshot() {
       !(await page.locator(".message.live pre").textContent()).includes("\x60\x60\x60"),
     );
     await page.waitForFunction(() => !document.querySelector(".stream-char"));
+    assert(await page.locator('.message.live pre code .k').count());
+    await page.evaluate(()=>{window.markdownCopied=null;Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.markdownCopied=text}},configurable:true});});
+    await page.locator('.message.live .md-code-header button').click();
+    assert.equal(await page.evaluate(()=>window.markdownCopied),'int main() {\n  return 0;\n}');
     await page.locator("#messages").evaluate((node) => (node.scrollTop = 0));
     snap.draft += " history reader tail";
     await page.waitForFunction(() =>
@@ -526,7 +538,7 @@ function snapshot() {
     assert.equal(await page.locator("#messages").evaluate((node) => node.scrollTop), 0);
     await page.locator("#jump-bottom").click();
     failSnapshot = true;
-    await page.getByText("连接中断", { exact: true }).first().waitFor();
+    await page.getByText("正在重连", { exact: true }).first().waitFor();
     failSnapshot = false;
     await page.locator("#retry-connection").click();
     await page.getByText("已连接", { exact: true }).waitFor();

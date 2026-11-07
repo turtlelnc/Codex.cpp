@@ -29,10 +29,13 @@ auto q=parse_codex_quota(r.body,epoch_now());if(!q)err="Invalid quota response";
 struct ChatStreamDecoder{
   ApiResponse result;std::map<int,FunctionCall> calls;std::string line,data,error;bool finished=false,done=false;
   std::function<void(const std::string&)> on_delta,on_reasoning;
+  std::function<void(const std::string&,const std::string&,const std::string&)> on_activity;
+  bool acknowledged=false;
   void event(){if(data.empty())return;auto payload=std::move(data);data.clear();if(payload=="[DONE]"){done=true;return;}
     auto doc=parse_json(payload);if(!doc){error="Invalid Chat Completions stream event";return;}
     if(doc->get("error")){error="Chat Completions stream reported an API error";return;}
     if(auto id=doc->get("id"))result.id=id->str();auto choices=doc->get("choices");if(!choices || choices->kind!=Json::Array)return;
+    if(!acknowledged){acknowledged=true;if(on_activity)on_activity("waiting","","");}
     for(const auto& choice:choices->items){auto index=choice.get("index");if(index && index->value!="0")continue;
       auto delta=choice.get("delta");if(auto reasoning=at(delta,"reasoning_content");reasoning && reasoning->kind==Json::String && on_reasoning)on_reasoning(reasoning->value);if(auto content=at(delta,"content");content && content->kind==Json::String){
         result.text=result.text.value_or("")+content->value;if(on_delta && !content->value.empty())on_delta(content->value);}
@@ -42,41 +45,107 @@ struct ChatStreamDecoder{
         if(n<0 || n>1024){error="Invalid streamed tool index";continue;}auto& call=calls[n];
         if(auto id=tool.get("id"))call.call_id+=id->str();auto fn=tool.get("function");
         if(auto name=at(fn,"name"))call.name+=name->str();if(auto args=at(fn,"arguments"))call.arguments+=args->str();
+        if(on_activity)on_activity("tool",call.name,call.call_id);
       }
       if(auto reason=choice.get("finish_reason");reason && reason->kind==Json::String){
         if(reason->str()=="stop" || reason->str()=="tool_calls")finished=true;else error="Chat Completions stopped: "+reason->str();}
     }
   }
   void feed(const char* bytes,size_t size){for(size_t i=0;i<size;++i){if(bytes[i]!='\n'){line+=bytes[i];if(line.size()>1'000'000)throw std::runtime_error("Chat stream line exceeded 1 MB");continue;}
-    if(!line.empty() && line.back()=='\r')line.pop_back();if(line.empty())event();else if(line.rfind("data:",0)==0){auto part=line.substr(5);if(!part.empty()&&part[0]==' ')part.erase(0,1);if(!data.empty())data+='\n';data+=part;}line.clear();}}
+    if(!line.empty() && line.back()=='\r')line.pop_back();if(line.empty())event();else if(line.rfind("data:",0)==0){auto part=line.substr(5);if(!part.empty()&&part[0]==' ')part.erase(0,1);if(!data.empty())data+='\n';data+=part;}else if(line.rfind(":",0)==0&&on_activity)on_activity("heartbeat","","");line.clear();}}
   std::optional<ApiResponse> finish(std::string& err){if(!error.empty()){err=error;return{};}if(!done || !finished){err="Chat Completions stream ended before completion";return{};}
     for(const auto& entry:calls){const auto& call=entry.second;if(call.name.empty()||call.call_id.empty()||!parse_json(call.arguments)){err="Incomplete streamed tool call";return{};}result.calls.push_back(call);}
     if(!result.text && result.calls.empty()){err="Chat Completions stream contained neither text nor tool calls";return{};}return result;
   }
 };
+// Progress metadata is separate from final, validated tool calls. No partial
+// arguments are executed, journaled as calls, or offered for approval here.
+struct ResponsesStreamProgress{
+  std::map<std::string,std::pair<std::string,std::string>> tools;
+  std::function<void(const std::string&)> on_delta,on_reasoning;
+  std::function<void(const std::string&,const std::string&,const std::string&)> on_activity;
+  void event(const Json& event){
+    auto value=event.get("type");if(!value)return;const auto type=value->str();
+    auto signal=[&](const std::string& phase,const std::string& name="",const std::string& id=""){if(on_activity)on_activity(phase,name,id);};
+    if(type=="response.created"||type=="response.in_progress")signal("waiting");
+    if(type=="response.output_item.added")if(auto item=event.get("item")){
+      if(at(item,"type")&&at(item,"type")->str()=="reasoning")signal("reasoning");
+      if(at(item,"type")&&at(item,"type")->str()=="function_call"){
+        const auto id=at(item,"id")?at(item,"id")->str():"";
+        auto tool=std::make_pair(at(item,"name")?at(item,"name")->str():"",at(item,"call_id")?at(item,"call_id")->str():id);
+        tools[id]=tool;signal("tool",tool.first,tool.second);
+      }
+    }
+    if(type=="response.function_call_arguments.delta"){
+      const auto id=event.get("item_id")?event.get("item_id")->str():"";
+      auto found=tools.find(id);if(found==tools.end())signal("tool","",id);else signal("tool",found->second.first,found->second.second);
+    }
+    if(type=="response.output_text.delta")if(auto delta=event.get("delta");delta&&!delta->str().empty()){signal("text");if(on_delta)on_delta(delta->str());}
+    if(type=="response.reasoning_summary_part.added")signal("reasoning");
+    if(type=="response.reasoning_summary_text.delta"||type=="response.reasoning_text.delta")
+      if(auto delta=event.get("delta");delta&&!delta->str().empty()){signal("reasoning");if(on_reasoning)on_reasoning(delta->str());}
+  }
+};
 struct ApiClient{size_t context_window=32768,output_reserve=4096;std::string api_key;std::string base_url = "https://api.openai.com";std::string model = "gpt-5.6-sol";std::string reasoning_effort;
 ApiStyle style = ApiStyle::Responses;bool no_api_key = false;bool chatgpt_auth = false;bool wait_quota=false;
+std::function<void(const std::string&)> on_activity;
+mutable std::string last_activity;
+mutable std::chrono::steady_clock::time_point last_heartbeat;
+void activity(const std::string& phase,const std::string& name="",const std::string& id="",const std::string& reason="")const{
+  if(!on_activity)return;
+  const auto safe_name=name.size()<=256?name:std::string{},safe_id=id.size()<=256?id:std::string{};
+  if(phase=="heartbeat"){const auto now=std::chrono::steady_clock::now();if(now-last_heartbeat<std::chrono::seconds(1))return;last_heartbeat=now;}
+  else{const auto key=phase+"\n"+safe_name+"\n"+safe_id+"\n"+reason;if(key==last_activity)return;last_activity=key;}
+  on_activity(json_dump(plugin_object({{"phase",plugin_string(phase)},{"name",plugin_string(safe_name)},{"call_id",plugin_string(safe_id)},{"reason",plugin_string(reason)}})));
+}
+// Bound model requests by the same 30-minute task limit as the WebUI. Silence
+// alone is not a connection failure: providers need not stream hidden reasoning.
+// Other host HTTP calls keep their existing shorter timeouts.
+WebReply model_http(const std::string& url,const std::string& body,const std::vector<std::string>& headers,
+ const std::function<void(const char*,size_t)>& consume={},const std::function<void()>& tick={},bool watch=false,const std::function<void()>& reset={})const{
+  activity("waiting");WebReply reply;
+  for(int attempt=0;attempt<3;++attempt){
+    if(reset)reset();reply=native_http(url,body,headers,false,consume,tick,watch,true,1800);
+    bool retry=reply.status==429||reply.status==502||reply.status==503||reply.status==504||(reply.status==0&&reply.error.rfind("curl failed:",0)==0);
+    if(reply.status==429)if(auto parsed=parse_json(reply.body))if(auto error=parsed->get("error")){
+      const auto code=at(error,"code")?at(error,"code")->str():"",type=at(error,"type")?at(error,"type")->str():"";
+      if(type=="insufficient_quota"||code=="insufficient_quota"||code=="credit_balance_exhausted"||code=="organization_spend_limit_exceeded"||code=="project_spend_limit_exceeded")retry=false;
+    }
+    // Never replay after any SSE data frame, including a partial tool call.
+    if(!retry||attempt==2||reply.body.find("data:")!=std::string::npos)return reply;
+    long delay=(attempt+1)*2;auto header=reply.headers.find("retry-after");
+    if(header!=reply.headers.end()){
+      if(!header->second.empty()&&header->second.find_first_not_of("0123456789")==std::string::npos){try{delay=std::stol(header->second);}catch(...){return reply;}}
+      else{auto time=curl_getdate(header->second.c_str(),nullptr);if(time>=0)delay=std::max(0L,static_cast<long>(time-epoch_now()));}
+    }
+    if(delay>300)return reply; // Do not retry earlier than a long server delay.
+    activity("retrying","","",reply.status==503?"overloaded":reply.status==429?"rate_limited":"network");for(long n=0;n<delay*10;++n){
+#if !defined(_WIN32)
+      if(tui_interrupt_requested){reply.error="Interrupted by Ctrl+C";return reply;}
+#endif
+      if(tick)tick();if(watch&&busy_input&&busy_input("",0)){reply.error="Interrupted by Esc";return reply;}
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }return reply;
+}
 std::optional<std::string> post_codex(const std::string& body,std::string& err,const std::function<void(const std::string&)>& on_delta ={}, const std::function<void()>& on_tick ={},bool watch_escape = false,const std::function<void(const std::string&)>& on_reasoning ={})const{
   auto a=load_auth();if(!a){err="Not signed in. Run --provider codex --login.";return{};}if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};
   auto request=[&](){
     std::vector<std::string> headers={"Authorization: Bearer "+a->access,"Accept: text/event-stream","Content-Type: application/json"};
     if(!a->account.empty())headers.push_back("ChatGPT-Account-ID: "+a->account);
-    std::string line;
+    std::string line;ResponsesStreamProgress progress;progress.on_delta=on_delta;progress.on_reasoning=on_reasoning;
+    progress.on_activity=[&](const std::string& phase,const std::string& name,const std::string& id){activity(phase,name,id);};
     auto consume=[&](const char* data,size_t size){for(size_t i=0;i<size;++i){line+=data[i];
       if(line.size()>1'000'000)throw std::runtime_error("Codex stream line exceeded 1 MB");
-      if(data[i]=='\n'){if(on_delta&&line.rfind("data: ",0)==0){auto event=parse_json(line.substr(6));
-        if(event&&at(&*event,"type")&&at(&*event,"type")->str()=="response.output_text.delta"){
-          auto delta=event->get("delta");if(delta&&delta->kind==Json::String)on_delta(delta->value);
-        }else if(event && on_reasoning && at(&*event,"type") &&
-          (at(&*event,"type")->str()=="response.reasoning_summary_text.delta" || at(&*event,"type")->str()=="response.reasoning_text.delta")){
-          if(auto delta=event->get("delta");delta && delta->kind==Json::String)on_reasoning(delta->value);
-        }}line.clear();}
+      if(data[i]=='\n'){if(line.rfind("data: ",0)==0){if(auto event=parse_json(line.substr(6)))progress.event(*event);}
+        else if(line.rfind(":",0)==0)activity("heartbeat");line.clear();}
     }};
-    return native_http("https://chatgpt.com/backend-api/codex/responses",body,headers,false,consume,on_tick,watch_escape);
+    return native_http("https://chatgpt.com/backend-api/codex/responses",body,headers,false,consume,on_tick,watch_escape,true,1800);
   };
-  auto r=request();for(int retry=0;retry<2 && r.body.find("data:")==std::string::npos &&
+  activity("waiting");auto r=request();for(int retry=0;retry<2 && r.body.find("data:")==std::string::npos &&
     (r.status==429 || r.status==502 || r.status==503 || r.status==504 ||
      (r.status==0 && r.error.rfind("curl failed:",0)==0));++retry){
+    activity("retrying","","",r.status==503?"overloaded":r.status==429?"rate_limited":"network");
     std::cerr << "[retry] HTTP " << r.status << "; retrying in " << (retry+1)*2 << " seconds\n";
     for(int tick=0;tick<(retry+1)*20;++tick){
 #if !defined(_WIN32)
@@ -87,7 +156,7 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
   }
   for(;;){if(!wait_quota || r.status!=429 || r.body.find("data:")!=std::string::npos)break;
     auto q=read_codex_quota(err);if(!q || q->reset<=epoch_now())break;
-    auto deadline=q->reset+2;auto next_check=epoch_now()+30;std::cerr<<"[quota] waiting until "<<deadline<<" (Unix seconds); Ctrl+C stops waiting\n";
+    activity("quota");auto deadline=q->reset+2;auto next_check=epoch_now()+30;std::cerr<<"[quota] waiting until "<<deadline<<" (Unix seconds); Ctrl+C stops waiting\n";
     while(epoch_now()<deadline){
 #if !defined(_WIN32)
       if(tui_interrupt_requested){err="Interrupted while waiting for quota";return{};}
@@ -101,7 +170,7 @@ std::optional<std::string> post_codex(const std::string& body,std::string& err,c
     a=load_auth();if(!a){err="Not signed in while waiting for quota";return{};}
     if(a->expires<=epoch_now()+90 && !refresh_auth(*a,err))return{};r=request();
   }
-  if(r.error=="Interrupted by Esc"){err=r.error;return{};}if(r.status==401 && refresh_auth(*a,err))r=request();
+  if(r.error=="Interrupted by Esc"){err=r.error;return{};}if(r.status==401 && refresh_auth(*a,err)){activity("retrying");r=request();}
   if(!r.error.empty()|| r.status!=200){err="Codex backend request failed (HTTP "+std::to_string(r.status)+"): "+r.error;
   // Avoid placing backend error bodies in logs: they may contain tokens.
   return{}; } return r.body;
@@ -121,11 +190,12 @@ std::optional<ApiResponse> parse_codex_stream(const std::string& raw,std::string
   if(!completed){err="Codex stream ended before response.completed";return{};}std::string aggregate="{\"id\":\""+json_escape(id)+"\",\"output\":[";
   bool first=true;for(const auto&[_,item]:done){if(!first)aggregate+=',';first=false;aggregate+=json_dump(item);}aggregate+="]}"; return parse_api_response(aggregate,false,err);
 }
-std::optional<std::string> post(const std::string& path,const std::string& body,std::string& err)const{
+std::optional<std::string> post(const std::string& path,const std::string& body,std::string& err,const std::function<void()>& tick={},bool watch=false)const{
   if(chatgpt_auth){err = "internal routing error: ChatGPT login request reached API Key transport";return std::nullopt; }
   std::vector<std::string> headers={"Content-Type: application/json"};
   if(!no_api_key){if(api_key.empty()){err="API key is not set";return{};}headers.push_back("Authorization: Bearer "+api_key);}
-  auto reply=native_http(base_url+path,body,headers,false,{}, {},bool(busy_input));
+  bool body_started=false;
+  auto reply=model_http(base_url+path,body,headers,[&](const char* bytes,size_t size){if(!body_started){for(size_t i=0;i<size;++i)if(!std::isspace(static_cast<unsigned char>(bytes[i]))){body_started=true;break;}if(!body_started)activity("heartbeat");}},tick,watch||bool(busy_input),[&](){body_started=false;});
   if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
   return reply.body;
 }
@@ -145,7 +215,7 @@ std::optional<ApiResponse> builtin_call_responses(const std::string& instruction
   ",\"tools\":" + tools_json + ",\"tool_choice\":\"auto\",\"parallel_tool_calls\":false"; if(!reasoning_effort.empty())body += ",\"reasoning\":{\"effort\":\"" + json_escape(reasoning_effort)+ "\"}";
   if(chatgpt_auth)body += ",\"stream\":true,\"store\":false";else if(previous_response_id && !previous_response_id->empty()) body += ",\"previous_response_id\":\"" + json_escape(*previous_response_id)+ "\"";
   body += "}";if(chatgpt_auth){auto stream = post_codex(body,err,on_delta,on_tick,watch_escape,on_reasoning); return stream ? parse_codex_stream(*stream,err): std::nullopt; }
-  auto raw = post("/v1/responses",body,err);if(!raw)return std::nullopt;return parse_api_response(*raw,false,err);
+  auto raw = post("/v1/responses",body,err,on_tick,watch_escape);if(!raw)return std::nullopt;return parse_api_response(*raw,false,err);
 }
 std::optional<ApiResponse> builtin_call_chat(const std::string& messages_json,const std::string& tools_json,std::string& err,
  const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& on_tick={},bool watch_escape=false,const std::function<void(const std::string&)>& on_reasoning={})const{
@@ -153,8 +223,9 @@ std::optional<ApiResponse> builtin_call_chat(const std::string& messages_json,co
   if(!no_api_key && api_key.empty()){err="API key is not set";return{};}
   std::string body="{\"model\":\""+json_escape(model)+"\",\"messages\":"+messages_json+",\"tools\":"+tools_json+",\"tool_choice\":\"auto\",\"stream\":true}";
   std::vector<std::string> headers={"Content-Type: application/json","Accept: text/event-stream"};if(!no_api_key)headers.push_back("Authorization: Bearer "+api_key);
-  ChatStreamDecoder decoder;decoder.on_delta=on_delta;decoder.on_reasoning=on_reasoning;
-  auto reply=native_http(base_url+"/chat/completions",body,headers,false,[&](const char* data,size_t size){decoder.feed(data,size);},on_tick,watch_escape);
+  ChatStreamDecoder decoder;
+  auto reset=[&](){decoder=ChatStreamDecoder{};decoder.on_delta=[&](const std::string& text){activity("text");if(on_delta)on_delta(text);};decoder.on_reasoning=[&](const std::string& text){if(!text.empty())activity("reasoning");if(on_reasoning)on_reasoning(text);};decoder.on_activity=[&](const std::string& phase,const std::string& name,const std::string& id){activity(phase,name,id);};};
+  auto reply=model_http(base_url+"/chat/completions",body,headers,[&](const char* data,size_t size){decoder.feed(data,size);},on_tick,watch_escape,reset);
   if(!reply.error.empty()||reply.status<200||reply.status>=300){err=reply.error.empty()?"HTTP request failed (HTTP "+std::to_string(reply.status)+")":reply.error;return{};}
   // Some compatible servers ignore stream=true and return a complete JSON response.
   if(auto doc=parse_json(reply.body)){if(on_reasoning){auto choices=doc->get("choices");if(choices && !choices->items.empty())if(auto reasoning=at(choices->items[0].get("message"),"reasoning_content");reasoning && reasoning->kind==Json::String)on_reasoning(reasoning->value);}
@@ -167,9 +238,9 @@ ApiClient plugin_client(const Json& request)const{auto config=request.get("confi
   client.chatgpt_auth=plugin_flag(*config,"chatgpt_auth");client.no_api_key=plugin_flag(*config,"no_api_key");return client;
 }
 std::optional<ApiResponse> plugin_request(Json request,std::string& err,const std::function<void(const std::string&)>& on_delta={},const std::function<void()>& tick={},bool watch=false,const std::function<void(const std::string&)>& on_reasoning={})const{
-  request.fields["config"]=plugin_config();TerminalInputScope plugin_input(watch);
+  last_activity.clear();activity("waiting");request.fields["config"]=plugin_config();TerminalInputScope plugin_input(watch);
   try{auto output=plugin_call("model.request",request,[&](const Json& input,const plugin::Emit& emit){
-    auto client=plugin_client(input);auto kind=plugin_text(input,"kind");std::string why;std::optional<ApiResponse> response;
+    auto client=plugin_client(input);client.last_activity.clear();client.on_activity=[emit](const std::string& payload){if(emit)emit("activity",payload);};auto kind=plugin_text(input,"kind");std::string why;std::optional<ApiResponse> response;
     auto text=[&](const std::string& delta){if(emit)emit("text",delta);};auto reasoning=[&](const std::string& delta){if(emit)emit("reasoning",delta);};
     if(kind=="chat")response=client.builtin_call_chat(plugin_text(input,"messages"),plugin_text(input,"tools"),why,text,tick,watch,reasoning);
     else if(kind=="responses"){std::optional<std::string> previous;if(auto value=input.get("previous_response_id");value && value->kind==Json::String)previous=value->str();
@@ -179,7 +250,7 @@ std::optional<ApiResponse> plugin_request(Json request,std::string& err,const st
     if(!response)throw std::runtime_error(why.empty()?"Model request failed":why);
     Json calls;calls.kind=Json::Array;for(const auto& c:response->calls)calls.items.push_back(plugin_object({{"name",plugin_string(c.name)},{"call_id",plugin_string(c.call_id)},{"arguments",plugin_string(c.arguments)}}));
     return plugin_object({{"id",plugin_string(response->id)},{"text",response->text?plugin_string(*response->text):Json{}},{"calls",calls}});
-  },[&](const std::string& kind,const std::string& delta){if(kind=="text" && on_delta)on_delta(delta);else if(kind=="reasoning" && on_reasoning)on_reasoning(delta);else if(kind=="tick"){if(tick)tick();if(watch && busy_input && busy_input("",0))throw std::runtime_error("Interrupted by Esc");
+  },[&](const std::string& kind,const std::string& delta){if(kind=="activity"&&on_activity){auto parsed=parse_json(delta);if(parsed&&parsed->kind==Json::Object){const auto phase=at(&*parsed,"phase")?at(&*parsed,"phase")->str():"";if(std::set<std::string>{"waiting","reasoning","tool","text","retrying","heartbeat","quota"}.count(phase))on_activity(json_dump(plugin_object({{"phase",plugin_string(phase)},{"name",plugin_string(at(&*parsed,"name")&&at(&*parsed,"name")->str().size()<=256?at(&*parsed,"name")->str():"")},{"call_id",plugin_string(at(&*parsed,"call_id")&&at(&*parsed,"call_id")->str().size()<=256?at(&*parsed,"call_id")->str():"")},{"reason",plugin_string(at(&*parsed,"reason")&&at(&*parsed,"reason")->str().size()<=64?at(&*parsed,"reason")->str():"")}})));}}else if(kind=="text" && on_delta)on_delta(delta);else if(kind=="reasoning" && on_reasoning)on_reasoning(delta);else if(kind=="tick"){if(tick)tick();if(watch && busy_input && busy_input("",0))throw std::runtime_error("Interrupted by Esc");
 #if !defined(_WIN32)
 if(tui_interrupt_requested)throw std::runtime_error("Interrupted by Esc");
 #endif

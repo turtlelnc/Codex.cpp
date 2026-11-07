@@ -930,6 +930,7 @@ struct App {
   std::unique_ptr<Child> child;
   bool busy = false, stopping = false;
   std::string sid, error, draft, reasoning_draft, permission = "workspace", active = "codex", pending_id;
+  J model_activity=obj();
   J pending, events = arr(), messages = arr(), submissions = obj(),
              registry = obj({{"providers", arr()}, {"active", str("codex")}});
   Options options;
@@ -1216,6 +1217,16 @@ struct App {
     });
     return arr(result);
   }
+  void model_progress(const J& payload){
+    const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto phase=text(payload,"phase");
+    if(phase=="heartbeat"){if(text(model_activity,"phase")=="retrying")model_progress(obj({{"phase",str("waiting")}}));model_activity.fields["heartbeat_at"]=number(now);return;}
+    if(!std::set<std::string>{"waiting","reasoning","text","tool","retrying","quota"}.count(phase))return;
+    const auto name=text(payload,"name"),id=text(payload,"call_id"),reason=text(payload,"reason");
+    if(phase=="waiting"||phase!=text(model_activity,"phase")||name!=text(model_activity,"name")||id!=text(model_activity,"call_id")||reason!=text(model_activity,"reason")){
+      model_activity=obj({{"phase",str(phase)},{"name",str(name)},{"call_id",str(id)},{"reason",str(reason)},{"started_at",number(now)}});
+    }
+  }
   std::string snapshot_epoch=entropy();uint64_t snapshot_sequence=0;
   std::deque<std::pair<std::string,std::map<std::string,std::string>>> snapshot_versions;
   std::string row_hash_key;std::map<std::string,std::string> row_hashes;
@@ -1225,7 +1236,7 @@ struct App {
     // must never share an unfiltered event payload with an unauthorized reader.
     J visible_events=events;if(!include_login_notices)visible_events.items.erase(std::remove_if(visible_events.items.begin(),visible_events.items.end(),[](const J& event){return text(event,"type")=="login.notice";}),visible_events.items.end());
     auto result=obj({{"session_id",sid.empty()?J{}:str(sid)},{"busy",boolean(busy)},
-      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"events",visible_events},{"pending",pending},
+      {"draft",str(draft)},{"reasoning_draft",str(reasoning_draft)},{"model_activity",model_activity},{"events",visible_events},{"pending",pending},
       {"error",str(journal_error.empty()?error:"History unavailable: "+journal_error)},
       {"model",str(display_model)},{"reasoning",str(options.reasoning_effort)},{"permission",str(permission)},
       {"provider",provider(active)},{"sessions",sessions()},{"history_truncated",boolean(journal_truncated)},{"suggestion_context",str(digest(journal_key))}});
@@ -1253,6 +1264,7 @@ struct App {
     if (worker.joinable())
       worker.join();
     busy = true;
+    model_activity=obj();if(!login)model_progress(obj({{"phase",str("waiting")}}));
     stopping = false;
     error.clear();
     events = arr();
@@ -1333,11 +1345,14 @@ struct App {
                 sid = id;
               auto kind = text(*event, "type");
               auto payload = field(*event, "payload", obj());
-              if (kind == "model.reasoning.delta")
-                reasoning_draft += text(payload, "text");
-              if (kind == "model.delta")
-                draft += text(payload, "text");
-              if (kind == "model.output") { draft.clear(); reasoning_draft.clear(); }
+              if(kind=="model.activity")model_progress(payload);
+              if (kind == "model.reasoning.delta"){
+                reasoning_draft += text(payload, "text");if(!text(payload,"text").empty())model_progress(obj({{"phase",str("reasoning")}}));
+              }
+              if (kind == "model.delta"){
+                draft += text(payload, "text");if(!text(payload,"text").empty())model_progress(obj({{"phase",str("text")}}));
+              }
+              if (kind == "model.output") { draft.clear(); reasoning_draft.clear(); model_activity=obj(); }
               if (kind == "approval.requested" && side_mode) {
                 child->send("n\n"); // Side discussion never acquires approval/write authority.
               } else if (kind == "approval.requested") {
@@ -1379,6 +1394,7 @@ struct App {
         child.reset();
       }
       busy = false;
+      model_activity=obj();
       pending = J{};
       pending_id.clear();
       draft.clear();
@@ -1687,6 +1703,7 @@ struct App {
       if (!id.empty())
         session_lines(id+".items.jsonl",[](const std::string&,uint64_t){return false;});
       sid = id;
+      model_activity=obj();
       messages = arr();
       events = arr();
       draft.clear();
@@ -1938,10 +1955,10 @@ struct Service {
       if (req.path.rfind("/api/", 0) == 0 && req.headers.count("sec-fetch-site"))
         require(req.headers["sec-fetch-site"] == "same-origin" || req.headers["sec-fetch-site"] == "none",
                 "Cross-site request refused");
-      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js")) {
+      if (req.method == "GET" && (req.path == "/" || req.path == "/app.js" || req.path == "/style.css" || req.path == "/plugin.js" || req.path == "/markdown.js" || req.path == "/vendor/marked.umd.js")) {
         auto name = req.path == "/" ? "index.html" : req.path.substr(1);
         auto mime = req.path == "/"         ? "text/html; charset=utf-8"
-                    : (req.path == "/app.js" || req.path == "/plugin.js") ? "text/javascript; charset=utf-8"
+                    : (req.path != "/style.css") ? "text/javascript; charset=utf-8"
                                             : "text/css; charset=utf-8";
         reply(fd, 200, web.empty()?std::string(codex_resource(name)):read_bytes(web / name), mime);
         return;

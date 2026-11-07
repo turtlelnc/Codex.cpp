@@ -57,11 +57,11 @@ async function http(path, body, wire = 1) {
     data = await response.json();
   } catch (error) {
     if (generation !== state.generation) throw Error(STALE);
-    throw error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;
+    const failure=error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;failure.network=true;throw failure;
   } finally { clearTimeout(timeout); }
   if (generation !== state.generation) throw Error(STALE);
   if (response.status === 401) { $('workspace').hidden = true; $('host-login').hidden = false; throw new Error('请登录服务器工作区'); }
-  if (!response.ok) throw new Error(data.error || '请求失败');
+  if (!response.ok) {const failure=new Error(data.error || '请求失败');failure.network=[408,429,500,502,503,504].includes(response.status);throw failure;}
   return data;
 }
 
@@ -493,13 +493,13 @@ function forwardSide(text) {
 /* ---------- 代码高亮与 Diff 解析 ---------- */
 
 const KW = new Set('int char bool void auto const static inline struct class return if else for while switch case break continue namespace using include std string size_t nullptr true false new delete public private virtual template typename function let var import export from async await def'.split(' '));
-const CODE_EXT = new Set(['c', 'cc', 'cpp', 'h', 'hpp', 'inc', 'mm', 'js', 'ts', 'java', 'rs', 'go']);
+const CODE_EXT = new Set(['c', 'cc', 'cpp', 'h', 'hpp', 'inc', 'mm', 'js', 'ts', 'java', 'rs', 'go', 'json']);
 const extOf = p => (String(p).split('.').pop() || '').toLowerCase();
 
 // 返回 [{text, cls}] 片段，调用方用 textContent 写入。
 function highlight(src, path) {
   if (path && !CODE_EXT.has(extOf(path))) return [{text: src}];
-  const re = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*")|(^\s*#\s*\w+)|(\b\d+\b)|(\b[A-Za-z_]\w*\b)/gm;
+  const re = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(^\s*#\s*\w+)|(\b\d+\b)|(\b[A-Za-z_]\w*\b)/gm;
   const out = [];
   let last = 0, m;
   while ((m = re.exec(src))) {
@@ -558,46 +558,13 @@ function diffBlock(files, single) {
 
 /* ---------- Markdown（DOM 构造，不使用 innerHTML） ---------- */
 
-function inline(parent, text) {
-  for (const part of text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/)) {
-    if (!part) continue;
-    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) parent.append(el('code', part.slice(1, -1)));
-    else if (part.startsWith('**') && part.endsWith('**') && part.length > 4) parent.append(el('b', part.slice(2, -2)));
-    else parent.append(document.createTextNode(part));
-  }
-}
-
 function markdown(text) {
   const node = CodexPlugin.call('markdown.render', { text });
   if (!(node instanceof HTMLElement) || !node.classList.contains('md')) throw Error('Plugin Markdown renderer must return an .md element');
   return node;
 }
 function markdownBuiltin(text) {
-  const box = el('div', undefined, 'md');
-  text.split(/```[\w+-]*\n?/).forEach((chunk, i) => {
-    if (i % 2) { box.append(el('pre', chunk.replace(/\n$/, ''))); return; }
-    let lines = [];
-    const flushParagraph = () => {
-      if (!lines.length) return;
-      const p = el('p');
-      inline(p, lines.join('\n'));
-      box.append(p);
-      lines = [];
-    };
-    for (const line of chunk.split(/\r?\n/)) {
-      // ATX headings: up to three leading spaces, 1–6 hashes, then whitespace.
-      const heading = line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/);
-      if (heading) {
-        flushParagraph();
-        const node = el('h' + heading[1].length);
-        inline(node, (heading[2] || '').replace(/[ \t]+#+[ \t]*$/, '').trim());
-        box.append(node);
-      } else if (!line.trim()) flushParagraph();
-      else lines.push(line);
-    }
-    flushParagraph();
-  });
-  return box;
+  return CodexMarkdown.render(text, {highlight, onFileLink: async path => {try{await openFile(decodeURIComponent(path.split('#')[0]));}catch(error){notice(error.message);}} });
 }
 
 /* ---------- 工具调用 ---------- */
@@ -812,7 +779,7 @@ function streamMarkup(text) {
   const leaves = [];
   let leaf,
     offset = 0;
-  while ((leaf = walker.nextNode())) leaves.push(leaf);
+  while ((leaf = walker.nextNode())) if(!leaf.parentElement.closest('button, .md-code-header'))leaves.push(leaf);
   for (const textNode of leaves) {
     const span = el('span', undefined, 'stream-text');
     span._offset = offset;
@@ -820,6 +787,7 @@ function streamMarkup(text) {
     textNode.replaceWith(span);
     span.append(textNode);
   }
+  body._streamText=leaves.map(leaf=>leaf.textContent).join('');
   return body;
 }
 function settleStreamLeaf(leaf) {
@@ -879,6 +847,7 @@ function appendStreamText(leaf, delta, budget, offset) {
   leaf.append(tail);
 }
 function patchStreamMarkup(current, next, budget) {
+  CodexMarkdown.updateElement(current,next);
   if (current.classList.contains('stream-text')) {
     const before = current.textContent,
       after = next.textContent;
@@ -917,7 +886,7 @@ function updateLiveMessage(node, text) {
     box = $('messages');
   const canAnimate =
     text.startsWith(node._text) &&
-    next.textContent.startsWith(body.textContent) &&
+    next._streamText.startsWith(body._streamText) &&
     streamSegmenter &&
     !streamReducedMotion.matches &&
     !document.hidden &&
@@ -928,11 +897,12 @@ function updateLiveMessage(node, text) {
   patchStreamMarkup(body, next, {
     remaining: canAnimate ? 1 : 0,
     groups: Math.max(0, activeGroups - 16),
-    oldLength: body.textContent.length,
+    oldLength: body._streamText.length,
   });
   for (const leaf of body.querySelectorAll('.stream-end')) leaf.classList.remove('stream-end');
   const leaves = body.querySelectorAll('.stream-text');
   leaves[leaves.length - 1]?.classList.add('stream-end');
+  body._streamText=next._streamText;
   node._text = text;
 }
 function settleStreamAnimations() {
@@ -1001,6 +971,65 @@ function loginRunning(snap) {
       (snap.events || []).some((event) => event.type === 'login.notice'))
   );
 }
+// Progress reflects observable protocol events, not inferred hidden reasoning.
+function modelPhase(snap) {
+  return snap.model_activity?.phase || (snap.reasoning_draft ? 'reasoning' : 'waiting');
+}
+function modelActivityLabel(snap) {
+  const phase = modelPhase(snap),
+    name = snap.model_activity?.name || '';
+  if (phase === 'reasoning') return '思考中';
+  if (phase === 'retrying') {
+    const reason = snap.model_activity?.reason;
+    return reason === 'overloaded'
+      ? '服务繁忙，正在重连'
+      : reason === 'rate_limited'
+        ? '请求受限，等待重试'
+        : '正在重连模型服务';
+  }
+  if (phase === 'quota') return '额度不足，等待恢复';
+  if (phase === 'text') return '正在生成回复';
+  if (phase === 'tool') {
+    if (['write_file', 'apply_patch'].includes(name)) return '正在生成文件修改参数';
+    if (name === 'shell') return '正在生成命令';
+    if (name === 'read_file' || name === 'list_dir') return '正在准备读取文件';
+    return '正在生成工具调用' + (name ? '：' + name : '');
+  }
+  return '等待模型响应';
+}
+function modelProgressNode(snap) {
+  const node = el('div', undefined, 'message activity-progress');
+  node.dataset.phase = modelPhase(snap);
+  const cursor = el('span', undefined, 'activity-cursor');
+  cursor.setAttribute('aria-hidden', 'true');
+  const label = el('span', modelActivityLabel(snap));
+  label.setAttribute('role', 'status');
+  const elapsed = el('span', undefined, 'activity-elapsed');
+  elapsed.setAttribute('aria-hidden', 'true');
+  const started = Number(snap.model_activity?.started_at);
+  node.dataset.startedAt = String(
+    Number.isFinite(started) && started > 0 ? started : state.waitStarted || Date.now(),
+  );
+  if (snap.model_activity?.heartbeat_at)
+    node.title = '已收到服务端保活；连接仍在，保活不能说明正在推理或排队。';
+  if (modelPhase(snap) === 'tool')
+    node.title = '模型仍在生成工具参数；完整验证并获得所需批准后才会执行。';
+  node.append(cursor, label, elapsed);
+  updateModelElapsed(node);
+  return node;
+}
+function updateModelElapsed(node) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Number(node.dataset.startedAt)) / 1000));
+  const value =
+    seconds < 60 ? seconds + ' 秒' : Math.floor(seconds / 60) + ' 分 ' + (seconds % 60) + ' 秒';
+  const counter = node.querySelector('.activity-elapsed');
+  if (counter && counter.textContent !== value) counter.textContent = value;
+}
+setInterval(() => {
+  if (!document.hidden)
+    for (const node of document.querySelectorAll('.activity-progress')) updateModelElapsed(node);
+}, 1000);
+
 function buildChat(snap, wasBusy = false) {
   const used = new Set();
   const cached = (key, value, create) => {
@@ -1153,10 +1182,10 @@ function buildChat(snap, wasBusy = false) {
     updateLiveMessage(entry.node, snap.draft);
     nodes.push(entry.node);
   }
-  else if (loginRunning(snap))
+  if (loginRunning(snap))
     nodes.push(cached('login', true, () => el('div', '正在等待设备登录，请在登录窗口完成授权。', 'message')));
-  else if (snap.busy && !pending && !rows.some((r) => r.k === 'tool' && r.output === null))
-    nodes.push(cached('thinking', true, () => el('div', '思考中…', 'message thinking')));
+  else if (snap.busy && !pending && (!snap.draft || modelPhase(snap)!=='text') && !rows.some((r) => r.k === 'tool' && r.output === null))
+    nodes.push(cached('activity', [modelActivityLabel(snap),snap.model_activity?.started_at,!!snap.model_activity?.heartbeat_at], () => modelProgressNode(snap)));
   for (const key of messageCache.keys()) if (!used.has(key)) messageCache.delete(key);
   return nodes;
 }
@@ -1574,7 +1603,7 @@ function renderSessions(sessions, busy) {
 }
 
 function setQueueState(text, busy) {
-  $('queue-state').textContent = text;
+  if($('queue-state').textContent!==text)$('queue-state').textContent = text;
   $('queue-state').title = text;
   $('queue-state').dataset.busy = busy ? 'true' : 'false';
 }
@@ -1643,6 +1672,7 @@ async function refresh() {
     const wasBusy = state.snap?.session_id === snap.session_id && state.snap?.busy;
     const previousSnap = state.snap;
     state.snap = snap;
+    if(snap.busy&&!wasBusy)state.waitStarted=Date.now();
     const historyStatus = $('history-status');
     if (historyStatus) historyStatus.hidden = !snap.history_truncated;
     renderDeviceLogin(snap);
@@ -1654,6 +1684,7 @@ async function refresh() {
       rows,
       snap.draft,
       snap.reasoning_draft,
+      snap.model_activity,
       snap.busy,
       snap.pending,
       snap.messages,
@@ -1703,12 +1734,12 @@ async function refresh() {
           : snap.busy
             ? runningTool
               ? '工具执行中'
-              : waitingTool && !snap.draft ? '等待工具结果' : '模型处理中'
+              : waitingTool && !snap.draft ? '等待工具结果' : modelActivityLabel(snap)
             : queued
               ? '任务排队'
               : state.projectInfo?.busy
                 ? '项目处理中'
-                : '就绪',
+                : snap.error ? (snap.error==='Task stopped'?'已停止':'任务失败') : '就绪',
       snap.busy,
     );
     setSendMode(snap.busy);
@@ -1728,8 +1759,9 @@ async function refresh() {
     if (generation !== state.generation) return;
     if (deviceLogin && !deviceLogin.finished && deviceLogin.generation === state.generation) $('device-login-status').textContent = '连接中断，正在尝试恢复登录状态…';
     state.connectionError = e.message;
-    setConnection('连接中断', false);
-    setQueueState('连接中断', false);
+    const status=e.network?'正在重连':'状态获取失败';
+    setConnection(status, false);
+    setQueueState(status, false);
     notice(e.message);
   } finally {
     state.polling = false;

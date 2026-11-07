@@ -347,3 +347,5 @@ WebUI 状态边界、浏览器回归运行方法和验证范围见 [WebUI 质量
 对话优先布局、真实工具摘要及完整日志接口的实现与验证边界见 [WebUI 对话布局说明](docs/WEBUI_CONVERSATION.md)。
 
 WebUI 的独立只读侧聊、设置入口和默认关闭的自动下一步建议，见 [WebUI 辅助功能](docs/WEBUI_ASSISTANCE.md)。
+
+WebUI 的模型运行状态、重试规则和独立 Markdown 渲染模块，见 [WebUI 流式状态与渲染](docs/WEBUI_RENDERING.md)。
