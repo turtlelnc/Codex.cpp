@@ -40,9 +40,14 @@
   check(!json_string_field(automatic[1],"reasoning_content")&&json_string_field(carried[1],"reasoning_content")==std::optional<std::string>("returned reasoning")&&!json_string_field(carried[2],"reasoning_content"),"Optional reasoning attaches only to its returned assistant reply");
   history.items={R"({"type":"codex_reasoning","text":"tool reasoning"})",R"({"role":"assistant","content":"preamble"})",R"({"type":"function_call","name":"read_file","call_id":"r1","arguments":"{}"})",R"({"type":"function_call_output","call_id":"r1","output":"ok"})"};
   automatic=chat_history(history,"test",false);
-  check(json_string_field(automatic[2],"reasoning_content")==std::optional<std::string>("tool reasoning"),"Required tool reasoning survives an assistant preamble with optional carry disabled");
+  check(automatic.size()==3&&json_string_field(automatic[1],"reasoning_content")==std::optional<std::string>("tool reasoning")&&json_string_field(automatic[1],"content")==std::optional<std::string>("preamble"),"Required tool reasoning survives an assistant preamble with optional carry disabled");
   history.items={R"({"type":"codex_reasoning","text":"abandoned response"})",R"({"role":"user","content":[{"type":"input_text","text":"new image question"},{"type":"input_image","image_url":"data:image/png;base64,eA=="}]})",R"({"role":"assistant","content":"new answer without reasoning"})"};
   carried=chat_history(history,"test",true);
-  check(!json_string_field(carried.back(),"reasoning_content"),"New image user turn clears reasoning from an interrupted response");
+  check(json_string_field(carried.back(),"reasoning_content")==std::optional<std::string>(""),"New image user turn clears reasoning from an interrupted response");
+  history.items={R"({"role":"assistant","content":"old reply without reasoning"})",R"({"type":"codex_reasoning","format":"chat","text":""})",R"({"role":"assistant","content":"empty returned reasoning"})"};
+  carried=chat_history(history,"test",true);
+  check(json_string_field(carried[1],"reasoning_content")==std::optional<std::string>("")&&json_string_field(carried[2],"reasoning_content")==std::optional<std::string>(""),"Known Chat reasoning conversations preserve empty/unknown historical reasoning without fabrication");
+  history.items={R"({"type":"codex_reasoning","format":"responses","text":"Responses summary"})",R"({"role":"assistant","content":"Responses reply"})"};carried=chat_history(history,"test",true);
+  check(!json_string_field(carried[1],"reasoning_content"),"Responses summaries are not injected as Chat reasoning_content");
   check(find_slash_command("/settings")!=nullptr,"Settings appears in TUI slash command registry");
 }

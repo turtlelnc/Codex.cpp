@@ -147,6 +147,22 @@ const tokens = (s) => {
           r.body.messages.some((m) => String(m.content).includes("Previous summary:\nSUMMARY_")),
       ),
     );
+    const fullJournal = fs.readFileSync(file, "utf8");
+    assert(fullJournal.startsWith(initial), "compaction must preserve original history");
+    assert(fullJournal.includes("codex_context_checkpoint"));
+    const mark = log.length;
+    child.stdin.write("/fork\n");
+    await wait(() => log.slice(mark).includes("Forked "));
+    const match = log.slice(mark).match(/Forked .* → (session-[A-Za-z0-9-]+)/);
+    assert(match);
+    assert.equal(
+      fs.readFileSync(path.join(dir, match[1] + ".items.jsonl"), "utf8"),
+      fullJournal,
+      "fork preserves complete journal including checkpoints",
+    );
+    const resumeMark = log.length;
+    child.stdin.write("/resume " + id + "\n");
+    await wait(() => log.slice(resumeMark).includes("Resumed " + id));
     const beforeOversize = requests.length;
     log = "";
     const huge = "TOO_BIG_CURRENT_INPUT " + "q".repeat(180000);

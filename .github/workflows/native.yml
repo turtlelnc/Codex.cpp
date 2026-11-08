@@ -56,6 +56,9 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; fi
           node tests/long_session_test.cjs "$binary"
           node tests/context_budget_test.cjs "$binary"
+          node tests/compaction_history_test.cjs "$binary"
+          node tests/agent_failure_test.cjs "$binary"
+          node tests/reasoning_continuation_test.cjs "$binary"
           node tests/provider_budget_restart_test.cjs "$binary"
           node tests/portable_data_test.cjs "$binary"
           node tests/portable_update_test.cjs "$binary"
@@ -218,6 +221,12 @@ jobs:
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/plugin_creator_browser_test.cjs build/codex-cpp
       - name: Verify large-session incremental snapshots in Chromium
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/long_session_test.cjs build/codex-cpp --browser
+      - name: Verify tool history across repeated context compaction
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/compaction_history_test.cjs build/codex-cpp --browser
+      - name: Verify actionable model failures and persistent diagnostics
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/agent_failure_test.cjs build/codex-cpp --browser
       - name: Verify side discussion, settings and idle suggestions in Chromium
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
