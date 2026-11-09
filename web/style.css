@@ -558,3 +558,49 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 
 .execution .reasoning { margin: 4px 0; padding: 0 4px; font-size: 13px; }
 .execution .reasoning-body { border-left: 1px solid var(--line); padding: 4px 12px 12px; }
+
+/* Native disclosures interpolate their real height where supported. Older
+   engines keep instant, fully functional disclosure instead of a fixed cap. */
+@supports (interpolate-size: allow-keywords) {
+  .execution, .reasoning, .tool { interpolate-size: allow-keywords; }
+  .execution::details-content, .reasoning::details-content {
+    block-size: 0;
+    overflow: clip;
+    opacity: 0;
+    transition: block-size 180ms ease-out, opacity 140ms ease-out,
+      content-visibility 0s 180ms allow-discrete;
+  }
+  .execution[open]::details-content, .reasoning[open]::details-content {
+    block-size: auto;
+    content-visibility: visible;
+    opacity: 1;
+    transition: block-size 180ms ease-out, opacity 140ms ease-out,
+      content-visibility 0s allow-discrete;
+  }
+  .tool .tool-b {
+    display: block;
+    block-size: 0;
+    padding-block: 0;
+    border-top-width: 0;
+    overflow: clip;
+    opacity: 0;
+    transition: block-size 180ms ease-out, padding-block 180ms ease-out,
+      opacity 140ms ease-out;
+  }
+  .tool.open .tool-b {
+    block-size: auto;
+    padding-block: 8px;
+    overflow: auto;
+    opacity: 1;
+  }
+}
+.execution > summary, .tool-h, .tool-state {
+  transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .execution::details-content, .reasoning::details-content,
+  .execution[open]::details-content, .reasoning[open]::details-content,
+  .tool .tool-b, .tool.open .tool-b, .execution > summary, .tool-h, .tool-state {
+    transition: none;
+  }
+}

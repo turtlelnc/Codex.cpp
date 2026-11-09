@@ -1115,7 +1115,13 @@ function buildChat(snap, wasBusy = false) {
     for (const item of tools) counts.set(item.status, (counts.get(item.status) || 0) + 1);
     const summary =
       executionSummary(tools) + (thinking.length ? ' · ' + thinking.length + ' 段思考' : '') + ' · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
-    if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
+    if (entry.summary.textContent !== summary) {
+      const visible = entry.summary.isConnected;
+      entry.summary.textContent = summary;
+      entry.transition?.cancel();
+      if (visible && !streamReducedMotion.matches)
+        entry.transition = entry.summary.animate([{opacity: .55}, {opacity: 1}], {duration: 140, easing: 'ease-out'});
+    }
     entry.node.dataset.active = String(group.some(item => ['running', 'queued'].includes(item.status)));
     entry.node.dataset.attention = group.some((item) =>
       ['failed', 'denied', 'interrupted'].includes(item.status),

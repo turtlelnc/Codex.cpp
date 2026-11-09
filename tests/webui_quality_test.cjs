@@ -667,6 +667,25 @@ function snapshot() {
     snap.timeline.splice(4,0,{k:'reasoning',text:'第二条命令已返回，继续第三步。'});
     await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
     assert.equal(await page.locator('.execution').getAttribute('open'), null);
+    if (await page.evaluate(() => CSS.supports('interpolate-size', 'allow-keywords'))) {
+      const heights = () => page.locator('.execution').evaluate(node => new Promise(resolve => {
+        const samples=[], start=performance.now();
+        const frame=()=>{samples.push(Math.round(node.getBoundingClientRect().height));
+          if(performance.now()-start<240)requestAnimationFrame(frame);else resolve(samples);};
+        requestAnimationFrame(frame);
+      }));
+      await page.locator('.execution > summary').click();
+      const opening=await heights();
+      assert(new Set(opening).size>2, 'Opening must interpolate height across frames');
+      await page.locator('.execution > summary').click();
+      const closing=await heights();
+      assert(new Set(closing).size>2, 'Closing must interpolate height across frames');
+      await page.emulateMedia({reducedMotion:'reduce'});
+      await page.locator('.execution > summary').click();
+      assert.equal(await page.locator('.execution').evaluate(node=>node.getAnimations({subtree:true}).filter(a=>a.playState==='running').length),0);
+      await page.locator('.execution > summary').click();
+      await page.emulateMedia({reducedMotion:'no-preference'});
+    }
     await page.locator('.execution > summary').click();
     assert.equal(await page.locator('.tool-h').first().innerText().then(t=>t.includes('printf')),false);
     assert.equal(await page.locator('.tool-b').first().isVisible(),false);
