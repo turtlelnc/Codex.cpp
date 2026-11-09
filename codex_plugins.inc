@@ -70,8 +70,8 @@ struct PluginRegistry{
     std::string json="[";for(const auto& name:next){if(json.size()>1)json+=",";json+="\""+json_escape(name)+"\"";}json+="]\n";
     if(!plugin_save(plugin_home()/"plugins-enabled.json",json,error))return false;enabled_ids=std::move(next);return true;}
   static fs::path settings_path(const std::string& id){return plugin_home()/"plugin-settings"/(id+".json");}
-  static bool configure(Plugin& p,std::string& error){const auto file=settings_path(p.id);std::error_code ec;if(!fs::exists(file,ec))return true;
-    if(!within_root(plugin_home(),file)||!fs::is_regular_file(file,ec)||fs::file_size(file,ec)>65536||ec){error="invalid settings file";return false;}
+  static bool configure(Plugin& p,std::string& error,const fs::path& home=plugin_home()){const auto file=home/"plugin-settings"/(p.id+".json");std::error_code ec;if(!fs::exists(file,ec))return true;
+    if(!within_root(home,file)||!fs::is_regular_file(file,ec)||fs::file_size(file,ec)>65536||ec){error="invalid settings file";return false;}
     auto data=plugin_json(slurp(file,65537));if(!data||data->kind!=Json::Object){error="settings must be a JSON object";return false;}
     for(const auto&[key,value]:data->fields){if(!p.settings.count(key)||value.kind!=Json::String||value.value.size()>4096){error="unknown/invalid setting: "+key;return false;}p.settings[key]=value.value;}return true;
   }

@@ -846,7 +846,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_frontend.inc"
 // ---------- CLI ----------
 struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
-bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false;int max_steps = 64;
+bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
@@ -907,6 +907,7 @@ Agent options:
   --danger-full-access          alias; also implies --approval never
   --context-window N            model context tokens (default 32768; environment CODEX_CPP_CONTEXT_WINDOW)
   --output-reserve N            reserved output tokens (default min(4096, window/8))
+  --design                      enable Design instructions and review
   --no-tools                    discussion-only mode; reject tool calls
   --max-steps N                 agent step limit (default: 64)
   --mcp-config PATH             trusted MCP stdio server configuration JSON
@@ -940,6 +941,7 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "--session-dir" && i + 1 < argc){o.session_store=fs::absolute(fs::u8path(argv[++i]));continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
+  if(a=="--design"){o.design=true;continue;}
   if(a=="--no-tools"){o.no_tools=true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
@@ -1156,7 +1158,7 @@ struct PluginDisplayScope{~PluginDisplayScope(){plugins.display={};}} plugin_dis
 plugins.event("session.started",opt.root);
 struct SessionExitNotice{Session& session;std::optional<TuiRenderer>& tui;std::optional<FrontendBridge>& frontend;bool enabled;~SessionExitNotice(){session_observer={};frontend.reset();tui.reset();if(enabled && (!session.transcript.empty() || !session.items.empty()) && fs::exists(session.events_path))std::cout<<"Session ID: "<<session.id<<'\n';}} exit_notice{session,tui,frontend,!opt.json};
 std::string first_prompt;if(!opt.prompt.empty()){for(size_t i = 0;i < opt.prompt.size();++i){if(i)first_prompt += ' ';first_prompt += opt.prompt[i];} }
-bool plan_mode = false,design_mode=false;std::string goal;std::string personality;std::string last_assistant; std::vector<std::pair<std::string,std::string>> pending_mentions;std::vector<std::pair<std::string,std::string>> pending_images;
+bool plan_mode = false,design_mode=opt.design;std::string goal;std::string personality;std::string last_assistant; std::vector<std::pair<std::string,std::string>> pending_mentions;std::vector<std::pair<std::string,std::string>> pending_images;
 if(opt.images.size()>4){std::cerr<<"Maximum four images per turn.\n";return 2;}for(const auto& image:opt.images){ const fs::path file=image.is_absolute()?image:opt.root/image;auto url=image_data_url(file,err);
   if(!url){std::cerr<<"image "<<file<<": "<<err<<'\n';return 2;}pending_images.emplace_back(file.string(),std::move(*url));
 }

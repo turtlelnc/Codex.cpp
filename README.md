@@ -350,4 +350,6 @@ WebUI 的独立只读侧聊、设置入口和默认关闭的自动下一步建�
 
 WebUI 的模型运行状态、重试规则和独立 Markdown 渲染模块，见 [WebUI 流式状态与渲染](docs/WEBUI_RENDERING.md)。
 
+WebUI 支持 `@` 插件引用、键盘滚动的斜杠菜单，以及 `/design` / `/design plan`，见 [输入辅助与 Design 模式](docs/WEBUI_COMPOSER.md)。
+
 WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和团队配置；远程设置按服务器账号和工作区隔离。支持选择是否回传提供商实际返回的历史推理文本，工具模式按协议保留已有推理，无工具模式可选回传。详见 [设置与同步](docs/SETTINGS.md)。

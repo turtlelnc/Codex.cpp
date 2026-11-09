@@ -26,7 +26,7 @@ let version = 0,
   failSend = false,
   failWrite = false,
   sendIds = [],
-  decisions = [];
+  decisions = [], sentRequests = [];
 const wait = async (fn) => {
   for (let i = 0; i < 400; i++) {
     if (await fn()) return;
@@ -59,11 +59,12 @@ function snapshot() {
           res.end(JSON.stringify(data));
         };
         if (req.url === "/api/me")
-          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1',...(assistance?['suggestions.v1']:[])]}}) });
+          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['design.v1','plugin-mentions.v1','scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1',...(assistance?['suggestions.v1']:[])]}}) });
         if (req.url === "/api/rpc") {
           const b = JSON.parse(raw);
           let result = {};
           switch (b.op) {
+            case "plugin_catalog": result={plugins:[{id:'gitx',description:'Git 工作流'},{id:'docs',description:'文档工具'}]};break;
             case "projects":
               result = { projects: noProjects ? [] : ["p1", "p2"] };
               break;
@@ -133,6 +134,7 @@ function snapshot() {
               break;
             case "send":
               sends++;
+              sentRequests.push(b);
               sendIds.push(b.request_id);
               if (failSend) return reply({ error: "send test failure" }, 503);
               return setTimeout(() => reply({ result: { submitted: true } }), 300);
@@ -205,6 +207,49 @@ function snapshot() {
       "false",
     );
     assert.equal(await page.locator("#project-files").getAttribute("open"), null);
+    // Keyboard selection must remain visible while wrapping in a scrollable menu.
+    await page.locator('#prompt').fill('/');
+    for(let i=0;i<28;i++){
+      await page.locator('#prompt').press('ArrowDown');
+      assert(await page.locator('#slash-menu [aria-selected="true"]').evaluate(n=>{const a=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return a.top>=b.top-1&&a.bottom<=b.bottom+1}));
+    }
+    for(let i=0;i<15;i++)await page.locator('#prompt').press('ArrowUp');
+    assert(await page.locator('#slash-menu [aria-selected="true"]').evaluate(n=>{const a=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return a.top>=b.top-1&&a.bottom<=b.bottom+1}));
+    await page.locator('#prompt').press('Escape');
+    await page.locator('#prompt').fill('请使用 @gi');
+    await page.getByRole('option',{name:'@gitx Git 工作流',exact:true}).waitFor();
+    await page.locator('#prompt').press('Tab');
+    assert.equal(await page.locator('#prompt').inputValue(),'请使用 @gitx ');
+    await page.locator('#prompt').fill('user@example.com');
+    assert.equal(await page.locator('#slash-menu').isVisible(),false);
+    await page.locator('#prompt').fill('@missing');
+    await page.getByRole('option',{name:/没有匹配的可用插件/}).waitFor();
+    await page.locator('#prompt').press('Escape');
+    const beforeDesign=sends;
+    await page.locator('#prompt').fill('/design');await page.locator('#prompt').press('Enter');
+    await page.locator('#design-mode').waitFor({state:'visible'});assert.equal(sends,beforeDesign);
+    await page.locator('#prompt').fill('/design plan 做一个设置页');await page.locator('#prompt').press('Enter');
+    await wait(()=>sentRequests.length&&sentRequests.at(-1).design_plan===true);
+    assert.equal(sentRequests.at(-1).design_mode,true);
+    assert(sentRequests.at(-1).text.includes('做一个设置页'));
+    await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+    await page.locator('#prompt').fill('/design off');await page.locator('#prompt').press('Enter');
+    await page.locator('#design-mode').waitFor({state:'hidden'});
+    await page.locator('#prompt').fill('');
+    sends=0; sendIds=[]; sentRequests=[];
+
+    // The header shortcut must open the terminal, including its overlay on phones.
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.locator('#terminal-toggle').click();
+      await page.locator('#terminal-panel').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('[data-panel="terminal"]').getAttribute('aria-pressed'), 'true');
+      await page.locator('#inspector-close').click();
+      await page.locator('#prompt').fill('继续这个任务');
+      assert.equal(await page.locator('#prompt').inputValue(), '继续这个任务');
+      await page.locator('#prompt').fill('');
+    }
+
     for (const width of [1440, 1100, 1000, 761, 760, 390, 844]) {
       await page.setViewportSize({ width, height: 900 });
       for (let n = 0; n < 4; n++) {
@@ -646,6 +691,55 @@ function snapshot() {
     await page.locator("#composer").evaluate((n) => n.requestSubmit());
     await page.waitForFunction(() => document.querySelector("#prompt").value === "");
     assert.equal(sendIds.at(-1), sendIds.at(-2));
+
+    // Three command calls collapse as one operation group, with raw commands at level two.
+    snap = {timeline:[{k:'user',text:'Three commands'}, ...[1,2,3].map(i =>
+      ({k:'tool',id:'fold-'+i,name:'shell',args:JSON.stringify({command:'printf "STEP_'+i+'"'}),output:'STEP_'+i}))],
+      messages:[],draft:'',busy:false,pending:null,events:[]};
+    snap.timeline.splice(2,0,{k:'reasoning',text:'第一条命令已返回，继续第二步。'});
+    snap.timeline.splice(4,0,{k:'reasoning',text:'第二条命令已返回，继续第三步。'});
+    await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
+    assert.equal(await page.locator('.execution').getAttribute('open'), null);
+    if (await page.evaluate(() => CSS.supports('interpolate-size', 'allow-keywords'))) {
+      const heights = () => page.locator('.execution').evaluate(node => new Promise(resolve => {
+        const samples=[], start=performance.now();
+        const frame=()=>{samples.push(Math.round(node.getBoundingClientRect().height));
+          if(performance.now()-start<240)requestAnimationFrame(frame);else resolve(samples);};
+        requestAnimationFrame(frame);
+      }));
+      await page.locator('.execution > summary').click();
+      const opening=await heights();
+      assert(new Set(opening).size>2, 'Opening must interpolate height across frames');
+      await page.locator('.execution > summary').click();
+      const closing=await heights();
+      assert(new Set(closing).size>2, 'Closing must interpolate height across frames');
+      await page.emulateMedia({reducedMotion:'reduce'});
+      await page.locator('.execution > summary').click();
+      assert.equal(await page.locator('.execution').evaluate(node=>node.getAnimations({subtree:true}).filter(a=>a.playState==='running').length),0);
+      await page.locator('.execution > summary').click();
+      await page.emulateMedia({reducedMotion:'no-preference'});
+    }
+    await page.locator('.execution > summary').click();
+    assert.equal(await page.locator('.tool-h').first().innerText().then(t=>t.includes('printf')),false);
+    assert.equal(await page.locator('.tool-b').first().isVisible(),false);
+    assert.equal(await page.locator('.execution .reasoning').count(),2);
+    assert((await page.locator('.execution > summary').innerText()).includes('2 段思考'));
+    assert.deepEqual(await page.locator('.execution-tools > *').evaluateAll(nodes=>nodes.map(n=>n.classList.contains('reasoning')?'thinking':'tool')),['tool','thinking','tool','thinking','tool']);
+    await page.locator('.execution .reasoning summary').first().click();
+    assert(await page.locator('.execution .reasoning-body').first().isVisible());
+
+    await page.locator('.tool-h').first().press('Enter');
+    assert((await page.locator('.tool-b').first().innerText()).includes('printf "STEP_1"'));
+    await page.locator('.execution > summary').click();
+    snap.timeline.find(r=>r.id==='fold-2').output=null;snap.busy=true;
+    snap.events=[{type:'tool.started',payload:{call_id:'fold-2'}}];
+    await page.locator('.execution > summary').filter({hasText:'正在打印文本'}).waitFor();
+    assert.equal(await page.locator('.execution').getAttribute('open'),null);
+    snap.timeline.find(r=>r.id==='fold-2').output='STEP_2';snap.busy=false;snap.events=[];
+    await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
+    await page.locator('.execution > summary').click();
+    assert(await page.locator('.tool-b').first().isVisible());
+    assert(await page.locator('.execution .reasoning-body').first().isVisible());
 
     // Conversation-first execution summaries use actual events and never bury approval.
     await page.setViewportSize({ width: 1440, height: 1000 });

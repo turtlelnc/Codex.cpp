@@ -1268,7 +1268,10 @@ struct App {
       return obj({{"partial",boolean(true)},{"base_revision",str(since)},{"revision",str(revision)},{"changes",changes}});}
     result.fields["timeline"]=timeline;result.fields["revision"]=str(revision);return result;
   }
-  void start(const std::string &prompt, const std::string &rid, bool login = false) {
+  static std::string submission_hash(const std::string& prompt,bool design,bool proposal) {
+    return (design ? (proposal ? "design-plan:" : "design:") : "") + digest(prompt);
+  }
+  void start(const std::string &prompt, const std::string &rid, bool login = false, bool design = false, bool proposal = false) {
     require(!busy, "A task is already running");
     if (!login) {
       require(!trim(prompt).empty() && prompt.size() <= 64000 && prompt.find('\0') == std::string::npos,
@@ -1286,20 +1289,21 @@ struct App {
     draft.clear();
       reasoning_draft.clear();
     if (!login) {
-      submissions.fields[rid] = str(digest(prompt));
+      submissions.fields[rid] = str(submission_hash(prompt,design,proposal));
       while (submissions.fields.size() > 1000)
         submissions.fields.erase(submissions.fields.begin());
       messages.items.push_back(obj({{"role", str("user")}, {"content", str(prompt)}}));
     }
     save();
     auto args = agent_args();
+    if(design)args.push_back("--design");
     auto environment = secrets;
     environment["CODEX_CPP_HOME"] = auth_home.u8string();
     if (login)
       args = {binary.u8string(), "--provider", "codex", "--login"};
     else {
       args.insert(args.end(), {"--json", "--sandbox",
-                               permission == "full"       ? "danger-full-access"
+                               proposal ? "read-only" : permission == "full"       ? "danger-full-access"
                                : permission == "readonly" ? "read-only"
                                                           : "workspace-write",
                                "--approval", permission == "full" ? "never" : "on-request"});
@@ -1523,19 +1527,37 @@ struct App {
       require(found, "Tool call not found in the current session");
       return result;
     }
+    if (op == "plugin_catalog") {
+      J result=arr();std::set<std::string> seen;
+      for(const auto& service:plugin_runtime().inspect())if(service.owner.rfind("builtin.",0)!=0 && seen.insert(service.owner).second)
+        result.items.push_back(obj({{"id",str(service.owner)},{"description",str("已加载模组")}}));
+      const auto enabled=plugin_json(slurp(auth_home/"plugins-enabled.json",16384));
+      bool valid_enabled=enabled && enabled->kind==J::Array;
+      if(valid_enabled)for(const auto& item:enabled->items)if(item.kind!=J::String || !plugin_id(item.str())){valid_enabled=false;break;}
+      if(valid_enabled)for(const auto& item:enabled->items){
+        if(result.items.size()>=64)break;
+        const auto id=item.str();if(!plugin_id(id)||seen.count(id))continue;
+        if(fs::is_symlink(auth_home/"plugins") || fs::is_symlink(auth_home/"plugins"/id))continue;
+        std::string error;auto entry=PluginRegistry::read(auth_home/"plugins"/id,error);
+        if(entry && entry->id==id && PluginRegistry::configure(*entry,error,auth_home)){seen.insert(id);result.items.push_back(obj({{"id",str(id)},{"description",str(entry->description)}}));}
+      }
+      return obj({{"plugins",result}});
+    }
     if (op == "status")
       return obj({{"workspace", str(workspace.root.u8string())}, {"mode", str("local")}});
     if (op == "send") {
       if(request.get("expected_session"))require(text(request,"expected_session")==sid,"Session changed; message was not sent");
       auto rid = text(request, "request_id"), prompt = text(request, "text");
+      const bool design=flag(request,"design_mode"),proposal=flag(request,"design_plan");
+      require(!proposal || design,"Design plan requires Design mode");
       auto existing = submissions.get(rid);
       if (existing) {
-        require(existing->str() == digest(prompt), "request_id already used for another message");
+        require(existing->str() == submission_hash(prompt,design,proposal), "request_id already used for another message");
         return obj({{"submitted", boolean(true)}, {"duplicate", boolean(true)}});
       }
       require(options.provider != "custom" || !display_model.empty(), "Select a model before sending");
       options.carry_reasoning=flag(ui_preferences(actor),"carry_reasoning");
-      start(prompt, rid);
+      start(prompt, rid, false, design, proposal);
       return obj({{"submitted", boolean(true)}});
     }
     if (op == "login") {

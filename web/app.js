@@ -65,7 +65,7 @@ async function http(path, body, wire = 1) {
   return data;
 }
 
-const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','status','side_snapshot','preferences','suggestions_snapshot']);
+const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','plugin_catalog','status','side_snapshot','preferences','suggestions_snapshot']);
 function teamProtocol() {
   const peer = state.user?.protocol;
   if (!peer) return { wire: state.user?.mode === 'server' ? 0 : 1, readOnly: state.user?.mode === 'server' };
@@ -586,6 +586,31 @@ function toolSummary(name, rawArgs) {
   return first === undefined ? '' : String(first);
 }
 
+// Describe the observable operation without asking a model to invent a summary.
+function toolAction(name, rawArgs) {
+  if (name === 'shell') {
+    const command = String(parseArgs(rawArgs).command || '').trim();
+    if (/^(?:printf|echo)\s/.test(command)) return '打印文本';
+    if (/^(?:rg|grep)\s/.test(command)) return '搜索文本';
+    if (/^git\s/.test(command)) return '运行 Git 命令';
+  }
+  return ({shell: '运行命令', read_file: '读取文件', list_dir: '查看目录',
+    write_file: '写入文件', apply_patch: '应用补丁', search: '搜索代码',
+    search_files: '搜索文件'})[name] || '调用 ' + name;
+}
+function executionSummary(group) {
+  const active = group.find(item => item.status === 'running') ||
+    group.find(item => item.status === 'queued');
+  if (active) return (active.status === 'running' ? '正在' : '等待执行：') + toolAction(active.row.name, active.row.args);
+  if (group.length === 1) {
+    const row = group[0].row;
+    return toolAction(row.name, row.args) + (row.name === 'shell' ? '' : '：' + toolSummary(row.name, row.args));
+  }
+  if (group.every(item => item.row.name === 'shell')) return '运行 ' + group.length + ' 条命令';
+  if (group.every(item => item.row.name === 'read_file')) return '读取 ' + group.length + ' 个文件';
+  return '执行 ' + group.length + ' 项操作';
+}
+
 function toolDetail(name, rawArgs) {
   const a = parseArgs(rawArgs);
   if (name === 'shell') return '$ ' + (a.command || '');
@@ -722,8 +747,8 @@ function toolCardBuiltin(
   const head = el('div', undefined, 'tool-h');
   head.append(
     el('span', failed ? '!' : done ? '·' : '', status === 'running' ? 'st spin' : 'st mark'),
-    el('span', name, 'name'),
-    el('span', toolSummary(name, args), 'arg'),
+    el('span', toolAction(name, args), 'name'),
+    el('span', name === 'shell' ? '' : toolSummary(name, args), 'arg'),
     el('span', toolLabels[status], 'tool-state'),
   );
   const body = el('div', undefined, 'tool-b');
@@ -732,7 +757,8 @@ function toolCardBuiltin(
     body.append(files.length ? diffBlock(files, true) : el('pre', args));
     if (done) body.append(el('pre', output, 'tool-out'));
   } else {
-    body.append(el('pre', toolDetail(name, args) + (done ? '\n\n' + output : '')));
+    body.append(el('div', name === 'shell' ? 'Shell' : name, 'tool-kind'), el('pre', toolDetail(name, args)));
+    if (done) body.append(el('div', '输出', 'tool-kind'), el('pre', output, 'tool-out'));
   }
   const logs = el('button', truncated ? '预览已截断 · 查看完整日志' : '查看原始参数与完整日志', 'tool-log');
   logs.type = 'button';
@@ -1083,11 +1109,20 @@ function buildChat(snap, wasBusy = false) {
       entry = { node, summary, body };
       executionGroups.set(key, entry);
     }
+    const tools = group.filter(item => item.row.k === 'tool');
+    const thinking = group.filter(item => item.row.k === 'reasoning');
     const counts = new Map();
-    for (const item of group) counts.set(item.status, (counts.get(item.status) || 0) + 1);
+    for (const item of tools) counts.set(item.status, (counts.get(item.status) || 0) + 1);
     const summary =
-      '工具记录 · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
-    if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
+      executionSummary(tools) + (thinking.length ? ' · ' + thinking.length + ' 段思考' : '') + ' · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
+    if (entry.summary.textContent !== summary) {
+      const visible = entry.summary.isConnected;
+      entry.summary.textContent = summary;
+      entry.transition?.cancel();
+      if (visible && !streamReducedMotion.matches)
+        entry.transition = entry.summary.animate([{opacity: .55}, {opacity: 1}], {duration: 140, easing: 'ease-out'});
+    }
+    entry.node.dataset.active = String(group.some(item => ['running', 'queued'].includes(item.status)));
     entry.node.dataset.attention = group.some((item) =>
       ['failed', 'denied', 'interrupted'].includes(item.status),
     )
@@ -1105,14 +1140,15 @@ function buildChat(snap, wasBusy = false) {
     if(row.k==='context'){
       flushGroup();nodes.push(cached(key,row.text,()=>{const box=el('details',undefined,'context-summary');box.append(el('summary','旧格式上下文摘要（内部记录）'),markdown(row.text));return box;}));
     } else if (row.k === 'reasoning') {
-      flushGroup();
       const live = messageCache.get('reasoning-draft');
       if (!messageCache.has(key) && live && live.node.querySelector('.reasoning-body').textContent === row.text) {
         live.node.querySelector('summary').textContent = '思考过程';
         messageCache.set(key, { signature: row.text, node: live.node });
         messageCache.delete('reasoning-draft');
       }
-      nodes.push(cached(key, row.text, () => reasoningMessage(row.text)));
+      const node = cached(key, row.text, () => reasoningMessage(row.text));
+      if (group.length) group.push({key, node, row});
+      else nodes.push(node);
     } else if (row.k === 'user' || row.k === 'assistant') {
       flushGroup();
       nodes.push(
@@ -1138,7 +1174,7 @@ function buildChat(snap, wasBusy = false) {
       if (awaiting) {
         flushGroup();
         nodes.push(node);
-      } else group.push({ key, node, status });
+      } else group.push({ key, node, status, row });
       const report = creatorReport(row);
       if (report && row.name === 'plugin_check' && creatorChecks.get(report.manifest) === index) {
         flushGroup();
@@ -1234,7 +1270,7 @@ function drawMessages(nodes, view = captureChatView()) {
   reconcileChildren(box, nodes);
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
-    empty.querySelector('h2').textContent=state.user?.welcome||'让想法跑起来。';
+    empty.querySelector('h2').textContent=state.user?.welcome||empty.querySelector('h2').textContent;
     for(const action of suggestions.cache?.actions||[])empty.querySelector('.sugg').append(suggestionButton(action));
     empty.querySelectorAll('[data-q]').forEach((button) => {
       button.onclick = () => {
@@ -1271,6 +1307,7 @@ function showPanel(name) {
 }
 
 for (const tab of document.querySelectorAll('[data-panel]')) tab.onclick = () => showPanel(tab.dataset.panel);
+$('terminal-toggle').onclick = () => showInspector('terminal');
 
 function showInspector(panel) {
   if ($('inspector-toggle').getAttribute('aria-pressed') !== 'true') $('inspector-toggle').click();
@@ -1791,24 +1828,27 @@ async function submitTask(event) {
   const text = $('prompt').value;
   if (!text.trim()) return;
   if (tryCommand(text)) return;
+  const design = state.designNext || {mode: !!state.design, plan: false};
   const previous = pendingSubmission();
   const pending =
     previous &&
     previous.text === text &&
+    !!previous.design_mode === design.mode && !!previous.design_plan === design.plan &&
     previous.project === state.project &&
     previous.scope === state.scope &&
     previous.user === state.user.username
       ? previous
-      : { text, project: state.project, scope: state.scope, user: state.user.username, request_id: newId() };
+      : { text, design_mode: design.mode, design_plan: design.plan, project: state.project, scope: state.scope, user: state.user.username, request_id: newId() };
   sessionStorage.setItem('codex.pending', JSON.stringify(pending));
   const generation = state.generation;
   state.submitting = true;
   $('send').disabled = true;
   try {
-    await rpc('send', { text, request_id: pending.request_id });
+    await rpc('send', { text, request_id: pending.request_id, ...(pending.design_mode ? {design_mode: true, design_plan: !!pending.design_plan} : {}) });
     sessionStorage.removeItem('codex.pending');
     if (generation !== state.generation) return;
     if ($('prompt').value === text) $('prompt').value = '';
+    state.designNext = null; updateDesignMode();
     notice('');
     await refresh();
   } catch (e) {
@@ -2046,6 +2086,7 @@ const COMMANDS = [
     if (arg && !alias[arg]) throw new Error('可选：readonly、default、full');
     openPermissions(alias[arg]);
   }},
+  {name: '/design', desc: '设计模式（on / off / plan 任务）', run: designCommand},
   {name: '/new', desc: '开始新会话', run: newChat},
   {name: '/sessions', desc: '切换本地会话', run: openSessions},
   {name: '/provider', desc: '模型提供商与密钥', run: () => openSettings()},
@@ -2058,11 +2099,55 @@ const COMMANDS = [
     COMMANDS.map(c => `${c.name.padEnd(14)}${c.desc}`).join('\n'))},
 ];
 
-const TERMINAL_ONLY = ['/plan', '/design', '/review', '/compact', '/init', '/resume', '/fork', '/rename',
+const TERMINAL_ONLY = ['/plan', '/review', '/compact', '/init', '/resume', '/fork', '/rename',
   '/undo', '/memory', '/skills', '/plugins', '/mcp', '/image', '/mention', '/goal', '/personality',
   '/continue', '/archive', '/delete', '/clear', '/logout', '/auth', '/quit'];
 
-const menu = {items: [], index: 0};
+function updateDesignMode() {
+  $('design-mode').hidden = !state.design && !state.designNext;
+  $('design-label').textContent = state.designNext?.plan ? 'Design · 只读方案' : 'Design · 界面设计';
+}
+function designCommand(arg = '') {
+  if (!state.user?.protocol?.capabilities?.includes('design.v1')) throw Error('当前服务不支持 Design，请更新服务端。');
+  if (arg === 'off') { state.design = false; state.designNext = null; }
+  else if (!arg || arg === 'on') state.design = true;
+  else {
+    const plan = arg === 'plan' || arg.startsWith('plan ');
+    const task = plan ? arg.slice(4).trim() : arg;
+    if (!task) throw Error('用法：/design plan 任务');
+    state.designNext = {mode: true, plan};
+    $('prompt').value = plan ? '先提出设计方案，不修改文件：' + task : task;
+    updateDesignMode();
+    const generation=state.generation, text=$('prompt').value;
+    setTimeout(()=>{if(generation===state.generation && $('prompt').value===text)$('composer').requestSubmit();},0);
+    return;
+  }
+  updateDesignMode(); $('prompt').focus();
+}
+$('design-exit').onclick = () => designCommand('off');
+const menu = {items: [], index: 0, kind: 'slash'};
+let mentionTicket = 0;
+function mentionQuery() {
+  const input=$('prompt'), end=input.selectionStart ?? input.value.length;
+  const match=/(?:^|\s)@([a-z0-9._-]*)$/i.exec(input.value.slice(0,end));
+  return match ? {query:match[1],start:end-match[1].length-1,end} : null;
+}
+async function updateComposerMenu() {
+  const ticket=++mentionTicket, generation=state.generation, mention=mentionQuery();
+  menu.kind=mention ? 'plugin' : 'slash'; menu.index=0;
+  if (!mention) { menu.items=menuMatches($('prompt').value);drawMenu();return; }
+  menu.items=[];drawMenu();
+  try {
+    const result=await rpc('plugin_catalog');
+    if(ticket!==mentionTicket || generation!==state.generation || document.activeElement!==$('prompt'))return;
+    const current=mentionQuery();if(!current || current.start!==mention.start || current.query!==mention.query)return;
+    menu.items=(result.plugins || []).filter(p=>/^[a-z0-9][a-z0-9._-]{0,127}$/.test(p.id) && p.id.toLowerCase().includes(mention.query.toLowerCase()))
+      .map(p=>({name:'@'+p.id,desc:p.description || '使用此插件',plugin:p.id,mention}));
+    if(!menu.items.length)menu.items=[{name:'没有匹配的可用插件',desc:'仅列出已启用或已加载的插件',unavailable:true}];
+    drawMenu();
+  } catch(error) { if(ticket===mentionTicket)notice(error.message); }
+}
+
 
 function menuMatches(value) {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
@@ -2070,26 +2155,41 @@ function menuMatches(value) {
 }
 
 function closeMenu() {
-  menu.items = [];
+  mentionTicket++; menu.items = [];
   $('slash-menu').hidden = true;
+  $('prompt').removeAttribute('aria-activedescendant');
+  $('prompt').setAttribute('aria-expanded','false');
 }
 
 function drawMenu() {
   const box = $('slash-menu');
+  const offset=box.scrollTop;
   box.hidden = !menu.items.length;
+  box.setAttribute('aria-label',menu.kind==='plugin'?'选择插件':'斜杠命令');
+  $('prompt').setAttribute('aria-expanded',String(!!menu.items.length));
   box.replaceChildren(...menu.items.map((c, i) => {
     const row = el('button', undefined, 'slash-item');
     row.type = 'button';
+    row.id = 'composer-option-' + i;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === menu.index));
     row.append(el('span', c.name, 'slash-name'), el('span', c.desc, 'slash-desc'));
     row.onmousedown = event => { event.preventDefault(); chooseCommand(c); };
     return row;
   }));
+  box.scrollTop=offset;
+  const selected=box.children[menu.index];
+  if(selected){$('prompt').setAttribute('aria-activedescendant',selected.id);selected.scrollIntoView({block:'nearest'});}
+  else $('prompt').removeAttribute('aria-activedescendant');
 }
 
 function chooseCommand(command) {
   closeMenu();
+  if(command.unavailable){$('prompt').focus();return;}
+  if(command.plugin){
+    const input=$('prompt'), {start,end}=command.mention;
+    input.setRangeText(command.name+' ',start,end,'end');input.focus();return;
+  }
   if (command.takesArg) {
     $('prompt').value = command.name + ' ';
     $('prompt').focus();
@@ -2122,11 +2222,8 @@ function tryCommand(text) {
   return false;
 }
 
-$('prompt').addEventListener('input', () => {
-  menu.items = menuMatches($('prompt').value);
-  menu.index = 0;
-  drawMenu();
-});
+$('prompt').addEventListener('input', updateComposerMenu);
+$('prompt').addEventListener('click', updateComposerMenu);
 $('prompt').addEventListener('blur', closeMenu);
 
 /* ---------- 设备登录（独立认证进程，不调用模型） ---------- */
@@ -2438,6 +2535,7 @@ async function initialize() {
   state.user = await http('/api/me');
   await CodexPlugin.load(state.user.plugins, { rpc, element: el });
   document.body.dataset.mode = state.user.mode;
+  $('environment-label').textContent = state.user.mode === 'server' ? '远程工作区' : '本机';
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
   const status = await rpc('status');
@@ -2467,6 +2565,7 @@ async function hostProjects(preferred) {
 }
 function resetContext(clearRoot = false) {
   notice('');
+  closeMenu(); state.design=false;state.designNext=null;updateDesignMode();
   resetSide();
   preferences.loaded=false;suggestions.ticket++;suggestions.loading=false;suggestions.cache=null;suggestions.node.remove();suggestions.lastActivity=Date.now();
   deviceLogin = null;

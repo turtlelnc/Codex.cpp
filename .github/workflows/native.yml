@@ -133,6 +133,10 @@ jobs:
         run: node tests/chat_stream_test.cjs build/codex-cpp
       - if: runner.os == 'Windows'
         run: node tests/native_smoke.cjs build/Release/codex-cpp.exe
+      - if: runner.os != 'Windows'
+        run: node tests/webui_design_test.cjs build/codex-cpp
+      - if: runner.os == 'Windows'
+        run: node tests/webui_design_test.cjs build/Release/codex-cpp.exe
       - if: runner.os == 'Windows'
         run: node tests/chat_stream_test.cjs build/Release/codex-cpp.exe
       - if: runner.os != 'Windows'
