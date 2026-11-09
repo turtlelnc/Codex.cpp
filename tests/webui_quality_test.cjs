@@ -659,6 +659,27 @@ function snapshot() {
     await page.waitForFunction(() => document.querySelector("#prompt").value === "");
     assert.equal(sendIds.at(-1), sendIds.at(-2));
 
+    // Three command calls collapse as one operation group, with raw commands at level two.
+    snap = {timeline:[{k:'user',text:'Three commands'}, ...[1,2,3].map(i =>
+      ({k:'tool',id:'fold-'+i,name:'shell',args:JSON.stringify({command:'printf "STEP_'+i+'"'}),output:'STEP_'+i}))],
+      messages:[],draft:'',busy:false,pending:null,events:[]};
+    await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
+    assert.equal(await page.locator('.execution').getAttribute('open'), null);
+    await page.locator('.execution > summary').click();
+    assert.equal(await page.locator('.tool-h').first().innerText().then(t=>t.includes('printf')),false);
+    assert.equal(await page.locator('.tool-b').first().isVisible(),false);
+    await page.locator('.tool-h').first().press('Enter');
+    assert((await page.locator('.tool-b').first().innerText()).includes('printf "STEP_1"'));
+    await page.locator('.execution > summary').click();
+    snap.timeline[2].output=null;snap.busy=true;
+    snap.events=[{type:'tool.started',payload:{call_id:'fold-2'}}];
+    await page.locator('.execution > summary').filter({hasText:'正在打印文本'}).waitFor();
+    assert.equal(await page.locator('.execution').getAttribute('open'),null);
+    snap.timeline[2].output='STEP_2';snap.busy=false;snap.events=[];
+    await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
+    await page.locator('.execution > summary').click();
+    assert(await page.locator('.tool-b').first().isVisible());
+
     // Conversation-first execution summaries use actual events and never bury approval.
     await page.setViewportSize({ width: 1440, height: 1000 });
     if ((await page.locator("#inspector-toggle").getAttribute("aria-pressed")) === "true")

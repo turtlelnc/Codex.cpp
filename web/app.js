@@ -586,6 +586,31 @@ function toolSummary(name, rawArgs) {
   return first === undefined ? '' : String(first);
 }
 
+// Describe the observable operation without asking a model to invent a summary.
+function toolAction(name, rawArgs) {
+  if (name === 'shell') {
+    const command = String(parseArgs(rawArgs).command || '').trim();
+    if (/^(?:printf|echo)\s/.test(command)) return '打印文本';
+    if (/^(?:rg|grep)\s/.test(command)) return '搜索文本';
+    if (/^git\s/.test(command)) return '运行 Git 命令';
+  }
+  return ({shell: '运行命令', read_file: '读取文件', list_dir: '查看目录',
+    write_file: '写入文件', apply_patch: '应用补丁', search: '搜索代码',
+    search_files: '搜索文件'})[name] || '调用 ' + name;
+}
+function executionSummary(group) {
+  const active = group.find(item => item.status === 'running') ||
+    group.find(item => item.status === 'queued');
+  if (active) return (active.status === 'running' ? '正在' : '等待执行：') + toolAction(active.row.name, active.row.args);
+  if (group.length === 1) {
+    const row = group[0].row;
+    return toolAction(row.name, row.args) + (row.name === 'shell' ? '' : '：' + toolSummary(row.name, row.args));
+  }
+  if (group.every(item => item.row.name === 'shell')) return '运行 ' + group.length + ' 条命令';
+  if (group.every(item => item.row.name === 'read_file')) return '读取 ' + group.length + ' 个文件';
+  return '执行 ' + group.length + ' 项操作';
+}
+
 function toolDetail(name, rawArgs) {
   const a = parseArgs(rawArgs);
   if (name === 'shell') return '$ ' + (a.command || '');
@@ -722,8 +747,8 @@ function toolCardBuiltin(
   const head = el('div', undefined, 'tool-h');
   head.append(
     el('span', failed ? '!' : done ? '·' : '', status === 'running' ? 'st spin' : 'st mark'),
-    el('span', name, 'name'),
-    el('span', toolSummary(name, args), 'arg'),
+    el('span', toolAction(name, args), 'name'),
+    el('span', name === 'shell' ? '' : toolSummary(name, args), 'arg'),
     el('span', toolLabels[status], 'tool-state'),
   );
   const body = el('div', undefined, 'tool-b');
@@ -732,7 +757,8 @@ function toolCardBuiltin(
     body.append(files.length ? diffBlock(files, true) : el('pre', args));
     if (done) body.append(el('pre', output, 'tool-out'));
   } else {
-    body.append(el('pre', toolDetail(name, args) + (done ? '\n\n' + output : '')));
+    body.append(el('div', name === 'shell' ? 'Shell' : name, 'tool-kind'), el('pre', toolDetail(name, args)));
+    if (done) body.append(el('div', '输出', 'tool-kind'), el('pre', output, 'tool-out'));
   }
   const logs = el('button', truncated ? '预览已截断 · 查看完整日志' : '查看原始参数与完整日志', 'tool-log');
   logs.type = 'button';
@@ -1086,8 +1112,9 @@ function buildChat(snap, wasBusy = false) {
     const counts = new Map();
     for (const item of group) counts.set(item.status, (counts.get(item.status) || 0) + 1);
     const summary =
-      '工具记录 · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
+      executionSummary(group) + ' · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
     if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
+    entry.node.dataset.active = String(group.some(item => ['running', 'queued'].includes(item.status)));
     entry.node.dataset.attention = group.some((item) =>
       ['failed', 'denied', 'interrupted'].includes(item.status),
     )
@@ -1138,7 +1165,7 @@ function buildChat(snap, wasBusy = false) {
       if (awaiting) {
         flushGroup();
         nodes.push(node);
-      } else group.push({ key, node, status });
+      } else group.push({ key, node, status, row });
       const report = creatorReport(row);
       if (report && row.name === 'plugin_check' && creatorChecks.get(report.manifest) === index) {
         flushGroup();
