@@ -65,7 +65,7 @@ async function http(path, body, wire = 1) {
   return data;
 }
 
-const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','status','side_snapshot','preferences','suggestions_snapshot']);
+const teamReadOperations = new Set(['projects','list','project_status','member_candidates','providers','models','snapshot','files','read','diff','tool_log','plugin_catalog','status','side_snapshot','preferences','suggestions_snapshot']);
 function teamProtocol() {
   const peer = state.user?.protocol;
   if (!peer) return { wire: state.user?.mode === 'server' ? 0 : 1, readOnly: state.user?.mode === 'server' };
@@ -1828,24 +1828,27 @@ async function submitTask(event) {
   const text = $('prompt').value;
   if (!text.trim()) return;
   if (tryCommand(text)) return;
+  const design = state.designNext || {mode: !!state.design, plan: false};
   const previous = pendingSubmission();
   const pending =
     previous &&
     previous.text === text &&
+    !!previous.design_mode === design.mode && !!previous.design_plan === design.plan &&
     previous.project === state.project &&
     previous.scope === state.scope &&
     previous.user === state.user.username
       ? previous
-      : { text, project: state.project, scope: state.scope, user: state.user.username, request_id: newId() };
+      : { text, design_mode: design.mode, design_plan: design.plan, project: state.project, scope: state.scope, user: state.user.username, request_id: newId() };
   sessionStorage.setItem('codex.pending', JSON.stringify(pending));
   const generation = state.generation;
   state.submitting = true;
   $('send').disabled = true;
   try {
-    await rpc('send', { text, request_id: pending.request_id });
+    await rpc('send', { text, request_id: pending.request_id, ...(pending.design_mode ? {design_mode: true, design_plan: !!pending.design_plan} : {}) });
     sessionStorage.removeItem('codex.pending');
     if (generation !== state.generation) return;
     if ($('prompt').value === text) $('prompt').value = '';
+    state.designNext = null; updateDesignMode();
     notice('');
     await refresh();
   } catch (e) {
@@ -2083,6 +2086,7 @@ const COMMANDS = [
     if (arg && !alias[arg]) throw new Error('可选：readonly、default、full');
     openPermissions(alias[arg]);
   }},
+  {name: '/design', desc: '设计模式（on / off / plan 任务）', run: designCommand},
   {name: '/new', desc: '开始新会话', run: newChat},
   {name: '/sessions', desc: '切换本地会话', run: openSessions},
   {name: '/provider', desc: '模型提供商与密钥', run: () => openSettings()},
@@ -2095,11 +2099,55 @@ const COMMANDS = [
     COMMANDS.map(c => `${c.name.padEnd(14)}${c.desc}`).join('\n'))},
 ];
 
-const TERMINAL_ONLY = ['/plan', '/design', '/review', '/compact', '/init', '/resume', '/fork', '/rename',
+const TERMINAL_ONLY = ['/plan', '/review', '/compact', '/init', '/resume', '/fork', '/rename',
   '/undo', '/memory', '/skills', '/plugins', '/mcp', '/image', '/mention', '/goal', '/personality',
   '/continue', '/archive', '/delete', '/clear', '/logout', '/auth', '/quit'];
 
-const menu = {items: [], index: 0};
+function updateDesignMode() {
+  $('design-mode').hidden = !state.design && !state.designNext;
+  $('design-label').textContent = state.designNext?.plan ? 'Design · 只读方案' : 'Design · 界面设计';
+}
+function designCommand(arg = '') {
+  if (!state.user?.protocol?.capabilities?.includes('design.v1')) throw Error('当前服务不支持 Design，请更新服务端。');
+  if (arg === 'off') { state.design = false; state.designNext = null; }
+  else if (!arg || arg === 'on') state.design = true;
+  else {
+    const plan = arg === 'plan' || arg.startsWith('plan ');
+    const task = plan ? arg.slice(4).trim() : arg;
+    if (!task) throw Error('用法：/design plan 任务');
+    state.designNext = {mode: true, plan};
+    $('prompt').value = plan ? '先提出设计方案，不修改文件：' + task : task;
+    updateDesignMode();
+    const generation=state.generation, text=$('prompt').value;
+    setTimeout(()=>{if(generation===state.generation && $('prompt').value===text)$('composer').requestSubmit();},0);
+    return;
+  }
+  updateDesignMode(); $('prompt').focus();
+}
+$('design-exit').onclick = () => designCommand('off');
+const menu = {items: [], index: 0, kind: 'slash'};
+let mentionTicket = 0;
+function mentionQuery() {
+  const input=$('prompt'), end=input.selectionStart ?? input.value.length;
+  const match=/(?:^|\s)@([a-z0-9._-]*)$/i.exec(input.value.slice(0,end));
+  return match ? {query:match[1],start:end-match[1].length-1,end} : null;
+}
+async function updateComposerMenu() {
+  const ticket=++mentionTicket, generation=state.generation, mention=mentionQuery();
+  menu.kind=mention ? 'plugin' : 'slash'; menu.index=0;
+  if (!mention) { menu.items=menuMatches($('prompt').value);drawMenu();return; }
+  menu.items=[];drawMenu();
+  try {
+    const result=await rpc('plugin_catalog');
+    if(ticket!==mentionTicket || generation!==state.generation || document.activeElement!==$('prompt'))return;
+    const current=mentionQuery();if(!current || current.start!==mention.start || current.query!==mention.query)return;
+    menu.items=(result.plugins || []).filter(p=>/^[a-z0-9][a-z0-9._-]{0,127}$/.test(p.id) && p.id.toLowerCase().includes(mention.query.toLowerCase()))
+      .map(p=>({name:'@'+p.id,desc:p.description || '使用此插件',plugin:p.id,mention}));
+    if(!menu.items.length)menu.items=[{name:'没有匹配的可用插件',desc:'仅列出已启用或已加载的插件',unavailable:true}];
+    drawMenu();
+  } catch(error) { if(ticket===mentionTicket)notice(error.message); }
+}
+
 
 function menuMatches(value) {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
@@ -2107,26 +2155,41 @@ function menuMatches(value) {
 }
 
 function closeMenu() {
-  menu.items = [];
+  mentionTicket++; menu.items = [];
   $('slash-menu').hidden = true;
+  $('prompt').removeAttribute('aria-activedescendant');
+  $('prompt').setAttribute('aria-expanded','false');
 }
 
 function drawMenu() {
   const box = $('slash-menu');
+  const offset=box.scrollTop;
   box.hidden = !menu.items.length;
+  box.setAttribute('aria-label',menu.kind==='plugin'?'选择插件':'斜杠命令');
+  $('prompt').setAttribute('aria-expanded',String(!!menu.items.length));
   box.replaceChildren(...menu.items.map((c, i) => {
     const row = el('button', undefined, 'slash-item');
     row.type = 'button';
+    row.id = 'composer-option-' + i;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === menu.index));
     row.append(el('span', c.name, 'slash-name'), el('span', c.desc, 'slash-desc'));
     row.onmousedown = event => { event.preventDefault(); chooseCommand(c); };
     return row;
   }));
+  box.scrollTop=offset;
+  const selected=box.children[menu.index];
+  if(selected){$('prompt').setAttribute('aria-activedescendant',selected.id);selected.scrollIntoView({block:'nearest'});}
+  else $('prompt').removeAttribute('aria-activedescendant');
 }
 
 function chooseCommand(command) {
   closeMenu();
+  if(command.unavailable){$('prompt').focus();return;}
+  if(command.plugin){
+    const input=$('prompt'), {start,end}=command.mention;
+    input.setRangeText(command.name+' ',start,end,'end');input.focus();return;
+  }
   if (command.takesArg) {
     $('prompt').value = command.name + ' ';
     $('prompt').focus();
@@ -2159,11 +2222,8 @@ function tryCommand(text) {
   return false;
 }
 
-$('prompt').addEventListener('input', () => {
-  menu.items = menuMatches($('prompt').value);
-  menu.index = 0;
-  drawMenu();
-});
+$('prompt').addEventListener('input', updateComposerMenu);
+$('prompt').addEventListener('click', updateComposerMenu);
 $('prompt').addEventListener('blur', closeMenu);
 
 /* ---------- 设备登录（独立认证进程，不调用模型） ---------- */
@@ -2505,6 +2565,7 @@ async function hostProjects(preferred) {
 }
 function resetContext(clearRoot = false) {
   notice('');
+  closeMenu(); state.design=false;state.designNext=null;updateDesignMode();
   resetSide();
   preferences.loaded=false;suggestions.ticket++;suggestions.loading=false;suggestions.cache=null;suggestions.node.remove();suggestions.lastActivity=Date.now();
   deviceLogin = null;

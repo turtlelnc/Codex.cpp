@@ -26,7 +26,7 @@ let version = 0,
   failSend = false,
   failWrite = false,
   sendIds = [],
-  decisions = [];
+  decisions = [], sentRequests = [];
 const wait = async (fn) => {
   for (let i = 0; i < 400; i++) {
     if (await fn()) return;
@@ -59,11 +59,12 @@ function snapshot() {
           res.end(JSON.stringify(data));
         };
         if (req.url === "/api/me")
-          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1',...(assistance?['suggestions.v1']:[])]}}) });
+          return reply({ mode, username: "local", csrf: "test", ...(peerWire===0?{}:{protocol:{application:'codex-cpp',protocols:[peerWire],capabilities:['design.v1','plugin-mentions.v1','scope-auth.v1','snapshot.full.v1','approval.bound.v1','request-id.v1','team.write.v1',...(assistance?['suggestions.v1']:[])]}}) });
         if (req.url === "/api/rpc") {
           const b = JSON.parse(raw);
           let result = {};
           switch (b.op) {
+            case "plugin_catalog": result={plugins:[{id:'gitx',description:'Git 工作流'},{id:'docs',description:'文档工具'}]};break;
             case "projects":
               result = { projects: noProjects ? [] : ["p1", "p2"] };
               break;
@@ -133,6 +134,7 @@ function snapshot() {
               break;
             case "send":
               sends++;
+              sentRequests.push(b);
               sendIds.push(b.request_id);
               if (failSend) return reply({ error: "send test failure" }, 503);
               return setTimeout(() => reply({ result: { submitted: true } }), 300);
@@ -205,6 +207,37 @@ function snapshot() {
       "false",
     );
     assert.equal(await page.locator("#project-files").getAttribute("open"), null);
+    // Keyboard selection must remain visible while wrapping in a scrollable menu.
+    await page.locator('#prompt').fill('/');
+    for(let i=0;i<28;i++){
+      await page.locator('#prompt').press('ArrowDown');
+      assert(await page.locator('#slash-menu [aria-selected="true"]').evaluate(n=>{const a=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return a.top>=b.top-1&&a.bottom<=b.bottom+1}));
+    }
+    for(let i=0;i<15;i++)await page.locator('#prompt').press('ArrowUp');
+    assert(await page.locator('#slash-menu [aria-selected="true"]').evaluate(n=>{const a=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return a.top>=b.top-1&&a.bottom<=b.bottom+1}));
+    await page.locator('#prompt').press('Escape');
+    await page.locator('#prompt').fill('请使用 @gi');
+    await page.getByRole('option',{name:'@gitx Git 工作流',exact:true}).waitFor();
+    await page.locator('#prompt').press('Tab');
+    assert.equal(await page.locator('#prompt').inputValue(),'请使用 @gitx ');
+    await page.locator('#prompt').fill('user@example.com');
+    assert.equal(await page.locator('#slash-menu').isVisible(),false);
+    await page.locator('#prompt').fill('@missing');
+    await page.getByRole('option',{name:/没有匹配的可用插件/}).waitFor();
+    await page.locator('#prompt').press('Escape');
+    const beforeDesign=sends;
+    await page.locator('#prompt').fill('/design');await page.locator('#prompt').press('Enter');
+    await page.locator('#design-mode').waitFor({state:'visible'});assert.equal(sends,beforeDesign);
+    await page.locator('#prompt').fill('/design plan 做一个设置页');await page.locator('#prompt').press('Enter');
+    await wait(()=>sentRequests.length&&sentRequests.at(-1).design_plan===true);
+    assert.equal(sentRequests.at(-1).design_mode,true);
+    assert(sentRequests.at(-1).text.includes('做一个设置页'));
+    await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+    await page.locator('#prompt').fill('/design off');await page.locator('#prompt').press('Enter');
+    await page.locator('#design-mode').waitFor({state:'hidden'});
+    await page.locator('#prompt').fill('');
+    sends=0; sendIds=[]; sentRequests=[];
+
     // The header shortcut must open the terminal, including its overlay on phones.
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });

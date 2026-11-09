@@ -61,11 +61,12 @@
 
         <div id="plugin-composer"></div>
         <form id="composer">
+        <div id="design-mode" hidden><span id="design-label"></span><button type="button" id="design-exit">退出设计</button></div>
         <div class="composer-input">
           <div id="popover" role="menu" hidden></div>
           <div id="slash-menu" role="listbox" aria-label="斜杠命令" hidden></div>
           <label class="sr-only" for="prompt">任务内容</label>
-          <textarea id="prompt" rows="1" placeholder="描述你想构建、修改或修复的内容，输入 / 查看命令…" required maxlength="60000"></textarea>
+          <textarea id="prompt" aria-controls="slash-menu" aria-autocomplete="list" aria-expanded="false" rows="1" placeholder="描述你想构建、修改或修复的内容，输入 / 查看命令…" required maxlength="60000"></textarea>
           <button type="button" id="stop-task" hidden>停止任务</button>
           <button class="primary" id="send" aria-label="发送任务" title="发送（Enter）；运行中点击可停止">↑</button>
         </div>

@@ -604,3 +604,7 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
     transition: none;
   }
 }
+
+#design-mode { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 4px 9px; color:var(--accent); font-size:12px; }
+#design-exit { border:0; background:transparent; font-size:12px; padding:3px 6px; color:var(--muted); }
+#slash-menu { max-height:min(300px,55dvh); overscroll-behavior:contain; }
