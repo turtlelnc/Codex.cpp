@@ -1234,7 +1234,7 @@ function drawMessages(nodes, view = captureChatView()) {
   reconcileChildren(box, nodes);
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
-    empty.querySelector('h2').textContent=state.user?.welcome||'让想法跑起来。';
+    empty.querySelector('h2').textContent=state.user?.welcome||empty.querySelector('h2').textContent;
     for(const action of suggestions.cache?.actions||[])empty.querySelector('.sugg').append(suggestionButton(action));
     empty.querySelectorAll('[data-q]').forEach((button) => {
       button.onclick = () => {
@@ -1271,6 +1271,7 @@ function showPanel(name) {
 }
 
 for (const tab of document.querySelectorAll('[data-panel]')) tab.onclick = () => showPanel(tab.dataset.panel);
+$('terminal-toggle').onclick = () => showInspector('terminal');
 
 function showInspector(panel) {
   if ($('inspector-toggle').getAttribute('aria-pressed') !== 'true') $('inspector-toggle').click();
@@ -2438,6 +2439,7 @@ async function initialize() {
   state.user = await http('/api/me');
   await CodexPlugin.load(state.user.plugins, { rpc, element: el });
   document.body.dataset.mode = state.user.mode;
+  $('environment-label').textContent = state.user.mode === 'server' ? '远程工作区' : '本机';
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
   const status = await rpc('status');

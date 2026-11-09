@@ -205,6 +205,18 @@ function snapshot() {
       "false",
     );
     assert.equal(await page.locator("#project-files").getAttribute("open"), null);
+    // The header shortcut must open the terminal, including its overlay on phones.
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.locator('#terminal-toggle').click();
+      await page.locator('#terminal-panel').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('[data-panel="terminal"]').getAttribute('aria-pressed'), 'true');
+      await page.locator('#inspector-close').click();
+      await page.locator('#prompt').fill('继续这个任务');
+      assert.equal(await page.locator('#prompt').inputValue(), '继续这个任务');
+      await page.locator('#prompt').fill('');
+    }
+
     for (const width of [1440, 1100, 1000, 761, 760, 390, 844]) {
       await page.setViewportSize({ width, height: 900 });
       for (let n = 0; n < 4; n++) {
