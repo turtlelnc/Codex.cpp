@@ -555,3 +555,6 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .execution[data-active="true"] > summary::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: var(--accent); animation: blink 1.2s steps(2) infinite; }
 .tool-kind { font-size: 11px; color: var(--muted); margin: 4px 0 6px; }
 .tool-kind:not(:first-child) { margin-top: 14px; }
+
+.execution .reasoning { margin: 4px 0; padding: 0 4px; font-size: 13px; }
+.execution .reasoning-body { border-left: 1px solid var(--line); padding: 4px 12px 12px; }

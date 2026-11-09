@@ -663,22 +663,31 @@ function snapshot() {
     snap = {timeline:[{k:'user',text:'Three commands'}, ...[1,2,3].map(i =>
       ({k:'tool',id:'fold-'+i,name:'shell',args:JSON.stringify({command:'printf "STEP_'+i+'"'}),output:'STEP_'+i}))],
       messages:[],draft:'',busy:false,pending:null,events:[]};
+    snap.timeline.splice(2,0,{k:'reasoning',text:'第一条命令已返回，继续第二步。'});
+    snap.timeline.splice(4,0,{k:'reasoning',text:'第二条命令已返回，继续第三步。'});
     await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
     assert.equal(await page.locator('.execution').getAttribute('open'), null);
     await page.locator('.execution > summary').click();
     assert.equal(await page.locator('.tool-h').first().innerText().then(t=>t.includes('printf')),false);
     assert.equal(await page.locator('.tool-b').first().isVisible(),false);
+    assert.equal(await page.locator('.execution .reasoning').count(),2);
+    assert((await page.locator('.execution > summary').innerText()).includes('2 段思考'));
+    assert.deepEqual(await page.locator('.execution-tools > *').evaluateAll(nodes=>nodes.map(n=>n.classList.contains('reasoning')?'thinking':'tool')),['tool','thinking','tool','thinking','tool']);
+    await page.locator('.execution .reasoning summary').first().click();
+    assert(await page.locator('.execution .reasoning-body').first().isVisible());
+
     await page.locator('.tool-h').first().press('Enter');
     assert((await page.locator('.tool-b').first().innerText()).includes('printf "STEP_1"'));
     await page.locator('.execution > summary').click();
-    snap.timeline[2].output=null;snap.busy=true;
+    snap.timeline.find(r=>r.id==='fold-2').output=null;snap.busy=true;
     snap.events=[{type:'tool.started',payload:{call_id:'fold-2'}}];
     await page.locator('.execution > summary').filter({hasText:'正在打印文本'}).waitFor();
     assert.equal(await page.locator('.execution').getAttribute('open'),null);
-    snap.timeline[2].output='STEP_2';snap.busy=false;snap.events=[];
+    snap.timeline.find(r=>r.id==='fold-2').output='STEP_2';snap.busy=false;snap.events=[];
     await page.locator('.execution > summary').filter({hasText:'运行 3 条命令'}).waitFor();
     await page.locator('.execution > summary').click();
     assert(await page.locator('.tool-b').first().isVisible());
+    assert(await page.locator('.execution .reasoning-body').first().isVisible());
 
     // Conversation-first execution summaries use actual events and never bury approval.
     await page.setViewportSize({ width: 1440, height: 1000 });

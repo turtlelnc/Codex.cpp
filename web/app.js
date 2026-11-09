@@ -1109,10 +1109,12 @@ function buildChat(snap, wasBusy = false) {
       entry = { node, summary, body };
       executionGroups.set(key, entry);
     }
+    const tools = group.filter(item => item.row.k === 'tool');
+    const thinking = group.filter(item => item.row.k === 'reasoning');
     const counts = new Map();
-    for (const item of group) counts.set(item.status, (counts.get(item.status) || 0) + 1);
+    for (const item of tools) counts.set(item.status, (counts.get(item.status) || 0) + 1);
     const summary =
-      executionSummary(group) + ' · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
+      executionSummary(tools) + (thinking.length ? ' · ' + thinking.length + ' 段思考' : '') + ' · ' + [...counts].map(([status, count]) => count + ' ' + toolLabels[status]).join(' · ');
     if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
     entry.node.dataset.active = String(group.some(item => ['running', 'queued'].includes(item.status)));
     entry.node.dataset.attention = group.some((item) =>
@@ -1132,14 +1134,15 @@ function buildChat(snap, wasBusy = false) {
     if(row.k==='context'){
       flushGroup();nodes.push(cached(key,row.text,()=>{const box=el('details',undefined,'context-summary');box.append(el('summary','旧格式上下文摘要（内部记录）'),markdown(row.text));return box;}));
     } else if (row.k === 'reasoning') {
-      flushGroup();
       const live = messageCache.get('reasoning-draft');
       if (!messageCache.has(key) && live && live.node.querySelector('.reasoning-body').textContent === row.text) {
         live.node.querySelector('summary').textContent = '思考过程';
         messageCache.set(key, { signature: row.text, node: live.node });
         messageCache.delete('reasoning-draft');
       }
-      nodes.push(cached(key, row.text, () => reasoningMessage(row.text)));
+      const node = cached(key, row.text, () => reasoningMessage(row.text));
+      if (group.length) group.push({key, node, row});
+      else nodes.push(node);
     } else if (row.k === 'user' || row.k === 'assistant') {
       flushGroup();
       nodes.push(
