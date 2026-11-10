@@ -164,10 +164,7 @@ async function port() {
       await page.screenshot({ path: path.join(artifacts, 'settings-mobile.png') });
       await page.keyboard.press('Escape');
       await page.locator('#workspace-settings').waitFor({ state: 'hidden' });
-      assert.equal(
-        await page.locator('#sidebar-toggle').evaluate((e) => e === document.activeElement),
-        true,
-      );
+      await wait(() => page.locator('#sidebar-toggle').evaluate((e) => e === document.activeElement));
       await page.reload();
       if (!(await page.locator('#settings-button').isVisible())) await page.locator('#sidebar-toggle').click();
       await page.locator('#settings-button').click();

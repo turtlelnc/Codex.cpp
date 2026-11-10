@@ -35,6 +35,7 @@ std::shared_ptr<Image> ImageCache::get(const std::string& url) {
         return img;
     }
     int w = 0, h = 0, n = 0;
+    if(!stbi_info_from_memory(reinterpret_cast<const stbi_uc*>(r.data.data()),static_cast<int>(r.data.size()),&w,&h,&n)||w<=0||h<=0||w>4096||h>4096||static_cast<uint64_t>(w)*h>8*1024*1024){util::warn("image dimensions exceed preview limits");return img;}
     unsigned char* data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(r.data.data()),
                                                 (int)r.data.size(), &w, &h, &n, 4);
     if (!data || w <= 0 || h <= 0) {

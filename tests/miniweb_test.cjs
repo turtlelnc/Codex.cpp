@@ -177,6 +177,23 @@ const wait = async (fn) => {
     );
     assert(Date.now() - started < 30000, 'worker CPU/time limit not enforced');
     assert(!fs.existsSync(path.join(project, 'busy.png')));
+    if (process.platform === 'darwin') {
+      // Exercise the resident watchdog with many distinct decoded-image cache entries.
+      const chunk = (name, data) => {
+        const type = Buffer.from(name), bytes = Buffer.concat([type, data]);
+        let crc = 0xffffffff;
+        for (const b of bytes) { crc ^= b; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
+        const head = Buffer.alloc(4), tail = Buffer.alloc(4); head.writeUInt32BE(data.length); tail.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+        return Buffer.concat([head, bytes, tail]);
+      };
+      const header = Buffer.alloc(13); header.writeUInt32BE(1024, 0); header.writeUInt32BE(1024, 4); header[8] = 8; header[9] = 6;
+      fs.writeFileSync(path.join(project, 'large.png'), Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', require('zlib').deflateSync(Buffer.alloc(4097 * 1024))), chunk('IEND', Buffer.alloc(0))]));
+      fs.writeFileSync(path.join(project, 'memory.html'), '<body>' + Array.from({ length: 250 }, (_, i) => '<img style="width:1px;height:1px" src="large.png?' + i + '">').join('') + '</body>');
+      r = shot('memory.html', ['-o', 'memory.png']);
+      assert.notEqual(r.status, 0, 'resident memory watchdog must terminate the renderer');
+      assert.match(r.stderr, /resident memory limit exceeded/);
+      assert(!fs.existsSync(path.join(project, 'memory.png')));
+    }
     // Resume protocol must contain an image, not just a printed screenshot filename.
     provider = http.createServer(async (req, res) => {
       let raw = '';
