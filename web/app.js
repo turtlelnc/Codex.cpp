@@ -1631,6 +1631,13 @@ onClick('refresh-diff', loadDiff);
 
 /* ---------- 轮询刷新 ---------- */
 
+function setWorkspaceRoot(root) {
+  const name = String(root || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  $('root-name').textContent = name;
+  $('sidebar-root-name').textContent = name || '工作目录';
+  $('sidebar-root-name').parentElement.title = String(root || '当前工作目录');
+}
+
 function renderSessions(sessions, busy) {
   const signature = JSON.stringify(sessions.map(s => [s.id, s.title, s.selected])) + busy;
   if ($('projects')._signature === signature) return;
@@ -2540,7 +2547,7 @@ async function initialize() {
   $('workspace').hidden=false; $('host-login').hidden=true;
   if(state.user.mode==='server'){ $('host-controls').hidden=false; await hostProjects(); if(!state.project){$('team-button').disabled=false;notice('先创建项目，或请项目创建者邀请你。'); if(!state.loopStarted){state.loopStarted=true;loop();} return;} }
   const status = await rpc('status');
-  $('root-name').textContent = String(status.workspace || '').split('/').filter(Boolean).pop() || '';
+  setWorkspaceRoot(status.workspace);
   await refresh();
   if(state.user?.protocol?.capabilities?.includes('suggestions.v1')){await loadPreferences();await updateSuggestions();}
   await loadFiles().catch(e => notice(e.message));
@@ -2605,7 +2612,7 @@ function resetContext(clearRoot = false) {
   $('diff-view').replaceChildren();
   $('term').replaceChildren();
   $('prompt').value = '';
-  if (clearRoot) $('root-name').textContent = '';
+  if (clearRoot) setWorkspaceRoot('');
   state.projectInfo = null;
 }
 async function changeSession(id) {
@@ -2635,7 +2642,7 @@ async function switchContext() {
     if (state.scope === 'personal') await rpc('personal');
     const status = await rpc('status');
     if (generation !== state.generation) return;
-    $('root-name').textContent = String(status.workspace || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    setWorkspaceRoot(status.workspace);
   } finally {
     if (generation === state.generation) {
       state.switching = false;

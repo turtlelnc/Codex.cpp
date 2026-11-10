@@ -75,7 +75,7 @@ function snapshot() {
               result = { jobs: [], busy: false, blocked: false, owner:"local", members:["local"],audit:[],branches:{} };
               break;
             case "status":
-              result = { workspace: "/fixture" };
+              result = { workspace: "D:\\Projects\\fixture" };
               break;
             case "snapshot":
               if (failSnapshot) return reply({ error: "网络测试" }, 503);
@@ -202,6 +202,9 @@ function snapshot() {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("http://127.0.0.1:" + server.address().port);
     await page.getByText("a.txt", { exact: true }).waitFor({ state: "attached" });
+    assert.equal(await page.locator('#root-name').textContent(), 'fixture');
+    assert.equal(await page.locator('#sidebar-root-name').textContent(), 'fixture');
+    assert.equal(await page.locator('.sidebar-workspace').getAttribute('title'), 'D:\\Projects\\fixture');
     assert.equal(
       await page.locator("#inspector-toggle").getAttribute("aria-pressed"),
       "false",
