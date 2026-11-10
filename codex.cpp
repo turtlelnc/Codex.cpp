@@ -991,11 +991,15 @@ for(size_t item_index=0;item_index<session.items.size();++item_index){const auto
 flush_calls();return messages; } static bool compact_session(Session& session,const ApiClient& api,std::string& err,size_t history_budget=0){
   if(session.items.empty())return true;const ContextBudget budget{api.context_window,api.output_reserve};if(!history_budget)history_budget=budget.input();
   const std::string marker="[prior conversation summary]\n";std::string summary;size_t previous=std::string::npos,latest=std::string::npos;std::vector<size_t> retained_indices;
-  for(size_t i=0;i<session.items.size();++i)if(auto item=parse_json(session.items[i]))if(json_string_field(session.items[i],"role")==std::optional<std::string>("user")){
-    auto content=item->get("content");if(i==0&&content&&content->kind==Json::String&&content->str().rfind(marker,0)==0){summary=content->str().substr(marker.size());previous=i;}else latest=i;
-    if(content&&content->kind==Json::Array&&std::any_of(content->items.begin(),content->items.end(),[](const Json& part){auto type=part.get("type");return type&&type->str()=="input_image";})){retained_indices.push_back(i);if(retained_indices.size()>2)retained_indices.erase(retained_indices.begin());}
+  for(size_t i=0;i<session.items.size();++i)if(auto item=parse_json(session.items[i])){
+    const bool user=json_string_field(session.items[i],"role")==std::optional<std::string>("user");
+    const bool observation=json_string_field(session.items[i],"type")==std::optional<std::string>("codex_tool_image");
+    auto content=item->get("content");
+    if(user){if(i==0&&content&&content->kind==Json::String&&content->str().rfind(marker,0)==0){summary=content->str().substr(marker.size());previous=i;}else latest=i;}
+    if((user||observation)&&content&&content->kind==Json::Array&&std::any_of(content->items.begin(),content->items.end(),[](const Json& part){auto type=part.get("type");return type&&type->str()=="input_image";})){retained_indices.push_back(i);if(retained_indices.size()>2)retained_indices.erase(retained_indices.begin());}
   }
   if(latest!=std::string::npos&&std::find(retained_indices.begin(),retained_indices.end(),latest)==retained_indices.end())retained_indices.push_back(latest);
+  std::sort(retained_indices.begin(),retained_indices.end());
   size_t retained=0;for(const auto index:retained_indices)retained+=estimate_tokens(session.items[index]);
   if(retained+512>=history_budget){err="Current user input does not fit the configured model context budget; shorten it or configure the actual model window. Input remains saved.";return false;}
   const auto summary_limit=std::min<size_t>(2048,(history_budget-retained-256)/4);
@@ -1079,8 +1083,8 @@ int main(int argc,char** argv){
 #endif
   if(argc>1&&std::string(argv[1])=="--miniweb-worker")return codex_miniweb_worker(argc,argv);
   preview_self=native_web::executable(argv[0]);
-  if(argc>1&&std::string(argv[1])=="preview")return preview_cli(argc,argv);
   std::vector<char*> portable_storage;try{portable_arguments(argc,argv,portable_storage);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}
+  if(argc>1&&std::string(argv[1])=="preview"){try{portable::activate();return preview_cli(argc,argv);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}}
   updater::self=native_web::executable(argv[0]);
   if(argc>1&&std::string(argv[1])=="update")return updater::cli(argc,argv);
   if(argc>1&&std::string(argv[1])=="portable")return portable::cli(argc,argv);

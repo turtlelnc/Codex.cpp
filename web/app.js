@@ -2415,7 +2415,8 @@ $('workspace-settings').addEventListener('close', () => {
   settingsTicket++;
   closeTeam();
   if ($('plugin-dialog').open) $('plugin-dialog').close();
-  $('settings-button').focus();
+  const trigger = $('settings-button').getClientRects().length ? $('settings-button') : $('sidebar-toggle');
+  trigger.focus();
 });
 
 async function openSessions() {

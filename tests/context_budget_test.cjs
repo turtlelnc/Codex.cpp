@@ -177,13 +177,14 @@ const tokens = (s) => {
     await stop();
     // Keep the two recent image messages as well as the latest text-only task.
     const imageEntries = [1, 2].map((n) => ({
-      role: "user",
+      ...(n === 1 ? { role: "user" } : { type: "codex_tool_image", call_id: "retained-preview" }),
       content: [
         { type: "input_text", text: "image " + n },
         { type: "input_image", image_url: "data:image/png;base64,fixture-image-" + n },
       ],
     }));
     fs.writeFileSync(file, initial + imageEntries.map((x) => JSON.stringify(x)).join("\n") + "\n");
+    const imageRequestStart = requests.length;
     log = "";
     child = spawn(
       exe,
@@ -198,6 +199,13 @@ const tokens = (s) => {
     const imageContext = fs.readFileSync(file, "utf8");
     for (const entry of imageEntries) assert(imageContext.includes(JSON.stringify(entry)));
     assert(imageContext.includes("RETAIN_IMAGES_WITH_LATEST_TASK"));
+    const imageRequests = requests.slice(imageRequestStart);
+    assert(imageRequests.some(r => r.summary), "image fixture must actually compact");
+    const continuation = imageRequests.filter(r => !r.summary).at(-1).body;
+    for (let n = 1; n <= 2; n++) {
+      assert(JSON.stringify(continuation.messages).includes("data:image/png;base64,fixture-image-" + n), "recent user/tool image must reach provider after compaction");
+    }
+    assert(!JSON.stringify(continuation).includes("codex_tool_image"), "internal observation metadata must not reach provider");
     await stop();
     // Compaction failure must retain all old records and the newly submitted task.
     fs.writeFileSync(file, initial);

@@ -4,21 +4,28 @@
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
 namespace {
+#ifndef _WIN32
+void limit_resource(int resource,rlim_t maximum){struct rlimit inherited{};if(getrlimit(resource,&inherited)!=0)throw std::runtime_error("Cannot inspect preview resource limit");
+    const rlim_t bound=std::min(maximum,std::min(inherited.rlim_cur,inherited.rlim_max));struct rlimit limit{bound,bound};if(setrlimit(resource,&limit)!=0)throw std::runtime_error(std::string("Cannot set preview resource limit ")+std::to_string(resource)+": "+std::strerror(errno));}
+#endif
 int number(const char* value,int minimum,int maximum){size_t used=0;const std::string s(value);const auto n=std::stoi(s,&used);if(used!=s.size()||n<minimum||n>maximum)throw std::runtime_error("Preview value outside bounds");return n;}
 }
 int codex_miniweb_worker(int argc,char** argv){try{
   // Private child entry: workspace, input, output, width, height, wait, then clicks.
   if(argc<8||argc>40||(argc-8)%2)throw std::runtime_error("Invalid preview worker arguments");
 #ifndef _WIN32
-  struct rlimit cpu{20,20};if(setrlimit(RLIMIT_CPU,&cpu)!=0)throw std::runtime_error("Cannot limit preview CPU");
-  struct rlimit data{768ull*1024*1024,768ull*1024*1024};if(setrlimit(RLIMIT_DATA,&data)!=0)throw std::runtime_error("Cannot limit preview memory");
-  struct rlimit file{8*1024*1024,8*1024*1024};setrlimit(RLIMIT_FSIZE,&file);
+  limit_resource(RLIMIT_CPU,20);
+  limit_resource(RLIMIT_DATA,768ull*1024*1024);
+  limit_resource(RLIMIT_FSIZE,8*1024*1024);
 #ifdef __linux__
-  struct rlimit memory{1024ull*1024*1024,1024ull*1024*1024};setrlimit(RLIMIT_AS,&memory);
+  limit_resource(RLIMIT_AS,1024ull*1024*1024);
 #endif
 #endif
   const int width=number(argv[5],64,1920),height=number(argv[6],64,1920),wait=number(argv[7],0,3000);

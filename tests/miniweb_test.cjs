@@ -12,6 +12,8 @@ fs.mkdirSync(project);
 const env = {
   ...process.env,
   CODEX_CPP_HOME: path.join(project, 'private-profile'),
+  CODEX_CPP_PORTABLE_DIR: '',
+  CODEX_CPP_PORTABLE_PROJECT: '',
   NO_PROXY: '127.0.0.1',
   no_proxy: '127.0.0.1',
 };
@@ -68,6 +70,9 @@ const wait = async (fn) => {
     }
     assert.equal(r.status, 0, r.stderr);
     const before = png('before.png', 320, 240);
+    const portable = run(['--portable-dir', path.join(root, 'portable'), '--portable-project', 'fixture', 'preview', 'shot', 'index.html', '--width', '320', '--height', '240', '-o', 'portable.png']);
+    assert.equal(portable.status, 0, portable.stderr);
+    assert(before.equals(png('portable.png', 320, 240)));
     r = shot('index.html', [
       '--width',
       '320',
