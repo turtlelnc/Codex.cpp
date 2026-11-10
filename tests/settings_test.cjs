@@ -120,7 +120,17 @@ async function port() {
       const paper = await page
         .locator('#workspace-settings')
         .evaluate((e) => getComputedStyle(e).backgroundColor);
-      assert.equal(paper, 'rgb(250, 247, 240)');
+      assert.equal(paper, 'rgb(255, 255, 255)');
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.waitForFunction(() =>
+        getComputedStyle(document.querySelector('#workspace-settings')).backgroundColor === 'rgb(36, 36, 36)' &&
+        getComputedStyle(document.documentElement).colorScheme === 'dark',
+      );
+      await page.emulateMedia({ colorScheme: 'light' });
+      await page.waitForFunction(() =>
+        getComputedStyle(document.querySelector('#workspace-settings')).backgroundColor === 'rgb(255, 255, 255)' &&
+        getComputedStyle(document.documentElement).colorScheme === 'light',
+      );
       await page.locator('#settings-model').click();
       await page.locator('#preference-reasoning').check();
       await page.getByText('已保存', { exact: true }).waitFor();
@@ -155,10 +165,11 @@ async function port() {
       await page.keyboard.press('Escape');
       await page.locator('#workspace-settings').waitFor({ state: 'hidden' });
       assert.equal(
-        await page.locator('#settings-button').evaluate((e) => e === document.activeElement),
+        await page.locator('#sidebar-toggle').evaluate((e) => e === document.activeElement),
         true,
       );
       await page.reload();
+      if (!(await page.locator('#settings-button').isVisible())) await page.locator('#sidebar-toggle').click();
       await page.locator('#settings-button').click();
       await page.locator('#settings-model').click();
       assert(await page.locator('#preference-reasoning').isChecked());
