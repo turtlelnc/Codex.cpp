@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Modules</title>
+<style>body{margin:0;background:#f8fafc;font-family:Arial,sans-serif}.app{padding:32px}h1{font-size:30px;color:#0369a1;margin:0 0 10px}p{font-size:15px;color:#475569}.note{margin-top:16px;padding:10px 12px;background:#e0f2fe;border-radius:8px;color:#075985}</style></head>
+<body><div class="app"><div id="root">loading module…</div><div class="note" id="note"></div></div>
+<script type="module" src="mod/app.js"></script>
+<script type="module">
+import { label } from './mod/util.js';
+document.getElementById('note').textContent = '内联 module 也执行了：' + label;
+</script>
+</body></html>

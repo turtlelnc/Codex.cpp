@@ -1138,6 +1138,9 @@ struct App {
       const auto before=row_base+rows.size();auto role = text(*item, "role"), kind = text(*item, "type");
       if (kind == "codex_reasoning") {
         if(!text(*item,"text").empty())rows.push_back(obj({{"k", str("reasoning")}, {"text", field(*item, "text")}}));
+      } else if(kind=="codex_tool_image") {
+        J images=arr();for(const auto& part:field(*item,"content",arr()).items){auto url=text(part,"image_url");if(text(part,"type")=="input_image"&&(url.rfind("data:image/png;base64,",0)==0||url.rfind("data:image/jpeg;base64,",0)==0||url.rfind("data:image/webp;base64,",0)==0||url.rfind("data:image/gif;base64,",0)==0)&&url.size()<=11000000)images.items.push_back(str(url));}
+        if(!images.items.empty())rows.push_back(obj({{"k",str("preview")},{"id",field(*item,"call_id")},{"images",images}}));
       } else if (role == "user" || role == "assistant") {
         auto content = field(*item, "content");
         std::string value;

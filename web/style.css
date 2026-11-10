@@ -125,6 +125,9 @@ header h1 { font-size: 14px; font-weight: 600; margin: 0; max-width: 40vw; overf
 #notice { padding: 9px 20px; background: var(--warn-bg); color: var(--warn-ink); font-size: 13px; }
 
 /* ---------- 对话 ---------- */
+.preview-result { margin: 12px 0 20px; color: var(--muted); font-size: 13px; }
+.preview-result summary { cursor: pointer; padding: 6px 0; }
+.preview-result img { display: block; max-width: 100%; max-height: 70dvh; object-fit: contain; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; }
 
 .conversation { container-type: inline-size; display: flex; flex-direction: column; padding: 0 28px 14px; min-height: 0; min-width: 0; background: var(--bg); }
 #messages { overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; flex: 1; padding: 32px max(28px, calc((100cqw - var(--col)) / 2 + 28px)); margin-inline: -28px; }

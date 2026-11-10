@@ -353,3 +353,7 @@ WebUI 的模型运行状态、重试规则和独立 Markdown 渲染模块，见 
 WebUI 支持 `@` 插件引用、键盘滚动的斜杠菜单，以及 `/design` / `/design plan`，见 [输入辅助与 Design 模式](docs/WEBUI_COMPOSER.md)。
 
 WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和团队配置；远程设置按服务器账号和工作区隔离。支持选择是否回传提供商实际返回的历史推理文本，工具模式按协议保留已有推理，无工具模式可选回传。详见 [设置与同步](docs/SETTINGS.md)。
+
+### 实验性内嵌页面预览
+
+`codex-cpp preview shot index.html -o preview.png --width 1280 --height 800` 使用同一可执行文件内的 MiniWeb 生成截图，不依赖 Chromium、Python 或 Node.js。Agent 可用 `preview_screenshot` 获取图片并回传支持视觉的模型。它只读取工作区本地资源，禁止网络，需要可用的 OS 沙箱；Windows 当前明确拒绝执行。CSS/DOM 仅支持部分能力，不能作为真实浏览器兼容性验收。完整边界、命令和已知缺口见 [MiniWeb 文档](docs/MINIWEB.md)。

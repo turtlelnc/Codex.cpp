@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>JS test</title>
+<style>
+body { margin: 0; background: #f8fafc; color: #111827; font-family: Arial, sans-serif; }
+#app { padding: 40px; }
+h1 { font-size: 34px; margin: 0 0 12px; }
+p { font-size: 16px; margin: 0 0 18px; color: #475569; }
+button { margin-right: 10px; }
+.badge { display: inline-block; margin-top: 18px; background: #dcfce7; color: #166534; padding: 5px 10px; border-radius: 999px; font-size: 13px; }
+</style></head>
+<body>
+<div id="app">原始内容</div>
+<script>
+const root = document.getElementById('app');
+root.innerHTML = '<h1 class="title">JavaScript 渲染</h1><p id="msg">等待计时器…</p><button id="btn">点击我</button>';
+const title = document.querySelector('.title');
+title.style.color = '#2563eb';
+document.getElementById('btn').addEventListener('click', function () {
+  document.getElementById('msg').textContent = '按钮点击事件已触发';
+});
+setTimeout(function () {
+  document.getElementById('msg').textContent = '虚拟时钟 300ms：内容已更新';
+  root.insertAdjacentHTML('beforeend', '<div class="badge">Timer 已执行</div>');
+}, 300);
+setTimeout(function () {
+  const b = document.createElement('button');
+  b.textContent = '动态按钮';
+  b.style.cssText = 'display:inline-block; padding:6px 12px; background:#111827; color:white; border:0; border-radius:8px;';
+  root.appendChild(b);
+  console.log('dynamic button appended');
+}, 600);
+</script>
+</body></html>

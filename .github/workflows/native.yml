@@ -63,7 +63,7 @@ jobs:
           node tests/portable_data_test.cjs "$binary"
           node tests/portable_update_test.cjs "$binary"
       - name: Build Creator lifecycle regression harness
-        run: cmake --build build --config Release --target codex-self-test --parallel 2
+        run: cmake --build build --config Release --target codex-self-test miniweb-regression --parallel 2
       - name: Build explicit team compatibility modules
         run: cmake --build build --config Release --target team-protocol-compat team-protocol-fixture team-protocol-bad-fixture --parallel 2
       - name: Verify team protocol negotiation and native adapter behavior
@@ -76,6 +76,14 @@ jobs:
           probe="$base/codex-self-test"
           if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; probe="$probe.exe"; fi
           node tests/team_protocol_test.cjs "$binary" "$probe" "build/team-protocol-compat$module_config/plugin.json" "build/team-protocol-fixture$module_config/plugin.json" "build/team-protocol-bad-fixture$module_config/plugin.json"
+      - name: Verify embedded MiniWeb preview and sandbox boundaries
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          probe=build/miniweb/miniweb-regression
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/miniweb/Release/miniweb-regression.exe; fi
+          "$probe" miniweb/test/structural.html
+          node tests/miniweb_test.cjs "$binary"
       - name: Verify concurrent read-only side conversations
         shell: bash
         run: |
@@ -208,7 +216,7 @@ jobs:
       - name: Build native host and example module
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target codex-cpp plugin-demo codex-self-test --parallel 2
+          cmake --build build --target codex-cpp plugin-demo codex-self-test miniweb-regression --parallel 2
       - name: Install Chromium
         run: |
           npm install --prefix "$RUNNER_TEMP/plugin-tests" playwright@1.62.1
@@ -225,6 +233,8 @@ jobs:
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/plugin_creator_browser_test.cjs build/codex-cpp
       - name: Verify large-session incremental snapshots in Chromium
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/long_session_test.cjs build/codex-cpp --browser
+      - name: Verify MiniWeb pixels, image history and Chromium geometry
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/miniweb_test.cjs build/codex-cpp build/miniweb/miniweb-regression --browser
       - name: Verify tool history across repeated context compaction
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
