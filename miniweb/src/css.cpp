@@ -668,6 +668,8 @@ void parse_rules(const std::string& css, size_t start, size_t end, std::vector<C
 
 } // namespace
 
+bool css_media_matches(const std::string& query,int vw,int vh){return media_matches(query,vw,vh);}
+
 std::vector<Selector> parse_selector_list(const std::string& text) {
     return parse_selector_list_impl(text);
 }

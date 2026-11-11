@@ -924,7 +924,7 @@ void JsRuntime::drain_timers(int virtual_ms) {
         drain_jobs();
         deadline_ms_ = 0;
         total += ran;
-        if (ran <= 0) break;
+        if (ran <= 0) { eval("__mwFinishTimers(" + end + ");", "<timer-deadline>", false); break; }
         if (total >= 5000) {util::warn("preview timer callback budget reached");break;}
     }
 }

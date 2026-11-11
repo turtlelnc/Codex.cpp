@@ -689,6 +689,7 @@
   function __mwPendingTimers() { return __timers.length; }
   globalThis.__mwDrainTimers = __mwDrainTimers;
   globalThis.__mwTimerNow = function () { return __now; };
+  globalThis.__mwFinishTimers = function (end) { __now = Math.max(__now, end); };
   globalThis.__mwPendingTimers = __mwPendingTimers;
 
   globalThis.setTimeout = setTimeout;

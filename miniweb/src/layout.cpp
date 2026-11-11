@@ -1045,6 +1045,8 @@ void LayoutEngine::run() {
 }
 
 void layout_document(Document& doc, LayoutContext& ctx) {
+    // Hidden subtrees are skipped below, so invalidate their previous boxes too.
+    for(auto& node:doc.arena)node.layout=LayoutInfo{};
     LayoutEngine e(doc, ctx);
     e.run();
 }

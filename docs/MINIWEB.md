@@ -28,7 +28,7 @@ Host timeout/cancellation terminates the worker process tree before temporary cl
 
 The integrated fork corrects percentage `translate()`/`translateX()`/`translateY()` positioning, sibling positioned/flex/grid `z-index` paint and hit-test order, and row-major `grid-column: span N` auto-placement. `min()`/`max()`/`clamp()` lengths resolve against their containing width instead of falling back to auto. Stylesheets preserve live document order, script/click-driven style edits are recollected, and CSS image URLs keep their stylesheet origin (including inherited custom properties). `var()` argument scanning is corrected. These are bounded subsets, not general transform, stacking-context or Grid implementations. Structural pixel, hit-test and Chromium geometry regressions cover these cases.
 
-DOM replacement preserves existing sibling order and rejects ancestor cycles. Script geometry/computed-style reads refresh dirty layout. Timer draining uses one virtual deadline, honors self-cancellation and processes Promise jobs between timer callbacks. ASan and runtime regressions cover these supported APIs.
+DOM replacement preserves existing sibling order and rejects ancestor cycles. Script geometry/computed-style reads refresh dirty layout. Hidden subtrees lose their cached geometry. Style/link media attributes share the screen @media matcher. Timer draining uses one virtual deadline, advances idle time between replayed clicks, honors self-cancellation and processes Promise jobs between timer callbacks. ASan and runtime regressions cover these supported APIs.
 
 ## Compatibility limitations
 

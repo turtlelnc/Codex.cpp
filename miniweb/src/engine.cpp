@@ -64,6 +64,7 @@ void Engine::collect_stylesheets() {
     // Walk the live tree, not parser-time lists: scripts may insert/move styles.
     std::function<void(Node*)> visit=[&](Node* node){
         if(!node||node->is_element("template"))return;
+        if((node->is_element("style")||node->is_element("link"))&&!css_media_matches(node->attr("media"),viewport_w_,viewport_h_))return;
         if(node->is_element("style")){
             const auto text=node->text_content();if(!text.empty())sheets_.push_back(parse_css(text,doc_->base_url.empty()?doc_->url:doc_->base_url,viewport_w_,viewport_h_,&order));
         }else if(node->is_element("link")&&!node->has_attr("disabled")){

@@ -60,3 +60,6 @@ std::vector<Selector> parse_selector_list(const std::string& text);
 void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int viewport_w, int viewport_h);
 
 extern const char* kUserAgentCss;
+
+// Screen media subset shared by @media and style/link media attributes.
+bool css_media_matches(const std::string& query, int viewport_w, int viewport_h);
