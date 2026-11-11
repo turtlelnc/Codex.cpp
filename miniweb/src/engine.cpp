@@ -145,7 +145,7 @@ bool Engine::click(float x, float y) {
 }
 
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
-    if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None || n->style.visibility!=Visibility::Visible) return nullptr;
+    if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None) return nullptr;
     const LayoutInfo& L = n->layout;
     RectF box=visual_box(n,ox,oy);
     if(n->style.overflow==Overflow::Hidden&&!box.contains(px,py))return nullptr;
@@ -157,7 +157,7 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     }
     for (auto& line : L.lines) {
         for (auto& item : line.items) {
-            if (item.w <= 0 || item.h <= 0) continue;
+            if (item.w <= 0 || item.h <= 0 || !item.style || item.style->visibility != Visibility::Visible) continue;
             RectF r{cx + item.x, cy + item.y, item.w, item.h};
             if (!r.contains(px, py)) continue;
             Node* target = item.node;
@@ -166,7 +166,7 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
             if (item.link) return item.link;
         }
     }
-    if (box.contains(px, py)) return n;
+    if (n->style.visibility == Visibility::Visible && box.contains(px, py)) return n->anonymous ? n->parent : n;
     return nullptr;
 }
 

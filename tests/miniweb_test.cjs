@@ -328,6 +328,12 @@ const wait = async (fn) => {
           }),
         ),
       );
+      const textFixture = fs.readFileSync(path.resolve('miniweb/test/text-visibility.html'), 'utf8');
+      fs.writeFileSync(path.join(project, 'text-visibility.html'), textFixture);
+      const textShot = shot('text-visibility.html', ['--width', '640', '--height', '480', '--wait', '0', '-o', 'text.png']);
+      assert.equal(textShot.status, 0, textShot.stderr);
+      await require('./miniweb_rendering_browser.cjs')(page, textFixture, png('text.png', 640, 480));
+      await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();
       await new Promise((r) => probe.listen(0, '127.0.0.1', r));

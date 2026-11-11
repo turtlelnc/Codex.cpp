@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><style>
+html,body{margin:0;width:640px;height:480px;background:white}
+body{font:20px/24px "DejaVu Sans Mono",monospace;color:black}
+button{box-sizing:border-box;border:0;padding:0;background:white;font:inherit}
+.label{position:absolute;display:flex;justify-content:center;align-items:center;width:200px;height:80px}
+#label{left:0;top:0}
+#mixed{left:0;top:100px;width:300px;gap:8px}
+#column{left:320px;top:0;width:160px;height:140px;flex-direction:column;gap:10px}
+#wrapped{left:500px;top:0;width:80px;height:100px}
+#whitespace{left:320px;top:160px;gap:10px}
+#whitespace span{width:20px;height:20px;background:green}
+#hidden{position:absolute;left:10px;top:250px;width:200px;height:120px;visibility:hidden;background:blue;border:2px solid red;box-shadow:0 0 4px red}
+#visible{position:absolute;left:30px;top:20px;width:60px;height:40px;visibility:visible;background:green}
+#inherited{position:absolute;left:110px;top:20px;width:60px;height:40px;background:blue}
+#inline-visible{visibility:visible;color:red}
+#hidden-input{position:absolute;left:250px;top:250px;width:80px;height:24px;visibility:hidden}
+#zero{position:absolute;left:400px;top:250px;width:100px;height:100px;opacity:0;visibility:hidden}
+#zero div{visibility:visible;width:80px;height:80px;background:red}
+#none{display:none}#none div{visibility:visible;width:100px;height:100px;background:red}
+#opacity{left:0;top:400px;opacity:.5}
+#plainword{left:240px;top:400px;width:60px}
+#splitword{left:440px;top:400px;width:60px}
+</style></head><body>
+<button id="label" class="label">Visible label</button>
+<div id="mixed" class="label">alpha<!-- contiguous text --> beta<span id="badge">box</span>tail</div>
+<div id="column" class="label">first<span>middle</span>last</div>
+<div id="wrapped" class="label">long label words</div>
+<div id="whitespace" class="label">  <span></span> 
+  <span></span>  </div>
+<div id="hidden">hidden text<span id="inline-visible">OK</span><div id="visible"></div><div id="inherited"></div></div>
+<input id="hidden-input" value="secret">
+<div id="zero"><div></div></div><div id="none"><div></div></div>
+<div id="opacity" class="label">translucent</div>
+<div id="plainword" class="label">abcdefghi</div>
+<div id="splitword" class="label">abcd<!-- no word break -->efghi</div>
+<div style="display:none">
+<span id="line-px" style="font:20px/24px monospace"></span>
+<span id="line-percent" style="font:20px/150% monospace"></span>
+<span id="line-number" style="font:20px/1.2 monospace"></span>
+<span id="line-em" style="font:20px/1.2em monospace"></span>
+<span id="line-rem" style="font:20px/1.5rem monospace"></span>
+<span id="size-rem" style="font:1rem/normal monospace"></span>
+</div>
+<script>
+document.getElementById('label').addEventListener('click',function(){document.body.setAttribute('data-label-click','yes');this.style.color='blue';});
+document.getElementById('visible').addEventListener('click',function(){document.body.setAttribute('data-visible-click','yes');this.style.background='red';});
+document.getElementById('hidden').addEventListener('click',function(e){if(e.target===this)document.body.setAttribute('data-hidden-click','bad');});
+</script></body></html>
