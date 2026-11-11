@@ -27,7 +27,8 @@ struct Edges {
     const T& operator[](int i) const { return i == 0 ? top : i == 1 ? right : i == 2 ? bottom : left; }
 };
 
-enum class Display { Inline, Block, InlineBlock, Flex, Grid, None };
+enum class Display { Inline, Block, InlineBlock, Flex, Grid, Table, TableHeader, TableGroup, TableFooter, TableRow, TableCell, None };
+enum class VerticalAlign { Baseline, Top, Middle, Bottom };
 enum class TrackKind { Px, Percent, Fr, Auto, AutoFit };
 struct GridTrack {
     TrackKind kind = TrackKind::Auto;
@@ -114,6 +115,9 @@ struct ComputedStyle {
     float aspect_ratio = 0;
     int order = 0;
     int grid_column_span = 1;
+    bool table_fixed = false;
+    float border_spacing_x = 2, border_spacing_y = 2;
+    VerticalAlign vertical_align = VerticalAlign::Baseline;
     Length translate_x = Length::px(0), translate_y = Length::px(0);
     std::vector<GridTrack> grid_columns;
     std::vector<GridTrack> grid_rows;
@@ -127,7 +131,9 @@ struct ComputedStyle {
     std::unordered_map<std::string, std::string> custom_props;
 
     bool is_block_level() const {
-        return display == Display::Block || display == Display::Flex || display == Display::Grid;
+        return display == Display::Block || display == Display::Flex || display == Display::Grid ||
+               display == Display::Table || display == Display::TableRow || display == Display::TableCell ||
+               display == Display::TableGroup || display == Display::TableHeader || display == Display::TableFooter;
     }
     bool is_inline_level() const {
         return display == Display::Inline || display == Display::InlineBlock;
@@ -150,6 +156,8 @@ inline ComputedStyle inherited_style(const ComputedStyle& parent) {
     st.letter_spacing = parent.letter_spacing;
     st.text_transform = parent.text_transform;
     st.custom_props = parent.custom_props;
+    st.border_spacing_x = parent.border_spacing_x;
+    st.border_spacing_y = parent.border_spacing_y;
     return st;
 }
 

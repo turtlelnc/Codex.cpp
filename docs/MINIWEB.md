@@ -34,9 +34,15 @@ Direct flex text now forms layout-only anonymous items (including mixed, column 
 
 Font-size uses the CSS em square for rasterization, advances, kerning and vertical metrics. Glyph caches preserve fractional sizes (glyph sizes/bitmaps are limited to 4096px). Border widths retain specified values independently of none/solid style, shorthands reset omitted fields, transparent borders occupy space, and currentColor resolves after the cascade. Regressions compare text extents and border pixels with Chromium; glyph antialiasing and full font/shaping compatibility remain outside this guarantee.
 
+## Basic table layout
+
+The separate-border subset supports table, thead/tbody/tfoot, tr/th/td and corresponding CSS display values. Fixed layout with an explicit table width uses first-row cell widths; simple automatic layout shares content-based columns across rows and wraps text. Border spacing, cell padding/borders, top/middle/bottom/basic baseline alignment, header/footer ordering, hidden rows, nested tables and script-driven row changes are covered. getComputedStyle and element geometry use the same layout. The renderer does not insert synthetic DOM row groups.
+
+This is not the complete CSS table algorithm. Captions, col/colgroup sizing, inline-table, rowspan/colspan, collapsed-border conflict resolution, anonymous table-box repair, complex percentage/min/max constraints and row-group height distribution remain unsupported or approximate. Use explicit row/cell markup and separate borders for this first implementation. Chromium regressions cover fixed and simple auto tables at 640px and 320px, cell text/pixels and dynamic insertion.
+
 ## Compatibility limitations
 
-A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, table layout, advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
+A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
 
 This integration does not claim the whole Codex.cpp WebUI works inside MiniWeb. It requires server RPC and CSS/browser APIs beyond this file-only renderer. Tests use actual supported local pages, pixel probes and negative access-control cases. Remaining feature work is tracked separately from integration reliability.
 

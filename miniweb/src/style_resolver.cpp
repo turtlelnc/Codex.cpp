@@ -11,7 +11,14 @@
 const char* kUserAgentCss = R"CSS(
 html, body, div, p, section, article, aside, header, footer, main, nav, figure, figcaption,
 address, blockquote, pre, form, fieldset, legend, details, summary, ul, ol, li, dl, dt, dd,
-table, thead, tbody, tfoot, tr, td, th, h1, h2, h3, h4, h5, h6, hr { display: block; }
+h1, h2, h3, h4, h5, h6, hr { display: block; }
+table { display:table; box-sizing:border-box; border-spacing:2px; }
+thead { display:table-header-group; vertical-align:middle; }
+tbody { display:table-row-group; vertical-align:middle; }
+tfoot { display:table-footer-group; vertical-align:middle; }
+tr { display:table-row; vertical-align:inherit; }
+td,th { display:table-cell; vertical-align:inherit; padding:1px; }
+th { font-weight:bold; text-align:center; }
 head, title, meta, link, style, script, base, template, noscript, source, track { display: none; }
 body { margin: 8px; }
 p { margin: 1em 0; }
@@ -210,7 +217,7 @@ float parse_float_value(const std::string& s, float def = 0) {
 bool is_inherited_prop(const std::string& p) {
     return p == "color" || p == "font-family" || p == "font-size" || p == "font-weight" ||
            p == "font-style" || p == "line-height" || p == "text-align" || p == "white-space" ||
-           p == "visibility" || p == "letter-spacing" || p == "text-transform" ||
+           p == "border-spacing" || p == "visibility" || p == "letter-spacing" || p == "text-transform" ||
            util::starts_with(p, "font") || util::starts_with(p, "text-");
 }
 
@@ -218,6 +225,9 @@ void reset_display(ComputedStyle& st) { st.display = Display::Inline; }
 
 void reset_prop(ComputedStyle& st, const std::string& p) {
     if (p == "display") st.display = Display::Inline;
+    else if (p == "table-layout") st.table_fixed=false;
+    else if (p == "border-spacing") st.border_spacing_x=st.border_spacing_y=2;
+    else if (p == "vertical-align") st.vertical_align=VerticalAlign::Baseline;
     else if (p == "position") st.position = Position::Static;
     else if (p == "color") st.color = Color{0, 0, 0, 255};
     else if (p == "background-color" || p == "background" || p == "background-image") {
@@ -311,6 +321,8 @@ bool inherit_prop(ComputedStyle& st, const std::string& p, const ComputedStyle* 
     else if (p == "letter-spacing") st.letter_spacing = parent->letter_spacing;
     else if (p == "text-transform") st.text_transform = parent->text_transform;
     else if (p == "display") st.display = parent->display;
+    else if (p == "vertical-align") st.vertical_align=parent->vertical_align;
+    else if (p == "border-spacing") {st.border_spacing_x=parent->border_spacing_x;st.border_spacing_y=parent->border_spacing_y;}
     else return false;
     return true;
 }
@@ -404,7 +416,13 @@ Display parse_display(const std::string& v) {
     if (v == "flex" || v == "inline-flex") return Display::Flex;
     if (v == "grid" || v == "inline-grid") return Display::Grid;
     if (v == "none") return Display::None;
-    if (v == "list-item" || v == "table" || v == "table-row" || v == "table-cell" ||
+    if (v == "table") return Display::Table;
+    if (v == "table-header-group") return Display::TableHeader;
+    if (v == "table-row-group") return Display::TableGroup;
+    if (v == "table-footer-group") return Display::TableFooter;
+    if (v == "table-row") return Display::TableRow;
+    if (v == "table-cell") return Display::TableCell;
+    if (v == "list-item" ||
         v == "flow-root" || v == "contents") return Display::Block;
     return Display::Inline;
 }
@@ -762,6 +780,15 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         else if (vl == "absolute") st.position = Position::Absolute;
         else if (vl == "fixed") st.position = Position::Fixed;
         else st.position = Position::Static;
+    } else if (p == "table-layout") { if(vl=="fixed"||vl=="auto")st.table_fixed=vl=="fixed";
+    } else if (p == "vertical-align") {
+        if(vl=="top")st.vertical_align=VerticalAlign::Top;else if(vl=="middle")st.vertical_align=VerticalAlign::Middle;
+        else if(vl=="bottom")st.vertical_align=VerticalAlign::Bottom;else if(vl=="baseline")st.vertical_align=VerticalAlign::Baseline;
+    } else if (p == "border-spacing") {
+        auto parts=split_ws_paren(vl);if(parts.empty()||parts.size()>2)return;
+        float values[2]{};for(size_t i=0;i<parts.size();++i){bool ok=false;auto length=parse_length_value(parts[i],st.font_size,16,false,&ok);
+            if(!ok||length.unit==Length::Percent)return;values[i]=resolve_length(length,0,st.font_size);if(!std::isfinite(values[i])||values[i]<0)return;}
+        st.border_spacing_x=values[0];st.border_spacing_y=parts.size()==1?values[0]:values[1];
     } else if (p == "width") st.width = len(st.font_size, true);
     else if (p == "height") st.height = len(st.font_size, true);
     else if (p == "min-width") st.min_width = len(st.font_size, false);
@@ -1207,7 +1234,17 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
             for (auto* c : node->children) resolve(c, node);
             return;
         }
-        ComputedStyle st = parent ? inherited_style(parent->style) : ComputedStyle{};
+        const ComputedStyle* parent_style = parent ? &parent->style : nullptr;
+        ComputedStyle implicit_group;
+        // The small HTML parser retains direct table/tr children. A browser
+        // inserts tbody, whose UA vertical-align is middle. Preserve the DOM,
+        // but use that inherited value for ordinary HTML rows without a group.
+        if (parent && node->is_element("tr") && parent->is_element("table")) {
+            implicit_group = parent->style;
+            implicit_group.vertical_align = VerticalAlign::Middle;
+            parent_style = &implicit_group;
+        }
+        ComputedStyle st = parent_style ? inherited_style(*parent_style) : ComputedStyle{};
         st.margin = {Length::px(0), Length::px(0), Length::px(0), Length::px(0)};
         st.padding = {Length::px(0), Length::px(0), Length::px(0), Length::px(0)};
         st.is_root = node == doc.html;
@@ -1289,7 +1326,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         for (auto& it : items) {
             if (util::starts_with(it.name, "--")) continue;
             std::string val = substitute_vars(it.value, st.custom_props);
-            apply_property(st, it.name, val, parent ? &parent->style : nullptr, node);
+            apply_property(st, it.name, val, parent_style, node);
         }
 
         for (auto& side : st.border) if (side.current_color) side.color = st.color;

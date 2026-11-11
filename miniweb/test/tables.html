@@ -1,0 +1,26 @@
+<!doctype html><html><head><style>
+html,body{margin:0;width:100%;background:white;color:black;font:14px/20px "DejaVu Sans Mono",monospace}
+table{position:absolute}td,th{padding:6px;border:1px solid #444}button{font:inherit;padding:2px;border:1px solid black;background:#eee}
+#report{left:10px;top:10px;width:600px;table-layout:fixed;border-spacing:0;border:2px solid black}
+#h1{width:140px}thead{background:#ddd}tfoot{background:#eee}#tall{height:80px}#a2{vertical-align:top}#c2{vertical-align:bottom}
+#auto{left:10px;top:350px;border:1px solid blue;padding:3px;border-spacing:4px 6px}#auto td{padding:2px}
+#outer{left:300px;top:350px;width:300px;table-layout:fixed;border:1px solid black;border-spacing:2px}#outer td{padding:3px;vertical-align:top}
+#inner{position:static;width:100px;table-layout:fixed;border:1px solid blue;border-spacing:0}#inner td{padding:1px}
+#css{position:absolute;left:10px;top:530px;width:260px;display:table;table-layout:fixed;border:1px solid black;border-spacing:0}
+.css-row{display:table-row}.css-cell{display:table-cell;vertical-align:top;padding:4px;border:1px solid black}
+#narrow{left:300px;top:530px;width:260px;table-layout:auto;border-spacing:0;border:1px solid black}
+#narrow td{padding:4px}
+#responsive{left:10px;top:650px;width:90%;table-layout:fixed;border-spacing:0;border:1px solid black}
+</style></head><body>
+<table id="report"><tfoot id="foot"><tr id="footer"><td id="f1">Total</td><td id="f2">2 rows</td><td id="f3">Done</td></tr></tfoot><thead id="head"><tr id="header"><th id="h1">Name</th><th id="h2">Details</th><th id="h3">Action</th></tr></thead>
+<tbody id="body"><tr id="first"><td id="a1">Alpha</td><td id="b1">A sentence with several words which wraps into more than one line.</td><td id="c1"><button id="add">Add row</button></td></tr>
+<tr id="tall"><td id="a2">Top</td><td id="b2">Middle</td><td id="c2">Bottom</td></tr>
+<tr style="display:none"><td>Hidden</td><td>Hidden</td><td>Hidden</td></tr></tbody>
+</table>
+<table id="auto"><tbody id="auto-body"><tr id="auto-r1"><td id="x1">A</td><td id="y1">Qty</td></tr><tr id="auto-r2"><td id="x2">Longer</td><td id="y2">12</td></tr><tr id="auto-r3"><td id="x3">B</td><td id="y3">2</td></tr></tbody></table>
+<table id="outer"><tbody><tr id="outer-row"><td id="outer-a"><table id="inner"><tbody><tr><td id="i1">1</td><td id="i2">2</td></tr><tr><td id="i3">3</td><td id="i4">4</td></tr></tbody></table></td><td id="outer-b">Nested</td></tr></tbody></table>
+<div id="css"><div id="css-r1" class="css-row"><div id="d1" class="css-cell">Left</div><div id="d2" class="css-cell">Right</div></div><div id="css-r2" class="css-row"><div id="d3" class="css-cell">Long<br>row</div><div id="d4" class="css-cell">Short</div></div></div>
+<table id="narrow"><tbody><tr><td id="n1">alpha beta gamma delta</td><td id="n2">alpha beta gamma delta</td></tr></tbody></table>
+<table id="responsive"><tr><td id="resp-a">A</td><td id="resp-b">B</td></tr><tr><td id="resp-c">Two<br>lines</td><td id="resp-d">One</td></tr></table>
+<script>document.body.setAttribute('data-table-display',getComputedStyle(document.getElementById('report')).display);document.body.setAttribute('data-cell-display',getComputedStyle(document.getElementById('a1')).display);document.body.setAttribute('data-spacing',getComputedStyle(document.getElementById('report')).borderSpacing);document.getElementById('add').addEventListener('click',function(){var row=document.createElement('tr');row.id='added';['New','More detail','OK'].forEach(function(text){var cell=document.createElement('td');cell.textContent=text;row.appendChild(cell);});document.getElementById('body').appendChild(row);});</script>
+</body></html>
