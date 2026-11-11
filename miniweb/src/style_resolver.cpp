@@ -250,9 +250,19 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
     } else if (p == "padding") {
         st.padding = {Length::px(0), Length::px(0), Length::px(0), Length::px(0)};
     }
+    else if (p == "border-radius") st.border_radius = 0;
     else if (util::starts_with(p, "border")) {
-        for (auto& b : st.border) { b.width = 0; b.style = BorderStyle::None; b.color = Color{0,0,0,255}; }
-    } else if (p == "border-radius") st.border_radius = 0;
+        const int side = util::starts_with(p,"border-top") ? 0 : util::starts_with(p,"border-right") ? 1 :
+                         util::starts_with(p,"border-bottom") ? 2 : util::starts_with(p,"border-left") ? 3 : -1;
+        for (int i=0;i<4;++i) {
+            if (side>=0 && side!=i) continue;
+            auto& b=st.border[i];
+            if (p=="border" || p=="border-top" || p=="border-right" || p=="border-bottom" || p=="border-left") b=BorderSide{};
+            else if (util::ends_with(p,"-width")) b.width=BorderSide{}.width;
+            else if (util::ends_with(p,"-style")) b.style=BorderStyle::None;
+            else if (util::ends_with(p,"-color")) b.current_color=true;
+        }
+    }
     else if (p == "overflow") st.overflow = Overflow::Visible;
     else if (p == "box-sizing") st.box_sizing_border = false;
     else if (p == "flex-grow") st.flex_grow = 0;

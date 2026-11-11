@@ -335,9 +335,9 @@ const wait = async (fn) => {
       await require('./miniweb_rendering_browser.cjs')(page, textFixture, png('text.png', 640, 480));
       const borderFixture = fs.readFileSync(path.resolve('miniweb/test/borders.html'), 'utf8');
       fs.writeFileSync(path.join(project, 'borders.html'), borderFixture);
-      const borderShot = shot('borders.html', ['--width', '640', '--height', '160', '--wait', '0', '-o', 'borders.png']);
+      const borderShot = shot('borders.html', ['--width', '640', '--height', '240', '--wait', '0', '-o', 'borders.png']);
       assert.equal(borderShot.status, 0, borderShot.stderr);
-      await require('./miniweb_rendering_browser.cjs').borders(page, borderFixture, png('borders.png', 640, 160));
+      await require('./miniweb_rendering_browser.cjs').borders(page, borderFixture, png('borders.png', 640, 240));
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();

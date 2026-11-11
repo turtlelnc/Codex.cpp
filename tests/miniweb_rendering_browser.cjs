@@ -125,7 +125,7 @@ module.exports = async function compareTextVisibility(page, fixture, miniPNG) {
 };
 
 module.exports.borders = async function compareBorders(page, fixture, miniPNG) {
-  await page.setViewportSize({ width: 640, height: 160 });
+  await page.setViewportSize({ width: 640, height: 240 });
   await page.setContent(fixture);
   const chromePNG = await page.screenshot();
   if (process.env.CODEX_ARTIFACT_DIR) {
@@ -147,7 +147,7 @@ module.exports.borders = async function compareBorders(page, fixture, miniPNG) {
         await image.decode();
         const canvas = document.createElement('canvas');
         canvas.width = 640;
-        canvas.height = 160;
+        canvas.height = 240;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(image, 0, 0);
         result.push(
@@ -164,6 +164,13 @@ module.exports.borders = async function compareBorders(page, fixture, miniPNG) {
             [10, 80],
             [70, 80],
             [130, 80],
+            [330, 80],
+            [400, 80],
+            [460, 80],
+            [530, 80],
+            [10, 140],
+            [70, 140],
+            [130, 140],
           ].map(([x, y]) => Array.from(ctx.getImageData(x, y, 1, 1).data)),
         );
       }
