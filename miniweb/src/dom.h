@@ -1,6 +1,7 @@
 #pragma once
 #include "box.h"
 #include "style.h"
+#include <cstdint>
 #include <deque>
 #include <string>
 #include <unordered_map>
@@ -70,6 +71,7 @@ struct Node {
 };
 
 struct Document {
+    uint64_t revision = 0;
     std::deque<Node> arena;
     std::vector<Node*> id_map; // index == node id
     Node* root = nullptr;

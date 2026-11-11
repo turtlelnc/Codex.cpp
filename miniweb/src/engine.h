@@ -55,6 +55,8 @@ private:
     void collect_stylesheets();
     void apply_styles();
     void do_layout();
+    void ensure_layout();
+    uint64_t layout_revision_ = 0;
     void collect_links(Node* n, float ox, float oy);
     Node* hit_test(Node* n, float ox, float oy, float px, float py);
 };

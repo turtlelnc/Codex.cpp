@@ -489,7 +489,7 @@ JSValue js_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
 JSValue js_set_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 2) return JS_UNDEFINED;
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-    if (n && (n->type == NodeType::Text || n->type == NodeType::Comment)) n->data = arg_str(ctx, argv[1]);
+    if (n && (n->type == NodeType::Text || n->type == NodeType::Comment)) {n->data = arg_str(ctx, argv[1]);if(n->doc)++n->doc->revision;}
     return JS_UNDEFINED;
 }
 
@@ -504,7 +504,7 @@ JSValue js_set_text_content(JSContext* ctx, JSValueConst, int argc, JSValueConst
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
     if (!n) return JS_UNDEFINED;
     std::string text = arg_str(ctx, argv[1]);
-    if (n->type == NodeType::Text || n->type == NodeType::Comment) n->data = text;
+    if (n->type == NodeType::Text || n->type == NodeType::Comment) {n->data = text;if(n->doc)++n->doc->revision;}
     else n->set_text_content(text);
     return JS_UNDEFINED;
 }
@@ -572,11 +572,14 @@ JSValue js_set_style(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     return JS_UNDEFINED;
 }
 
+bool refresh_geometry(JSContext* ctx){try{auto* b=bridge(ctx);if(b&&b->owner)b->owner->refresh_layout();return true;}catch(const std::exception&){JS_ThrowInternalError(ctx,"preview layout refresh failed");return false;}}
+
 JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if(!refresh_geometry(ctx))return JS_EXCEPTION;
     RectF r;
     if (argc >= 1) {
         Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-        if (n) r = n->absolute_rect();
+        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->absolute_rect();}
     }
     JSValue arr = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, arr, 0, JS_NewFloat64(ctx, r.x));
@@ -587,6 +590,7 @@ JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
 }
 
 JSValue js_computed(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if(!refresh_geometry(ctx))return JS_EXCEPTION;
     if (argc < 2) return str_val(ctx, "");
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
     if (!n) return str_val(ctx, "");
@@ -742,8 +746,8 @@ int interrupt_cb(JSContext*, void* opaque) {
 
 } // namespace
 
-JsRuntime::JsRuntime(Document& doc, Loader& loader, int viewport_w, int viewport_h)
-    : doc_(doc), loader_(loader), vw_(viewport_w), vh_(viewport_h) {}
+JsRuntime::JsRuntime(Document& doc, Loader& loader, int viewport_w, int viewport_h, std::function<void()> refresh)
+    : refresh_(std::move(refresh)), doc_(doc), loader_(loader), vw_(viewport_w), vh_(viewport_h) {}
 
 JsRuntime::~JsRuntime() {
     auto* ctx = static_cast<JSContext*>(ctx_);
@@ -898,14 +902,18 @@ void JsRuntime::dispatch_load() {
 }
 
 void JsRuntime::drain_timers(int virtual_ms) {
+    auto* context=static_cast<JSContext*>(ctx_);double now=0;
+    auto clock=JS_Eval(context,"__mwTimerNow()",14,"<timer-clock>",JS_EVAL_TYPE_GLOBAL);
+    if(JS_IsException(clock)||JS_ToFloat64(context,&now,clock)<0||!std::isfinite(now)){JS_FreeValue(context,clock);dump_exception("timer-clock");return;}
+    JS_FreeValue(context,clock);const auto end=util::format_float(now+std::max(0,virtual_ms),3);
     int total = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 5000; i++) {
         auto* ctx = static_cast<JSContext*>(ctx_);
         deadline_ms_ = util::now_ms() + 2000;
-        std::string code = "__mwDrainTimers(" + std::to_string(std::max(0, virtual_ms)) + ");";
+        std::string code = "__mwDrainTimers(0," + end + ");";
         JSValue v = JS_Eval(ctx, code.data(), code.size(), "<timers>", JS_EVAL_TYPE_GLOBAL);
-        deadline_ms_ = 0;
         if (JS_IsException(v)) {
+            deadline_ms_ = 0;
             dump_exception("timers");
             JS_FreeValue(ctx, v);
             break;
@@ -914,16 +922,16 @@ void JsRuntime::drain_timers(int virtual_ms) {
         JS_ToInt32(ctx, &ran, v);
         JS_FreeValue(ctx, v);
         drain_jobs();
+        deadline_ms_ = 0;
         total += ran;
         if (ran <= 0) break;
-        if (total >= 5000) break;
+        if (total >= 5000) {util::warn("preview timer callback budget reached");break;}
     }
 }
 
 void JsRuntime::run(int wait_ms) {
     execute_scripts();
     dispatch_dom_content_loaded();
-    drain_timers(wait_ms);
     dispatch_load();
-    drain_timers(std::min(wait_ms, 500));
+    drain_timers(wait_ms);
 }

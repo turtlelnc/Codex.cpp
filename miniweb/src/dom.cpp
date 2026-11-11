@@ -39,6 +39,7 @@ std::string Node::attr_or(const std::string& name, const std::string& def) const
 bool Node::has_attr(const std::string& name) const { return attr_ptr(name) != nullptr; }
 
 void Node::set_attr(const std::string& name, const std::string& value) {
+    if(doc)++doc->revision;
     std::string n = lower_attr(name);
     for (auto& a : attrs) {
         if (a.first == n) { a.second = value; return; }
@@ -47,6 +48,7 @@ void Node::set_attr(const std::string& name, const std::string& value) {
 }
 
 void Node::remove_attr(const std::string& name) {
+    if(doc)++doc->revision;
     std::string n = lower_attr(name);
     attrs.erase(std::remove_if(attrs.begin(), attrs.end(), [&](auto& a) { return a.first == n; }),
                 attrs.end());
@@ -64,6 +66,7 @@ bool Node::has_class(const std::string& c) const {
 Node* Node::append_child(Node* child) {
     if (!child || child == this) return nullptr;
     for (Node* p = this; p; p = p->parent) if (p == child) return nullptr;
+    if(doc)++doc->revision;
     if (child->parent) child->detach();
     child->parent = this;
     children.push_back(child);
@@ -75,8 +78,10 @@ Node* Node::insert_before(Node* child, Node* ref) {
     if (!child) return nullptr;
     if (!ref) return append_child(child);
     if (ref->parent != this) return nullptr;
+    if (child == ref) return child;
     if (child == this) return nullptr;
     for (Node* p = this; p; p = p->parent) if (p == child) return nullptr;
+    if(doc)++doc->revision;
     if (child->parent) child->detach();
     auto it = std::find(children.begin(), children.end(), ref);
     if (it == children.end()) return append_child(child);
@@ -89,6 +94,7 @@ Node* Node::insert_before(Node* child, Node* ref) {
 Node* Node::remove_child(Node* child) {
     auto it = std::find(children.begin(), children.end(), child);
     if (it == children.end()) return nullptr;
+    if(doc)++doc->revision;
     children.erase(it);
     if (child) child->parent = nullptr;
     return child;
@@ -98,7 +104,12 @@ Node* Node::replace_child(Node* new_child, Node* old_child) {
     if (!new_child || !old_child) return nullptr;
     auto it = std::find(children.begin(), children.end(), old_child);
     if (it == children.end()) return nullptr;
+    if(new_child==old_child)return old_child;
+    for(Node* p=this;p;p=p->parent)if(p==new_child)return nullptr;
+    if(doc)++doc->revision;
     if (new_child->parent) new_child->detach();
+    it=std::find(children.begin(),children.end(),old_child);
+    if(it==children.end())return nullptr;
     new_child->parent = this;
     if (doc) new_child->doc = doc;
     *it = new_child;
@@ -108,6 +119,7 @@ Node* Node::replace_child(Node* new_child, Node* old_child) {
 
 void Node::detach() {
     if (parent) {
+        if(doc)++doc->revision;
         auto it = std::find(parent->children.begin(), parent->children.end(), this);
         if (it != parent->children.end()) parent->children.erase(it);
         parent = nullptr;
@@ -115,6 +127,7 @@ void Node::detach() {
 }
 
 void Node::remove_all_children() {
+    if(doc)++doc->revision;
     for (auto* c : children) if (c) c->parent = nullptr;
     children.clear();
 }
@@ -218,6 +231,7 @@ Document::Document() {
 }
 
 Node* Document::alloc(NodeType type) {
+    ++revision;
     arena.emplace_back();
     Node* n = &arena.back();
     int id = (int)id_map.size();
@@ -352,6 +366,7 @@ std::string Document::resolve(const std::string& rel) const {
 }
 
 void Document::remove_all() {
+    ++revision;
     arena.clear();
     id_map.clear();
     root = html = head = body = nullptr;

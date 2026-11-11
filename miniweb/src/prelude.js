@@ -639,12 +639,14 @@
   var __dateBase = Date.now();
   var __timerSeq = 1;
   var __timers = [];
+  var __timerById = new Map();
 
   function setTimeout(fn, delay) {
     var args = Array.prototype.slice.call(arguments, 2);
     if (typeof fn === 'string') { var src = fn; fn = function () { (0, eval)(src); }; }
     var id = __timerSeq++;
-    __timers.push({ id: id, fn: fn, args: args, due: __now + Math.max(0, Number(delay) || 0), interval: 0 });
+    var timer = { id: id, fn: fn, args: args, due: __now + Math.max(0, Number(delay) || 0), interval: 0 };
+    __timerById.set(id, timer); __timers.push(timer);
     return id;
   }
   function setInterval(fn, delay) {
@@ -652,27 +654,32 @@
     if (typeof fn === 'string') { var src = fn; fn = function () { (0, eval)(src); }; }
     var id = __timerSeq++;
     var iv = Math.max(1, Number(delay) || 0);
-    __timers.push({ id: id, fn: fn, args: args, due: __now + iv, interval: iv });
+    var timer = { id: id, fn: fn, args: args, due: __now + iv, interval: iv };
+    __timerById.set(id, timer); __timers.push(timer);
     return id;
   }
   function clearTimeout(id) {
     id = Number(id);
+    __timerById.delete(id);
     __timers = __timers.filter(function (t) { return t.id !== id; });
   }
   function clearInterval(id) { clearTimeout(id); }
-  function __mwDrainTimers(maxMs) {
-    var end = __now + Math.max(0, Number(maxMs) || 0);
+  function __mwDrainTimers(maxMs, absoluteEnd) {
+    var end = absoluteEnd === undefined ? __now + Math.max(0, Number(maxMs) || 0) : absoluteEnd;
     var ran = 0;
-    while (ran < 1000) {
+    // One task per host call: Promise jobs run before the next timer.
+    while (ran < 1) {
       __timers.sort(function (a, b) { return a.due - b.due; });
       if (!__timers.length) break;
       var t = __timers[0];
       if (t.due > end) break;
       __timers.shift();
+      if (!__timerById.has(t.id)) continue;
+      if (!t.interval) __timerById.delete(t.id);
       if (t.due > __now) __now = t.due;
       try { t.fn.apply(null, t.args); } catch (e) { console.error(e); }
       ran++;
-      if (t.interval) {
+      if (t.interval && __timerById.has(t.id)) {
         t.due = __now + t.interval;
         __timers.push(t);
       }
@@ -681,6 +688,7 @@
   }
   function __mwPendingTimers() { return __timers.length; }
   globalThis.__mwDrainTimers = __mwDrainTimers;
+  globalThis.__mwTimerNow = function () { return __now; };
   globalThis.__mwPendingTimers = __mwPendingTimers;
 
   globalThis.setTimeout = setTimeout;

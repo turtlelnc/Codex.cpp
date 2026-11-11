@@ -17,5 +17,9 @@ int main(int argc,char** argv){try{
  if(!styles.click(10,130)||!styles.render(false))throw std::runtime_error("Visible clipped child click failed");style_pixel(70,0,128,0,130);
  if(!styles.click(70,10)||!styles.render(false))throw std::runtime_error("Stylesheet mutation click failed");style_pixel(70,0,128,0);
  if(!styles.click(310,10)||!styles.render(false))throw std::runtime_error("Inserted stylesheet mutation failed");style_pixel(310,0,128,0);
+ Engine runtime(640,480);runtime.set_wait_ms(500);if(!runtime.load((page.parent_path()/"runtime.html").u8string(),&error)||!runtime.render(false))throw std::runtime_error(error);
+ auto* body=runtime.document()->body;for(const auto& pair:std::vector<std::pair<std::string,std::string>>{{"data-width","200"},{"data-computed","200px"},{"data-added","123"},{"data-detached","0"},{"data-siblings","2:a:c"},{"data-once","1"},{"data-repeat","5"},{"data-microtask-clock","0"}})if(body->attr(pair.first)!=pair.second)throw std::runtime_error(pair.first+" expected "+pair.second+" got "+body->attr(pair.first));
+ if(body->has_attr("data-late"))throw std::runtime_error("Virtual wait window was extended");
+ auto* siblings=runtime.document()->get_element_by_id("siblings");auto* a=runtime.document()->get_element_by_id("a");if(a->replace_child(siblings,nullptr)||siblings->replace_child(body,a)||body->parent==siblings)throw std::runtime_error("Ancestor replacement accepted");
  return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

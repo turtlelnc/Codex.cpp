@@ -97,12 +97,15 @@ void Engine::do_layout() {
     ctx.viewport_w = (float)viewport_w_;
     ctx.viewport_h = (float)viewport_h_;
     layout_document(*doc_, ctx);
+    layout_revision_=doc_->revision;
 }
+
+void Engine::ensure_layout(){if(doc_&&layout_revision_!=doc_->revision){doc_->recompute_head_body();collect_stylesheets();apply_styles();do_layout();}}
 
 bool Engine::render(bool full_page) {
     if (!doc_ || !loader_) return false;
     if (!js_ran_) {
-        auto js = std::make_unique<JsRuntime>(*doc_, *loader_, viewport_w_, viewport_h_);
+        auto js = std::make_unique<JsRuntime>(*doc_, *loader_, viewport_w_, viewport_h_,[this](){ensure_layout();});
         if (js->init()) {
             js->run(wait_ms_);
             doc_->recompute_head_body();

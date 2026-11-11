@@ -3,13 +3,15 @@
 #include "loader.h"
 #include "util.h"
 #include <string>
+#include <functional>
 
 class JsRuntime {
 public:
-    JsRuntime(Document& doc, Loader& loader, int viewport_w, int viewport_h);
+    JsRuntime(Document& doc, Loader& loader, int viewport_w, int viewport_h, std::function<void()> refresh = {});
     ~JsRuntime();
 
     bool init();
+    void refresh_layout(){if(refresh_)refresh_();}
     void run(int wait_ms = 2500);
     void execute_scripts();
     void dispatch_dom_content_loaded();
@@ -22,6 +24,7 @@ public:
     struct Bridge;
 
 private:
+    std::function<void()> refresh_;
     Document& doc_;
     Loader& loader_;
     int vw_ = 1280, vh_ = 800;
