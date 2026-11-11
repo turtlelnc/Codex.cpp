@@ -703,21 +703,29 @@ void apply_font_shorthand(ComputedStyle& st, const std::string& value, const Com
     }
     if (i >= (int)toks.size()) return;
     std::string size_tok = toks[i];
-    float line_h = -1;
+    std::string line_h;
     size_t slash = size_tok.find('/');
     if (slash != std::string::npos) {
         std::string lh = size_tok.substr(slash + 1);
         size_tok = size_tok.substr(0, slash);
-        line_h = parse_float_value(lh, -1);
+        line_h = util::to_lower(lh);
     }
     float psize = parent ? parent->font_size : 16;
     if (util::ends_with(size_tok, "%")) st.font_size = psize * parse_float_value(size_tok) / 100.0f;
-    else if (util::ends_with(size_tok, "em")) st.font_size = psize * parse_float_value(size_tok);
     else if (util::ends_with(size_tok, "rem")) st.font_size = 16 * parse_float_value(size_tok);
+    else if (util::ends_with(size_tok, "em")) st.font_size = psize * parse_float_value(size_tok);
     else if (util::ends_with(size_tok, "px")) st.font_size = parse_float_value(size_tok);
     else st.font_size = parse_float_value(size_tok, psize);
     i++;
-    if (line_h > 0) { st.line_height.unit = Length::Em; st.line_height.value = line_h; }
+    st.line_height = Length{};
+    if (!line_h.empty() && line_h != "normal") {
+        if (util::ends_with(line_h, "%")) st.line_height.unit = Length::Percent;
+        else if (util::ends_with(line_h, "px")) st.line_height.unit = Length::Px;
+        else if (util::ends_with(line_h, "rem")) { st.line_height.unit = Length::Px; }
+        else st.line_height.unit = Length::Em;
+        st.line_height.value = parse_float_value(line_h);
+        if (util::ends_with(line_h, "rem")) st.line_height.value *= 16;
+    }
     if (weight > 0) st.font_weight = weight;
     if (has_style) st.font_style = fs;
     std::string fam;
@@ -1204,23 +1212,9 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
             for (auto* c : node->children) resolve(c, node);
             return;
         }
-        ComputedStyle st;
+        ComputedStyle st = parent ? inherited_style(parent->style) : ComputedStyle{};
         st.margin = {Length::px(0), Length::px(0), Length::px(0), Length::px(0)};
         st.padding = {Length::px(0), Length::px(0), Length::px(0), Length::px(0)};
-        if (parent) {
-            st.color = parent->style.color;
-            st.font_family = parent->style.font_family;
-            st.font_size = parent->style.font_size;
-            st.font_weight = parent->style.font_weight;
-            st.font_style = parent->style.font_style;
-            st.line_height = parent->style.line_height;
-            st.text_align = parent->style.text_align;
-            st.white_space = parent->style.white_space;
-            st.visibility = parent->style.visibility;
-            st.letter_spacing = parent->style.letter_spacing;
-            st.text_transform = parent->style.text_transform;
-            st.custom_props = parent->style.custom_props;
-        }
         st.is_root = node == doc.html;
 
         std::vector<DeclItem> items;

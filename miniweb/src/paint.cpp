@@ -93,48 +93,51 @@ void paint_select_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, f
 void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images, float ox, float oy,
                 float opacity) {
     if (!n || !n->is_element()) return;
-    if (n->style.display == Display::None || n->style.visibility != Visibility::Visible) return;
+    if (n->style.display == Display::None) return;
+    const bool visible = n->style.visibility == Visibility::Visible;
     const LayoutInfo& L = n->layout;
     if (!L.has_box) return;
     float op = opacity * std::clamp(n->style.opacity, 0.0f, 1.0f);
     if (op <= 0.001f) return;
     RectF box=visual_box(n,ox,oy);
-    for (auto& sh : n->style.shadows) {
-        if (sh.color.a == 0) continue;
-        RectF r{box.x + sh.x - sh.spread, box.y + sh.y - sh.spread, box.w + 2 * sh.spread,
-                box.h + 2 * sh.spread};
-        if (r.w <= 0 || r.h <= 0) continue;
-        int layers = std::min(12, std::max(0, (int)std::lround(sh.blur / 2.0f)));
-        for (int i = layers; i >= 0; i--) {
-            float grow = layers > 0 ? sh.blur * (float)i / layers : 0;
-            Color c = sh.color;
-            c.a = (uint8_t)std::lround(sh.color.a / (layers + 1.0f));
-            canvas.fill_rounded_rect(RectF{r.x - grow / 2, r.y - grow / 2, r.w + grow, r.h + grow},
-                                     n->style.border_radius + grow / 2, c, op);
+    if (visible) {
+        for (auto& sh : n->style.shadows) {
+            if (sh.color.a == 0) continue;
+            RectF r{box.x + sh.x - sh.spread, box.y + sh.y - sh.spread, box.w + 2 * sh.spread,
+                    box.h + 2 * sh.spread};
+            if (r.w <= 0 || r.h <= 0) continue;
+            int layers = std::min(12, std::max(0, (int)std::lround(sh.blur / 2.0f)));
+            for (int i = layers; i >= 0; i--) {
+                float grow = layers > 0 ? sh.blur * (float)i / layers : 0;
+                Color c = sh.color;
+                c.a = (uint8_t)std::lround(sh.color.a / (layers + 1.0f));
+                canvas.fill_rounded_rect(RectF{r.x - grow / 2, r.y - grow / 2, r.w + grow, r.h + grow},
+                                         n->style.border_radius + grow / 2, c, op);
+            }
         }
-    }
-    if (n->style.background.a > 0) {
-        canvas.fill_rounded_rect(box, n->style.border_radius, n->style.background, op);
-    }
-    if (n->style.background_gradient.enabled) {
-        canvas.fill_linear_gradient(box, n->style.background_gradient, op);
-    }
-    if (images && !n->style.background_image.empty()) {
-        std::string url = n->doc ? n->doc->resolve(n->style.background_image) : n->style.background_image;
-        auto img = images->get(url);
-        if (img && img->ok) {
-            ObjectFit fit = n->style.background_size == BackgroundSize::Cover ? ObjectFit::Cover
-                            : n->style.background_size == BackgroundSize::Contain ? ObjectFit::Contain
-                            : n->style.background_size == BackgroundSize::Stretch ? ObjectFit::Fill
-                                                                                 : ObjectFit::None;
-            canvas.push_clip(box);
-            canvas.draw_image(*img, box, fit, op, n->style.border_radius);
-            canvas.pop_clip();
+        if (n->style.background.a > 0) {
+            canvas.fill_rounded_rect(box, n->style.border_radius, n->style.background, op);
         }
+        if (n->style.background_gradient.enabled) {
+            canvas.fill_linear_gradient(box, n->style.background_gradient, op);
+        }
+        if (images && !n->style.background_image.empty()) {
+            std::string url = n->doc ? n->doc->resolve(n->style.background_image) : n->style.background_image;
+            auto img = images->get(url);
+            if (img && img->ok) {
+                ObjectFit fit = n->style.background_size == BackgroundSize::Cover ? ObjectFit::Cover
+                                : n->style.background_size == BackgroundSize::Contain ? ObjectFit::Contain
+                                : n->style.background_size == BackgroundSize::Stretch ? ObjectFit::Fill
+                                                                                     : ObjectFit::None;
+                canvas.push_clip(box);
+                canvas.draw_image(*img, box, fit, op, n->style.border_radius);
+                canvas.pop_clip();
+            }
+        }
+        bool has_border = border_left(n->style) > 0 || border_right(n->style) > 0 || border_top(n->style) > 0 ||
+                          border_bottom(n->style) > 0;
+        if (has_border) canvas.draw_border(box, n->style, op);
     }
-    bool has_border = border_left(n->style) > 0 || border_right(n->style) > 0 || border_top(n->style) > 0 ||
-                      border_bottom(n->style) > 0;
-    if (has_border) canvas.draw_border(box, n->style, op);
 
     bool clip = n->style.overflow == Overflow::Hidden;
     if (clip) canvas.push_clip(box);
@@ -143,7 +146,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
     float cy = box.y + L.content_y;
     RectF content{cx, cy, L.content_w, L.content_h};
 
-    if (L.is_image) {
+    if (visible && L.is_image) {
         if (L.image && L.image->ok) {
             canvas.draw_image(*L.image, content, n->style.object_fit, op, n->style.border_radius);
         } else {
@@ -160,7 +163,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         for (auto& item : line.items) {
             if (item.kind == LineItem::Text) {
                 paint_text_item(canvas, fonts, item, cx, cy, op);
-            } else if (item.kind == LineItem::ImageItem) {
+            } else if (item.kind == LineItem::ImageItem && item.style && item.style->visibility == Visibility::Visible) {
                 RectF dest{cx + item.x, cy + item.y, item.w, item.h};
                 if (item.image && item.image->ok) {
                     ObjectFit fit = item.style ? item.style->object_fit : ObjectFit::Fill;
@@ -175,7 +178,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
 
     for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
 
-    if (n->is_element("li")) {
+    if (visible && n->is_element("li")) {
         Node* p = n->parent;
         bool unordered = p && p->is_element("ul");
         if (unordered) {
@@ -187,11 +190,11 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
     }
 
-    if (n->is_element("input")) {
+    if (visible && n->is_element("input")) {
         paint_input_value(canvas, n, fonts, cx, cy, op);
-    } else if (n->is_element("select")) {
+    } else if (visible && n->is_element("select")) {
         paint_select_value(canvas, n, fonts, cx, cy, op);
-    } else if (n->is_element("textarea") && n->children.empty()) {
+    } else if (visible && n->is_element("textarea") && n->children.empty()) {
         std::string value = n->attr("value");
         if (!value.empty()) {
             float pad_top = resolve_length(n->style.padding.top, n->layout.content_w, n->style.font_size, 16.0f, true);

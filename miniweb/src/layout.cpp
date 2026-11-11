@@ -79,6 +79,8 @@ private:
     FontManager& fonts;
     ImageCache& images;
     float vw = 1280, vh = 800;
+    std::unordered_map<Node*, std::vector<Node*>> flex_item_cache;
+    const std::vector<Node*>& flex_items(Node* parent);
 
     void resolve_edges(Node* n, float cb_w);
     void apply_auto_margins(Node* n, float cb_w);
@@ -666,12 +668,44 @@ float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& 
     return line_y;
 }
 
+const std::vector<Node*>& LayoutEngine::flex_items(Node* parent) {
+    auto found = flex_item_cache.find(parent);
+    if (found != flex_item_cache.end()) return found->second;
+    auto& items = flex_item_cache[parent];
+    std::vector<Node*> text;
+    auto flush = [&]() {
+        bool visible_text = false;
+        for (auto* child : text)
+            if (child->data.find_first_not_of(" \t\n\r\f") != std::string::npos) visible_text = true;
+        if (visible_text) {
+            doc.layout_nodes.emplace_back();
+            auto* box = &doc.layout_nodes.back();
+            box->anonymous = true;
+            box->parent = parent;
+            box->style = inherited_style(parent->style);
+            box->style.display = Display::Block;
+            box->children = std::move(text);
+            items.push_back(box);
+        }
+        text.clear();
+    };
+    for (auto* child : parent->children) {
+        if (!child) continue;
+        if (child->is_text()) text.push_back(child);
+        else if (child->is_element()) {
+            flush();
+            if (child->style.display != Display::None) items.push_back(child);
+        }
+    }
+    flush();
+    return items;
+}
+
 float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
     auto& st = n->style;
     std::vector<Node*> items;
     std::vector<Node*> absolutes;
-    for (auto* c : n->children) {
-        if (!c || !c->is_element() || c->style.display == Display::None) continue;
+    for (auto* c : flex_items(n)) {
         if (c->style.position == Position::Absolute || c->style.position == Position::Fixed) {
             absolutes.push_back(c);
             continue;
@@ -954,6 +988,11 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
 float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
     if (!n || !n->is_element() || depth > 30) return 0;
     if (n->style.display == Display::None) return 0;
+    if (n->anonymous) {
+        std::string text;
+        for (auto* child : n->children) text += child->data;
+        return fonts.text_width(collapse_text(text, n->style), n->style);
+    }
     if (n->is_element("img")) {
         float w = 0, h = 0;
         image_content_size(n, basis, w, h, nullptr);
@@ -983,8 +1022,8 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
                       n->style.flex_direction == FlexDirection::ColumnReverse;
         float total = 0, maxw = 0;
         int count = 0;
-        for (auto* c : n->children) {
-            if (!c || !c->is_element() || c->style.display == Display::None) continue;
+        for (auto* c : flex_items(n)) {
+            if (c->style.position == Position::Absolute || c->style.position == Position::Fixed) continue;
             float w = intrinsic_outer_width(c, basis, depth + 1);
             if (column) maxw = std::max(maxw, w);
             else total += w + (count ? n->style.column_gap : 0);
@@ -1045,6 +1084,7 @@ void LayoutEngine::run() {
 }
 
 void layout_document(Document& doc, LayoutContext& ctx) {
+    doc.layout_nodes.clear();
     // Hidden subtrees are skipped below, so invalidate their previous boxes too.
     for(auto& node:doc.arena)node.layout=LayoutInfo{};
     LayoutEngine e(doc, ctx);

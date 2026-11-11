@@ -367,6 +367,7 @@ std::string Document::resolve(const std::string& rel) const {
 
 void Document::remove_all() {
     ++revision;
+    layout_nodes.clear();
     arena.clear();
     id_map.clear();
     root = html = head = body = nullptr;

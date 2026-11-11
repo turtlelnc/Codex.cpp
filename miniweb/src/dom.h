@@ -25,6 +25,7 @@ struct Node {
     Node* parent = nullptr;
     Document* doc = nullptr;
     int id = 0;
+    bool anonymous = false;         // layout-only box; never exposed through the DOM
 
     ComputedStyle style;
     LayoutInfo layout;
@@ -73,6 +74,7 @@ struct Node {
 struct Document {
     uint64_t revision = 0;
     std::deque<Node> arena;
+    std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout
     std::vector<Node*> id_map; // index == node id
     Node* root = nullptr;
     Node* html = nullptr;

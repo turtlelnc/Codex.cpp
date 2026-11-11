@@ -133,6 +133,25 @@ struct ComputedStyle {
     }
 };
 
+// Inheritance is shared by DOM elements and anonymous layout boxes. Box styles,
+// opacity, positioning and flex-item properties must not be copied from a parent.
+inline ComputedStyle inherited_style(const ComputedStyle& parent) {
+    ComputedStyle st;
+    st.color = parent.color;
+    st.font_family = parent.font_family;
+    st.font_size = parent.font_size;
+    st.font_weight = parent.font_weight;
+    st.font_style = parent.font_style;
+    st.line_height = parent.line_height;
+    st.text_align = parent.text_align;
+    st.white_space = parent.white_space;
+    st.visibility = parent.visibility;
+    st.letter_spacing = parent.letter_spacing;
+    st.text_transform = parent.text_transform;
+    st.custom_props = parent.custom_props;
+    return st;
+}
+
 inline float resolve_length(const Length& l, float basis, float font_size, float root_size = 16.0f,
                             bool auto_is_zero = true) {
     switch (l.unit) {

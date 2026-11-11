@@ -30,6 +30,8 @@ The integrated fork corrects percentage `translate()`/`translateX()`/`translateY
 
 DOM replacement preserves existing sibling order and rejects ancestor cycles. Script geometry/computed-style reads refresh dirty layout. Hidden subtrees lose their cached geometry. Style/link media attributes share the screen @media matcher. Timer draining uses one virtual deadline, advances idle time between replayed clicks, honors self-cancellation and processes Promise jobs between timer callbacks. ASan and runtime regressions cover these supported APIs.
 
+Direct flex text now forms layout-only anonymous items (including mixed, column and wrapped text); whitespace-only runs do not create items, and the DOM remains unchanged across layouts. Visibility hides the current box rather than suppressing explicitly visible descendants, in both painting and hit testing. Font shorthand retains px/%/em/rem line-height units. These cases have pixel, repeated-layout, ASan and Chromium comparison regressions.
+
 ## Compatibility limitations
 
 A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, table layout, advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
