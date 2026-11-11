@@ -218,6 +218,9 @@ async function stop() {
     await page.waitForFunction(() =>
       document.getElementById("messages").textContent.includes("DENIED_DONE"),
     );
+    // Visible final text can precede the child process exit. Session switching
+    // is correctly refused while that process is still active.
+    await page.locator('#queue-state[data-busy="false"]').waitFor();
     assert(!fs.existsSync(path.join(root, "must-not-exist")));
     await page.locator("#new-chat").click();
     await page
@@ -229,7 +232,9 @@ async function stop() {
       const text = await page.locator("#messages").textContent();
       if (text.includes("CREATOR_FAILED")) throw Error(text);
       if (text.includes("CREATOR_READY")) return true;
-      const allow = page.getByRole("button", { name: "允许", exact: true });
+      // An accepted approval stays visible but disabled until the next snapshot.
+      // Do not start another click waiting for a future/absent permission card.
+      const allow = page.locator('button.primary[data-decide]:enabled');
       if (await allow.count()) {
         await allow.click();
         approved++;
