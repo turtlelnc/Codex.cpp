@@ -40,6 +40,7 @@ set(extra_licenses "")
 list(APPEND CODEX_EXTRA_LICENSE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/marked.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/katex.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/OpenSSL.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/GCC-RUNTIME.txt"
   "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/GPL3.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/musl.txt" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/libcap.txt"
   "${codex_libgit2_SOURCE_DIR}/deps/zlib/LICENSE" "${codex_libgit2_SOURCE_DIR}/deps/pcre/COPYING" "${codex_libgit2_SOURCE_DIR}/deps/llhttp/LICENSE-MIT")
+list(APPEND CODEX_EXTRA_LICENSE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/miniweb/third_party/quickjs/LICENSE" "${CMAKE_CURRENT_SOURCE_DIR}/docs/licenses/miniweb-dependencies.txt")
 foreach(filename IN LISTS CODEX_EXTRA_LICENSE_FILES)
   file(READ "${filename}" license_text)
   string(APPEND extra_licenses "\n\n${filename}:\n${license_text}")

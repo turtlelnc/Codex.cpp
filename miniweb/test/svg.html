@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SVG icons</title>
+<style>
+body { margin:0; background:#0f172a; color:#e2e8f0; font-family: Arial, sans-serif; }
+.app { padding:36px; }
+h1 { font-size:30px; margin:0 0 20px; color:#f8fafc; }
+.row { display:flex; gap:18px; align-items:center; }
+.icon { width:40px; height:40px; color:#38bdf8; }
+.icon.pink { color:#f472b6; }
+.icon.green { color:#4ade80; }
+.icon.big { width:64px; height:64px; color:#facc15; }
+.card { margin-top:22px; display:flex; gap:12px; align-items:center; background:#1e293b; padding:16px; border-radius:12px; }
+.card svg { width:22px; height:22px; color:#a78bfa; }
+.card span { color:#cbd5e1; font-size:14px; }
+</style></head><body><div class="app">
+<h1>内联 SVG 图标</h1>
+<div class="row">
+  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L15 9 L22 12 L15 15 L12 22 L9 15 L2 12 L9 9 Z"/></svg>
+  <svg class="icon pink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12 L11 15 L16 9"/></svg>
+  <svg class="icon green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11 L12 3 L21 11"/><path d="M5 10 V21 H19 V10"/><path d="M10 21 V14 H14 V21"/></svg>
+  <svg class="icon big" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 C13 8 16 11 22 12 C16 13 13 16 12 22 C11 16 8 13 2 12 C8 11 11 8 12 2 Z"/></svg>
+</div>
+<div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4 H20 V20 H4 Z"/><path d="M8 9 H16"/><path d="M8 13 H16"/><path d="M8 17 H12"/></svg><span>React/Vue 中常见的按钮图标也可以渲染。</span></div>
+</div></body></html>

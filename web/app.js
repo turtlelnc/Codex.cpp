@@ -1137,7 +1137,9 @@ function buildChat(snap, wasBusy = false) {
   };
   for (const [index, row] of rows.entries()) {
     const key = snap.session_id + ':' + row.k + ':' + (row.id || row.row_key || index);
-    if(row.k==='context'){
+    if(row.k==='preview'){
+      flushGroup();nodes.push(cached(key,JSON.stringify(row.images),()=>{const box=el('details',undefined,'preview-result');box.append(el('summary','工具返回的图片'));for(const url of row.images||[]){if(typeof url!=='string'||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(url))continue;const image=el('img');image.src=url;image.alt='工具返回的图片；渲染器限制请参阅工具结果';image.loading='lazy';box.append(image);}return box;}));
+    } else if(row.k==='context'){
       flushGroup();nodes.push(cached(key,row.text,()=>{const box=el('details',undefined,'context-summary');box.append(el('summary','旧格式上下文摘要（内部记录）'),markdown(row.text));return box;}));
     } else if (row.k === 'reasoning') {
       const live = messageCache.get('reasoning-draft');

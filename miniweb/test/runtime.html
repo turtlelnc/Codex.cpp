@@ -1,0 +1,28 @@
+<!doctype html><html><head><style>#sized{width:100px;height:20px}</style></head><body>
+<div id="hidden-parent"><div id="hidden-child" style="width:123px;height:10px"></div></div><div id="sized"></div><div id="siblings"><i id="a"></i><i id="b"></i><i id="c"></i></div>
+<script>
+var out=document.body, sized=document.getElementById('sized');
+sized.style.width='200px';
+out.setAttribute('data-width',sized.getBoundingClientRect().width);
+out.setAttribute('data-computed',getComputedStyle(sized).width);
+var added=document.createElement('div');added.style.width='123px';added.style.height='10px';out.appendChild(added);
+out.setAttribute('data-added',added.getBoundingClientRect().width);out.removeChild(added);
+out.setAttribute('data-detached',added.getBoundingClientRect().width);
+var siblings=document.getElementById('siblings'), a=document.getElementById('a'),b=document.getElementById('b');
+siblings.replaceChild(a,b);siblings.replaceChild(a,a);siblings.insertBefore(a,a);
+out.setAttribute('data-siblings',siblings.children.length+':'+siblings.children[0].id+':'+siblings.children[1].id);
+var hp=document.getElementById('hidden-parent'),hc=document.getElementById('hidden-child');
+out.setAttribute('data-before-hidden',hc.getBoundingClientRect().width);hp.style.display='none';out.setAttribute('data-hidden',hc.getBoundingClientRect().width);
+out.addEventListener('click',function(){out.setAttribute('data-click-clock',__mwTimerNow());});
+setTimeout(function(){out.setAttribute('data-after-click','yes');},700);
+var fragment=document.createDocumentFragment(),one=document.createElement('div'),two=document.createElement('div'),three=document.createElement('div'),anchor=document.createElement('i');
+fragment.appendChild(document.createElement('b'));one.appendChild(fragment);
+out.setAttribute('data-fragment-empty',fragment.childNodes.length);
+fragment.appendChild(document.createElement('b'));two.appendChild(fragment);
+three.appendChild(anchor);fragment.appendChild(document.createElement('b'));three.insertBefore(fragment,anchor);
+out.setAttribute('data-fragment-reuse',one.childNodes.length+':'+two.childNodes.length+':'+three.childNodes.length+':'+fragment.childNodes.length);
+var once=0, repeat=0, id=setInterval(function(){once++;clearInterval(id);out.setAttribute('data-once',once);},10);
+setInterval(function(){repeat++;out.setAttribute('data-repeat',repeat);},100);
+setTimeout(function(){out.setAttribute('data-late','bad');},1000);
+setTimeout(function(){Promise.resolve().then(function(){setTimeout(function(){out.setAttribute('data-microtask-clock',__mwTimerNow());},0);});},0);
+</script></body></html>

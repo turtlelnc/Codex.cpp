@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>React SVG</title>
+<style>
+body { margin:0; background:#020617; color:#e2e8f0; font-family: Arial, sans-serif; }
+.app { padding:32px; }
+h1 { color:#67e8f9; font-size:28px; margin:0 0 18px; }
+.row { display:flex; gap:14px; align-items:center; background:#0f172a; border:1px solid #1e293b; border-radius:12px; padding:16px; }
+.icon { width:28px; height:28px; color:#22d3ee; }
+.icon.pink { color:#f472b6; }
+.label { font-size:14px; color:#94a3b8; margin-left:8px; }
+</style></head><body><div id="root"></div>
+<script src="vendor/react.js"></script>
+<script src="vendor/react-dom.js"></script>
+<script>
+const e = React.createElement;
+function Icon(props) {
+  return e('svg', { className: props.cls || 'icon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    e('circle', { cx: 12, cy: 12, r: 9 }),
+    e('path', { d: 'M8 12 L11 15 L16 9' })
+  );
+}
+function App() {
+  return e('div', { className: 'app' },
+    e('h1', null, 'React 创建的内联 SVG'),
+    e('div', { className: 'row' },
+      e(Icon, null), e(Icon, { cls: 'icon pink' }),
+      e('span', { className: 'label' }, '图标由 React.createElement 生成，经 MiniWeb 内核栅格化')
+    )
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script></body></html>

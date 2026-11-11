@@ -6,7 +6,7 @@ enum class ProcessRole{Probe,Helper,Tool,Extension,Frontend,Network,Clipboard};
 static std::vector<fs::path> process_protected_paths;
 struct ProcessPolicy{
   ProcessRole role=ProcessRole::Helper;fs::path workspace;bool writable=false,unsafe=false,no_fork=false;
-  std::vector<fs::path> reads,writes;
+  std::vector<fs::path> reads,writes,denies;
   fs::path pinned_directory; // Trusted Creator capability, never selected by RPC.
   static ProcessPolicy tool(const fs::path& root,bool write,bool unrestricted=false){ProcessPolicy p;p.role=ProcessRole::Tool;p.workspace=root;p.writable=write;p.unsafe=unrestricted;return p;}
   static ProcessPolicy network(){ProcessPolicy p;p.role=ProcessRole::Network;return p;}
@@ -104,7 +104,12 @@ public:
       if(policy.role!=ProcessRole::Frontend&&!policy.no_fork)profile+="(allow process-fork)";
       for(const auto& path:reads)if(fs::exists(path,ec)){auto real=fs::canonical(path,ec);if(!ec)profile+="(allow file-read* (subpath "+quote(real.string())+"))";}
       for(const auto& path:writes){auto real=fs::weakly_canonical(path,ec);if(!ec)profile+="(allow file-read* file-write* (subpath "+quote(real.string())+"))";}
-      if(policy.role!=ProcessRole::Network)profile+="(deny file-read* file-write* (require-all (subpath "+quote(execution.private_dir.string())+") (require-not (subpath "+quote(scratch.string())+"))))";
+      if(policy.role!=ProcessRole::Network){
+        profile+="(deny file-read* file-write* (require-all (subpath "+quote(execution.private_dir.string())+") (require-not (subpath "+quote(scratch.string())+"))";
+        for(const auto& path:policy.writes)if(within_root(execution.private_dir,path))profile+=" (require-not (subpath "+quote(fs::weakly_canonical(path).string())+"))";
+        profile+="))";
+      }
+      for(const auto& path:policy.denies)profile+="(deny file-read* file-write* (subpath "+quote(fs::weakly_canonical(path).string())+"))";
       for(const auto& path:process_protected_paths)profile+="(deny file-read* file-write* (subpath "+quote(path.string())+"))";
       profile+="(allow file-write-data (literal \"/dev/null\"))";
       auto protected_path=[&](const fs::path& path){auto real=fs::weakly_canonical(path);return quote(real.string());};
@@ -119,6 +124,7 @@ public:
       for(const auto& path:reads)if(fs::exists(path,ec)){wrapped.insert(wrapped.end(),{"--ro-bind",path.string(),path.string()});}
       for(const auto& path:writes)wrapped.insert(wrapped.end(),{"--bind",path.string(),path.string()});
       for(const auto& path:process_protected_paths)if(within_root(workspace,path)&&fs::exists(path,ec))wrapped.insert(wrapped.end(),{"--tmpfs",path.string(),"--remount-ro",path.string()});
+      for(const auto& path:policy.denies)if(within_root(workspace,path)&&fs::exists(path,ec)){auto real=fs::canonical(path,ec);if(ec){error="Cannot inspect denied preview path";return false;}if(fs::is_directory(real))wrapped.insert(wrapped.end(),{"--tmpfs",real.string(),"--remount-ro",real.string()});else wrapped.insert(wrapped.end(),{"--ro-bind","/dev/null",real.string()});}
       wrapped.insert(wrapped.end(),{"--chdir",cwd.string(),"--"});wrapped.insert(wrapped.end(),command.begin(),command.end());command=std::move(wrapped);}
 #elif defined(_WIN32)
     if(!unsafe){error="DENIED: Windows AppContainer backend unavailable";return false;}

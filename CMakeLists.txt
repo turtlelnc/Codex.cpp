@@ -81,6 +81,8 @@ endif()
 if(WIN32)
   target_link_libraries(codex-runtime INTERFACE ws2_32 bcrypt advapi32 shell32)
 endif()
+add_subdirectory(miniweb)
+target_link_libraries(codex-runtime INTERFACE codex-miniweb)
 add_executable(codex-cpp codex.cpp)
 # Build this test target explicitly; no extra application-sized compile for users.
 add_executable(codex-self-test EXCLUDE_FROM_ALL tests/agent_self_test.cpp)

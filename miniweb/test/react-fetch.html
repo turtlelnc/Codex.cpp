@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>React fetch</title>
+<style>
+body { margin:0; background:#0b1020; color:#e2e8f0; font-family: Arial, sans-serif; }
+.app { padding:36px; }
+h1 { font-size:30px; margin:0 0 18px; color:#67e8f9; }
+.grid { display:flex; gap:12px; }
+.item { flex:1; background:#111827; border:1px solid #1e293b; border-radius:10px; padding:14px; }
+.item strong { display:block; color:#a5f3fc; font-size:16px; margin-bottom:6px; }
+.item span { color:#94a3b8; font-size:14px; }
+.err { color:#fca5a5; }
+</style></head><body><div id="root"></div>
+<script src="vendor/react.js"></script>
+<script src="vendor/react-dom.js"></script>
+<script>
+const e = React.createElement;
+function App() {
+  const [items, setItems] = React.useState(null);
+  React.useEffect(function () {
+    fetch('http://127.0.0.1:8766/data.json')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { setItems(d.items); })
+      .catch(function (err) { console.log('local fetch failed: ' + err); });
+    fetch('https://example.com/should-be-blocked')
+      .then(function () { console.log('ERROR: external fetch was not blocked'); })
+      .catch(function (err) { console.log('external fetch blocked: ' + err.message); });
+  }, []);
+  return e('div', { className: 'app' },
+    e('h1', null, 'React + 回环 fetch'),
+    items
+      ? e('div', { className: 'grid' }, items.map(function (it, i) {
+          return e('div', { className: 'item', key: i },
+            e('strong', null, it.title), e('span', null, it.value));
+        }))
+      : e('p', null, 'loading...')
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script></body></html>

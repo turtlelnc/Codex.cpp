@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Grid + gradient</title>
+<style>
+body { margin:0; background:#f1f5f9; color:#0f172a; font-family: Arial, sans-serif; }
+.hero { height: calc(38vh - 20px); background: linear-gradient(135deg, #0ea5e9 0%, #6d28d9 60%, #db2777 100%); color:white; padding:28px 34px; }
+.hero h1 { margin:0 0 8px; font-size:34px; }
+.hero p { margin:0; color:#e0f2fe; font-size:15px; }
+.grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; padding:22px 34px; }
+.card { background:white; border:1px solid #e2e8f0; border-radius:12px; padding:16px; box-shadow: 0 4px 14px rgba(15,23,42,0.10); }
+.card h2 { margin:0 0 8px; font-size:18px; }
+.card p { margin:0; color:#475569; font-size:13px; line-height:1.5; }
+.accent { background: linear-gradient(160deg, #f97316, #db2777); color:white; border:0; }
+.accent p { color:#fff7ed; }
+.calcbox { width: calc(100% - 120px); margin: 0 auto 24px; padding:14px; background:#e0f2fe; border-radius:10px; color:#075985; font-size:14px; }
+</style></head><body>
+<div class="hero"><h1>Grid · Gradient · calc()</h1><p>自研排版引擎的分栏、渐变和百分比计算</p></div>
+<div class="grid">
+  <div class="card"><h2>自动分栏</h2><p>repeat(auto-fit, minmax(180px, 1fr)) 根据视口宽度自动决定列数。</p></div>
+  <div class="card"><h2>间距</h2><p>grid gap 16px，卡片自动保持等高行。</p></div>
+  <div class="card accent"><h2>渐变</h2><p>linear-gradient(160deg, #f97316, #db2777)。</p></div>
+  <div class="card"><h2>本地</h2><p>全部资源来自本地文件或 127.0.0.1。</p></div>
+  <div class="card"><h2>排版</h2><p>块级、行内、flex 与 grid 共用同一个盒模型。</p></div>
+  <div class="card"><h2>字体</h2><p>中文使用系统 CJK 字体回退。</p></div>
+</div>
+<div class="calcbox">这个盒子的宽度是 calc(100% - 120px)，并通过 margin:auto 居中。</div>
+</body></html>
