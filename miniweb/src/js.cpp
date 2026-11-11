@@ -856,7 +856,10 @@ bool JsRuntime::eval(const std::string& code, const std::string& filename, bool 
 
 void JsRuntime::execute_scripts() {
     int inline_idx = 0;
-    for (Node* s : doc_.script_nodes) {
+    // innerHTML can append inert script nodes while an initial script executes.
+    // Never iterate the vector that those DOM operations can reallocate.
+    const auto initial_scripts = doc_.script_nodes;
+    for (Node* s : initial_scripts) {
         if (!s || !s->is_element("script")) continue;
         if (s->has_attr("nomodule")) continue;
         std::string type = util::to_lower(util::trim(s->attr("type")));

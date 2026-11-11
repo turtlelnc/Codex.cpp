@@ -1,3 +1,8 @@
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  cmake_minimum_required(VERSION 3.18)
+  project(CodexMiniWeb LANGUAGES C CXX)
+  find_package(Threads REQUIRED)
+endif()
 # Embed the DOM prelude as bytes, not a compiler-limited string literal.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prelude.js")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/prelude.js" prelude HEX)

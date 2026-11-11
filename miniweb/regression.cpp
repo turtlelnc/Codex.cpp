@@ -11,8 +11,10 @@ int main(int argc,char** argv){try{
  if(!engine.click(300,230)||!engine.render(false))throw std::runtime_error("translated hit test failed");pixel(300,230,0,128,0);
  std::cout<<"{";bool first=true;for(const char* id:{"center","front","back","grid","wide","next","wrap","min","max","clamp"}){auto* node=engine.document()->get_element_by_id(id);if(!node)throw std::runtime_error("Missing fixture node");auto box=node->absolute_rect();if(!first)std::cout<<',';first=false;std::cout<<'"'<<id<<"\":["<<box.x<<','<<box.y<<','<<box.w<<','<<box.h<<']';}std::cout<<"}\n";
  Engine styles(640,480);styles.set_wait_ms(0);if(!styles.load((page.parent_path()/"styles.html").u8string(),&error)||!styles.render(false))throw std::runtime_error(error);
- auto style_pixel=[&](int x,int r,int g,int b){const auto& data=styles.canvas()->pixels();const size_t i=(10*640+x)*4;if(data[i]!=r||data[i+1]!=g||data[i+2]!=b)throw std::runtime_error("Stylesheet cascade/mutation/URL pixel mismatch at "+std::to_string(x));};
- style_pixel(10,0,0,255);style_pixel(70,0,0,255);style_pixel(130,255,0,0);style_pixel(190,255,0,0);style_pixel(250,0,128,0);style_pixel(310,0,0,255);
+ auto style_pixel=[&](int x,int r,int g,int b,int y=10){const auto& data=styles.canvas()->pixels();const size_t i=(y*640+x)*4;if(data[i]!=r||data[i+1]!=g||data[i+2]!=b)throw std::runtime_error("Stylesheet cascade/mutation/URL pixel mismatch at "+std::to_string(x));};
+ style_pixel(10,0,0,255);style_pixel(70,0,0,255);style_pixel(130,255,0,0);style_pixel(190,255,0,0);style_pixel(250,0,128,0);style_pixel(310,0,0,255);style_pixel(370,0,0,255);
+ style_pixel(10,255,255,255,170);styles.click(10,170);styles.render(false);style_pixel(70,255,0,0,130);
+ if(!styles.click(10,130)||!styles.render(false))throw std::runtime_error("Visible clipped child click failed");style_pixel(70,0,128,0,130);
  if(!styles.click(70,10)||!styles.render(false))throw std::runtime_error("Stylesheet mutation click failed");style_pixel(70,0,128,0);
  if(!styles.click(310,10)||!styles.render(false))throw std::runtime_error("Inserted stylesheet mutation failed");style_pixel(310,0,128,0);
  return 0;

@@ -13,3 +13,14 @@ guarantees. See [integration and limits](../docs/MINIWEB.md).
 `regression.cpp` verifies rendered pixels, translated click targets and stacking
 order. `test/structural.html` is also measured in Chromium to compare geometry.
 Dependencies retain their licenses in `third_party/`.
+
+For independent engine regression work (without fetching application dependencies):
+
+```
+cmake -S miniweb -B build-miniweb -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-miniweb --target miniweb-regression --parallel 2
+./build-miniweb/miniweb-regression miniweb/test/structural.html
+```
+
+CI also runs these fixtures with AddressSanitizer, including script-list mutation
+and clipped-element hit testing. The test executable is not a shipped viewer.

@@ -144,6 +144,7 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None || n->style.visibility!=Visibility::Visible) return nullptr;
     const LayoutInfo& L = n->layout;
     RectF box=visual_box(n,ox,oy);
+    if(n->style.overflow==Overflow::Hidden&&!box.contains(px,py))return nullptr;
     float cx = box.x + L.content_x;
     float cy = box.y + L.content_y;
     const auto ordered=paint_order(n);
