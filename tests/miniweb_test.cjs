@@ -88,12 +88,45 @@ const wait = async (fn) => {
       !before.equals(png('after.png', 320, 240)),
       'click must change actual screenshot',
     );
+    fs.copyFileSync(
+      path.resolve('miniweb/test/diagnostics.html'),
+      path.join(project, 'diagnostics.html'),
+    );
+    fs.copyFileSync(
+      path.resolve('miniweb/test/diagnostics-clean.html'),
+      path.join(project, 'diagnostics-clean.html'),
+    );
+    r = shot('diagnostics.html', [
+      '--width',
+      '640',
+      '--height',
+      '400',
+      '--wait',
+      '0',
+      '-o',
+      'diagnostics.png',
+      '--report',
+      'diagnostics.json',
+    ]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Capability report:/);
+    assert.match(r.stdout, /rowspan\/colspan/);
+    const report = JSON.parse(
+      fs.readFileSync(path.join(project, 'diagnostics.json'), 'utf8'),
+    );
+    assert(report.structural.some((e) => /rowspan/.test(e.feature)));
+    assert(report.ignored_css.some((e) => e.feature === 'filter'));
+    assert(report.missing_js.some((e) => /attachShadow/.test(e.feature)));
+    r = shot('diagnostics-clean.html', ['-o', 'diagnostics-clean.png']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /no known unsupported features were detected/);
     for (const args of [
       ['--width', '999999'],
       ['--height', '0'],
       ['--width', '2.5'],
       ['--click', '9999,2'],
       ['-o', '../escape.png'],
+      ['--report', '../escape.json'],
     ]) {
       r = shot('index.html', args);
       assert.notEqual(r.status, 0);

@@ -42,6 +42,17 @@ Column sizing follows the common cases: automatic tables shrink specified cell w
 
 This is not the complete CSS table algorithm. Captions, col/colgroup sizing, inline-table, rowspan/colspan, collapsed-border conflict resolution, anonymous table-box repair, complex percentage/min/max constraints and row-group height distribution remain unsupported or approximate. Automatic table width distribution across columns (especially with multiple percentage columns or cell max-width) and auto-width tables nested inside automatic table cells can differ from Chromium. Use explicit row/cell markup and separate borders for this first implementation. Chromium regressions cover fixed and simple auto tables at 640px and 320px, cell text/pixels, dynamic insertion and row visibility.
 
+## Capability report
+
+`preview_screenshot` and `preview shot --report FILE` report the features the renderer ignored or approximated while rendering the page. The Agent tool appends a one-line summary to the image result; the CLI writes the full JSON report with details and counts. Categories:
+
+- `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
+- `approximate`: features implemented only approximately, such as `position:sticky` as relative, `position:fixed` as absolute, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
+- `structural`: constructs that affect layout but are dropped, such as table captions, `col`/`colgroup`, `rowspan`/`colspan`, collapsed borders and `inline-table`.
+- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as scrolling, shadow DOM, observers and Web Animations.
+
+Counts are encounter counts from rendering (including replayed clicks), not precise usage counts. The report is best-effort: it cannot enumerate every gap, and absence of an entry is not proof of support. Treat layout and rendering near reported features as unreliable, and do not rewrite valid page code to accommodate them.
+
 ## Compatibility limitations
 
 A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.

@@ -1,4 +1,5 @@
 #include "engine.h"
+#include "diagnostics.h"
 #include "html.h"
 #include "js.h"
 #include "util.h"
@@ -15,6 +16,7 @@ Engine::Engine(int viewport_w, int viewport_h, const std::vector<std::string>& e
 Engine::~Engine() = default;
 
 bool Engine::load(const std::string& url_or_path, std::string* error) {
+    diag::report().reset();
     std::string url = url_or_path;
     if (util::url_scheme(url).empty()) {
         std::string p = util::absolute_path(url);
@@ -106,6 +108,9 @@ void Engine::ensure_layout(){if(doc_&&layout_revision_!=doc_->revision){doc_->re
 bool Engine::render(bool full_page) {
     if (!doc_ || !loader_) return false;
     if (!js_ran_) {
+        // The load pass already applied styles and laid out once; start the
+        // report at the rendering pass so every feature is counted once.
+        diag::report().reset();
         auto js = std::make_unique<JsRuntime>(*doc_, *loader_, viewport_w_, viewport_h_,[this](){ensure_layout();});
         if (js->init()) {
             js->run(wait_ms_);

@@ -1,4 +1,5 @@
 #include "css.h"
+#include "diagnostics.h"
 #include "util.h"
 #include <algorithm>
 #include <cctype>
@@ -765,6 +766,27 @@ void apply_font_shorthand(ComputedStyle& st, const std::string& value, const Com
     st.font_family = util::to_lower(strip_quotes(util::trim(fam)));
 }
 
+static void report_display_value(const std::string& value) {
+    static const char* supported[] = {"block", "inline", "inline-block", "flex", "grid", "none",
+                                      "table", "table-header-group", "table-row-group",
+                                      "table-footer-group", "table-row", "table-cell"};
+    for (const char* name : supported)
+        if (value == name) return;
+    if (value == "inline-flex") { diag::approximate("display:inline-flex laid out as flex", value); return; }
+    if (value == "inline-grid") { diag::approximate("display:inline-grid laid out as grid", value); return; }
+    if (value == "contents") { diag::approximate("display:contents approximated as block", value); return; }
+    if (value == "flow-root" || value == "list-item") {
+        diag::approximate("display:" + value + " approximated as block", value);
+        return;
+    }
+    if (value == "inline-table") { diag::structural("display:inline-table treated as inline", value); return; }
+    if (value.rfind("table-", 0) == 0) {
+        diag::structural("display:" + value + " is not supported", value);
+        return;
+    }
+    diag::ignored_css("display:" + value);
+}
+
 void apply_property(ComputedStyle& st, const std::string& prop, const std::string& value,
                     const ComputedStyle* parent, Node* node) {
     std::string p = prop;
@@ -774,11 +796,15 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
 
     auto len = [&](float basis_font, bool auto_ok) { return parse_length_value(v, basis_font, 16, auto_ok); };
 
-    if (p == "display") st.display = parse_display(vl);
+    if (p == "display") {
+        st.display = parse_display(vl);
+        report_display_value(vl);
+    }
     else if (p == "position") {
-        if (vl == "relative" || vl == "sticky") st.position = Position::Relative;
+        if (vl == "relative") st.position = Position::Relative;
+        else if (vl == "sticky") { st.position = Position::Relative; diag::approximate("position:sticky laid out as relative", vl); }
         else if (vl == "absolute") st.position = Position::Absolute;
-        else if (vl == "fixed") st.position = Position::Fixed;
+        else if (vl == "fixed") { st.position = Position::Fixed; diag::approximate("position:fixed laid out as absolute", vl); }
         else st.position = Position::Static;
     } else if (p == "table-layout") { if(vl=="fixed"||vl=="auto")st.table_fixed=vl=="fixed";
     } else if (p == "vertical-align") {
@@ -1091,12 +1117,14 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
     else if (p == "grid-column") {auto value=util::split_ws(vl);if(value.size()==2&&value[0]=="span")st.grid_column_span=std::clamp((int)parse_float_value(value[1],1),1,32);}
     else if(p=="transform") {
         st.translate_x=Length::px(0);st.translate_y=Length::px(0);
+        bool supported=vl=="none";
         auto open=vl.find('('),close=vl.rfind(')');if(open!=std::string::npos&&close==vl.size()-1&&vl.find(')',open)==close){
             const auto name=vl.substr(0,open);auto values=util::split(vl.substr(open+1,close-open-1),',');if(values.size()==1)values=util::split_ws(values[0]);
-            if(name=="translate"&&!values.empty()&&values.size()<=2){st.translate_x=parse_length_value(values[0],st.font_size,16,false);if(values.size()==2)st.translate_y=parse_length_value(values[1],st.font_size,16,false);}
-            else if(name=="translatex"&&values.size()==1)st.translate_x=parse_length_value(values[0],st.font_size,16,false);
-            else if(name=="translatey"&&values.size()==1)st.translate_y=parse_length_value(values[0],st.font_size,16,false);
+            if(name=="translate"&&!values.empty()&&values.size()<=2){st.translate_x=parse_length_value(values[0],st.font_size,16,false);if(values.size()==2)st.translate_y=parse_length_value(values[1],st.font_size,16,false);supported=true;}
+            else if(name=="translatex"&&values.size()==1){st.translate_x=parse_length_value(values[0],st.font_size,16,false);supported=true;}
+            else if(name=="translatey"&&values.size()==1){st.translate_y=parse_length_value(values[0],st.font_size,16,false);supported=true;}
         }
+        if(!supported)diag::approximate("transform only supports translate/translateX/translateY",v);
     }
     else if (p == "z-index") st.z_index = (int)parse_float_value(vl, 0);
     else if (p == "top") st.top = len(st.font_size, true);
@@ -1117,8 +1145,16 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         else if (vl == "none") st.object_fit = ObjectFit::None;
         else if (vl == "scale-down") st.object_fit = ObjectFit::ScaleDown;
         else st.object_fit = ObjectFit::Fill;
+    } else if (p == "border-collapse") {
+        if (vl == "collapse") diag::structural("collapsed table borders are not supported", v);
+    } else if (p == "caption-side") {
+        diag::structural("table caption-side is not supported", v);
     } else if (p == "hidden") {
         st.display = Display::None;
+    } else if (!p.empty() && p[0] == '-') {
+        diag::ignored_css("vendor-prefixed property", p);
+    } else {
+        diag::ignored_css(p, v);
     }
     (void)node;
 }

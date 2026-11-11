@@ -495,10 +495,10 @@
     focus() { this.__focused = true; }
     blur() { this.__focused = false; }
     click() { dispatch(this, new MouseEvent('click', { bubbles: true, cancelable: true })); }
-    scrollIntoView() {}
-    attachShadow() { return null; }
+    scrollIntoView() { N.unsupported('Element.scrollIntoView', 'scrolling is not supported'); }
+    attachShadow() { N.unsupported('Element.attachShadow', 'shadow DOM is not supported'); return null; }
     getRootNode() { var n = this; while (n.parentNode) n = n.parentNode; return n; }
-    animate() { return { cancel: function () {}, finish: function () {}, play: function () {}, pause: function () {} }; }
+    animate() { N.unsupported('Element.animate', 'Web Animations are not supported'); return { cancel: function () {}, finish: function () {}, play: function () {}, pause: function () {} }; }
   }
 
   class Document extends Node {
@@ -551,8 +551,8 @@
     }
     writeln(s) { this.write(String(s) + '\n'); }
     execCommand() { return false; }
-    elementFromPoint() { return null; }
-    getSelection() { return { rangeCount: 0, toString: function () { return ''; }, removeAllRanges: function () {} }; }
+    elementFromPoint() { N.unsupported('document.elementFromPoint', 'hit testing helper is not implemented'); return null; }
+    getSelection() { N.unsupported('document.getSelection', 'selection API is not implemented'); return { rangeCount: 0, toString: function () { return ''; }, removeAllRanges: function () {} }; }
   }
 
   function wrap(id) {
@@ -768,12 +768,12 @@
   Object.defineProperty(globalThis, 'outerHeight', { get: function () { return N.viewport()[1]; }, configurable: true });
   globalThis.devicePixelRatio = 1;
   globalThis.scrollX = 0; globalThis.scrollY = 0;
-  globalThis.scrollTo = function () {};
-  globalThis.scrollBy = function () {};
+  globalThis.scrollTo = function () { N.unsupported('window.scrollTo', 'scrolling is not supported'); };
+  globalThis.scrollBy = function () { N.unsupported('window.scrollBy', 'scrolling is not supported'); };
   globalThis.alert = function (s) { N.log('log', String(s)); };
   globalThis.confirm = function (s) { N.log('log', String(s)); return false; };
   globalThis.prompt = function (s) { N.log('log', String(s)); return null; };
-  globalThis.open = function () { return null; };
+  globalThis.open = function () { N.unsupported('window.open', 'popups are not supported'); return null; };
   globalThis.close = function () {};
   globalThis.focus = function () {};
   globalThis.blur = function () {};
@@ -846,15 +846,15 @@
   };
   globalThis.MutationObserver = class {
     constructor(cb) { this.callback = cb; }
-    observe() {} disconnect() {} takeRecords() { return []; }
+    observe() { N.unsupported('MutationObserver.observe', 'observers do not fire'); } disconnect() {} takeRecords() { return []; }
   };
   globalThis.ResizeObserver = class {
     constructor(cb) { this.callback = cb; }
-    observe() {} unobserve() {} disconnect() {}
+    observe() { N.unsupported('ResizeObserver.observe', 'observers do not fire'); } unobserve() {} disconnect() {}
   };
   globalThis.IntersectionObserver = class {
     constructor(cb) { this.callback = cb; }
-    observe() {} unobserve() {} disconnect() {} takeRecords() { return []; }
+    observe() { N.unsupported('IntersectionObserver.observe', 'observers do not fire'); } unobserve() {} disconnect() {} takeRecords() { return []; }
   };
   globalThis.CSS = { supports: function () { return false; }, escape: function (s) { return String(s); } };
 

@@ -1,4 +1,5 @@
 #include "js.h"
+#include "diagnostics.h"
 #include "css.h"
 #include "html.h"
 #include "js_prelude.h"
@@ -700,6 +701,14 @@ JSCFunctionListEntry bridge_function(const char* name,uint8_t length,JSCFunction
     JSCFunctionListEntry entry{};entry.name=name;entry.prop_flags=JS_PROP_WRITABLE|JS_PROP_CONFIGURABLE;entry.def_type=JS_DEF_CFUNC;
     entry.u.func.length=length;entry.u.func.cproto=JS_CFUNC_generic;entry.u.func.cfunc.generic=function;return entry;
 }
+JSValue js_unsupported(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 1) return JS_UNDEFINED;
+    const std::string api = arg_str(ctx, argv[0]);
+    const std::string detail = argc > 1 ? arg_str(ctx, argv[1]) : "";
+    if (!api.empty()) diag::missing_js(api, detail);
+    return JS_UNDEFINED;
+}
+
 const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("nodeType", 1, js_node_type),
     bridge_function("nodeName", 1, js_node_name),
@@ -749,6 +758,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("viewport", 0, js_viewport),
     bridge_function("log", 2, js_log),
     bridge_function("readText", 1, js_read_text),
+    bridge_function("unsupported", 2, js_unsupported),
 };
 
 int interrupt_cb(JSContext*, void* opaque) {
@@ -816,12 +826,42 @@ bool JsRuntime::init() {
     return true;
 }
 
+// Missing globals and methods surface as "X is not a function/defined". Record
+// the identifier so the capability report can point at the unsupported API
+// instead of leaving the Agent to guess whether the page or the engine failed.
+static void report_missing_from_message(const char* where, const std::string& message) {
+    struct Marker { const char* text; const char* label; };
+    static const Marker markers[] = {{" is not a function", "not implemented"},
+                                     {" is not defined", "not defined"},
+                                     {" is not a constructor", "not implemented"}};
+    for (const Marker& marker : markers) {
+        const size_t pos = message.find(marker.text);
+        if (pos == std::string::npos) continue;
+        size_t begin = pos;
+        while (begin > 0 && !std::isspace((unsigned char)message[begin - 1]) && message[begin - 1] != '(' &&
+               message[begin - 1] != '\'' && message[begin - 1] != '"')
+            --begin;
+        const std::string api = message.substr(begin, pos - begin);
+        if (!api.empty()) diag::missing_js(api, marker.label);
+        return;
+    }
+    // QuickJS reports a bare "not a function" when a missing method is called
+    // through an unknown property; the identifier is not available.
+    if (message.find("not a function") != std::string::npos ||
+        message.find("not a constructor") != std::string::npos) {
+        diag::missing_js("unknown function call",
+                         std::string(where ? where : "") + ": " + message +
+                             " (unsupported API or a page bug)");
+    }
+}
+
 void JsRuntime::dump_exception(const char* where) {
     auto* ctx = static_cast<JSContext*>(ctx_);
     JSValue exc = JS_GetException(ctx);
     const char* s = JS_ToCString(ctx, exc);
     if (s) {
         util::error("JavaScript error (%s): %s", where, s);
+        report_missing_from_message(where, s);
         JS_FreeCString(ctx, s);
     } else {
         util::error("JavaScript error (%s)", where);
