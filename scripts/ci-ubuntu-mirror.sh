@@ -24,10 +24,19 @@ mirror_list=/etc/apt/apt-mirrors.txt
 if [ ! -f "$mirror_list" ]; then exit 0; fi
 probe() { curl --fail --silent --show-error --head --connect-timeout 5 --max-time 15 "$1/dists/jammy/InRelease" >/dev/null; }
 if probe https://azure.archive.ubuntu.com/ubuntu; then exit 0; fi
-if ! probe https://archive.ubuntu.com/ubuntu; then
-  echo 'Ubuntu mirrors are unreachable over HTTPS; dependency installation cannot proceed.' >&2
+selected=
+# kernel.org mirrors the same signed Ubuntu archive on an independent DNS zone.
+# APT still verifies Ubuntu's InRelease/package signatures with its existing keys.
+for candidate in https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu; do
+  if probe "$candidate" && curl --fail --silent --show-error --head --connect-timeout 5 --max-time 15 "$candidate/dists/jammy-security/InRelease" >/dev/null; then
+    selected=$candidate
+    break
+  fi
+done
+if [ -z "$selected" ]; then
+  echo 'Ubuntu archive mirrors are unreachable over HTTPS; dependency installation cannot proceed.' >&2
   exit 1
 fi
-echo 'Regional Ubuntu mirror is unreachable; using the official Ubuntu HTTPS mirrors.'
-printf '%s\n' https://archive.ubuntu.com/ubuntu https://security.ubuntu.com/ubuntu |
+echo "Regional Ubuntu mirror is unreachable; using $selected (Ubuntu archive signatures required)."
+printf '%s\n' "$selected" |
   sudo tee "$mirror_list" >/dev/null
