@@ -163,7 +163,7 @@
     set nodeValue(v) {}
     appendChild(child) {
       if (child && child.__fragment) {
-        var kids = child.childNodes.slice();
+        var kids = child.__kids.splice(0);
         for (var i = 0; i < kids.length; i++) this.appendChild(kids[i]);
         return child;
       }
@@ -172,7 +172,7 @@
     }
     insertBefore(child, ref) {
       if (child && child.__fragment) {
-        var kids = child.childNodes.slice();
+        var kids = child.__kids.splice(0);
         for (var i = 0; i < kids.length; i++) this.insertBefore(kids[i], ref);
         return child;
       }
