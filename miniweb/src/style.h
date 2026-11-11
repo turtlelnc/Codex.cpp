@@ -49,10 +49,11 @@ enum class BackgroundSize { Auto, Cover, Contain, Stretch };
 enum class TextTransform { None, Uppercase, Lowercase, Capitalize };
 
 struct BorderSide {
-    float width = 0;
+    float width = 3; // specified initial medium; used width is zero for none
     Color color{0, 0, 0, 255};
+    bool current_color = true;
     BorderStyle style = BorderStyle::None;
-    bool visible() const { return width > 0 && style != BorderStyle::None && color.a > 0; }
+    bool occupies_space() const { return width > 0 && style != BorderStyle::None; }
 };
 
 struct GradientStop {
@@ -179,16 +180,16 @@ inline float style_line_height(const ComputedStyle& s) {
 }
 
 inline float border_left(const ComputedStyle& s) {
-    return s.border[3].visible() ? s.border[3].width : 0.0f;
+    return s.border[3].occupies_space() ? s.border[3].width : 0.0f;
 }
 inline float border_right(const ComputedStyle& s) {
-    return s.border[1].visible() ? s.border[1].width : 0.0f;
+    return s.border[1].occupies_space() ? s.border[1].width : 0.0f;
 }
 inline float border_top(const ComputedStyle& s) {
-    return s.border[0].visible() ? s.border[0].width : 0.0f;
+    return s.border[0].occupies_space() ? s.border[0].width : 0.0f;
 }
 inline float border_bottom(const ComputedStyle& s) {
-    return s.border[2].visible() ? s.border[2].width : 0.0f;
+    return s.border[2].occupies_space() ? s.border[2].width : 0.0f;
 }
 inline float border_horizontal(const ComputedStyle& s) {
     return border_left(s) + border_right(s);

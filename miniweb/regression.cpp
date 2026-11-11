@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cmath>
 void check_text_visibility(const std::filesystem::path& directory);
+void check_font_border(const std::filesystem::path& directory);
 int main(int argc,char** argv){try{
  if(argc!=2)return 2;auto page=std::filesystem::canonical(std::filesystem::u8path(argv[1]));Loader::set_access_root(page.parent_path().u8string());Engine engine(640,480);engine.set_wait_ms(0);std::string error;if(!engine.load(page.u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
  auto pixel=[&](int x,int y,int r,int g,int b){const auto& data=engine.canvas()->pixels();size_t i=(y*640+x)*4;if(data[i]!=r||data[i+1]!=g||data[i+2]!=b)throw std::runtime_error("Unexpected rendered pixel at "+std::to_string(x)+","+std::to_string(y));};
@@ -26,5 +27,6 @@ int main(int argc,char** argv){try{
  Engine clock(640,480);clock.set_wait_ms(500);if(!clock.load((page.parent_path()/"clock.html").u8string(),&error)||!clock.render(false))throw std::runtime_error(error);
  if(clock.document()->body->has_attr("data-timer")||!clock.click(2,2)||clock.document()->body->attr("data-click-clock")!="500"||clock.document()->body->attr("data-timer")!="fired")throw std::runtime_error("Idle clock did not advance through replay wait");
  check_text_visibility(page.parent_path());
+ check_font_border(page.parent_path());
  return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

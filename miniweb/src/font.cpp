@@ -280,13 +280,17 @@ const GlyphBitmap* FontManager::get_glyph(uint32_t cp, float px_size, const Comp
     cp = normalize_cp(cp);
     int face_idx = face_for(cp, style);
     if (face_idx < 0) return nullptr;
-    int px = std::max(1, (int)std::lround(px_size));
-    uint64_t key = ((uint64_t)(face_idx & 0xffff) << 40) | ((uint64_t)(px & 0xffff) << 24) |
-                   (uint64_t)(cp & 0xffffff);
-    auto it = glyphs_.find(key);
-    if (it != glyphs_.end()) return &it->second;
+    if (!std::isfinite(px_size) || px_size <= 0 || px_size > 4096) return nullptr;
+    uint32_t size_bits = 0;
+    static_assert(sizeof(size_bits) == sizeof(px_size), "32-bit font size required");
+    std::memcpy(&size_bits, &px_size, sizeof(size_bits));
+    const uint64_t key = (uint64_t(face_idx) << 32) | size_bits;
+    auto& cache = glyphs_[key];
+    auto it = cache.find(cp);
+    if (it != cache.end()) return &it->second;
     FontFace& face = *faces_[face_idx];
-    float scale = stbtt_ScaleForPixelHeight(&face.info, (float)px);
+    // CSS font-size maps the em square, not the font's ascent/descent height.
+    float scale = stbtt_ScaleForMappingEmToPixels(&face.info, px_size);
     int adv = 0, lsb = 0;
     stbtt_GetCodepointHMetrics(&face.info, (int)cp, &adv, &lsb);
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -298,11 +302,12 @@ const GlyphBitmap* FontManager::get_glyph(uint32_t cp, float px_size, const Comp
     g.xoff = x0;
     g.yoff = y0;
     g.advance = adv * scale;
+    if (g.w > 4096 || g.h > 4096) return nullptr;
     if (g.w > 0 && g.h > 0) {
         g.bitmap.resize((size_t)g.w * g.h);
         stbtt_MakeCodepointBitmap(&face.info, g.bitmap.data(), g.w, g.h, g.w, scale, scale, (int)cp);
     }
-    auto res = glyphs_.emplace(key, std::move(g));
+    auto res = cache.emplace(cp, std::move(g));
     return &res.first->second;
 }
 
@@ -325,7 +330,7 @@ float FontManager::text_width(const std::string& utf8, const ComputedStyle& styl
         int face_idx = face_for(cp, style);
         if (prev_face >= 0 && face_idx == prev_face) {
             x += stbtt_GetCodepointKernAdvance(&faces_[face_idx]->info, (int)prev_cp, (int)cp) *
-                 stbtt_ScaleForPixelHeight(&faces_[face_idx]->info, style.font_size);
+                 stbtt_ScaleForMappingEmToPixels(&faces_[face_idx]->info, style.font_size);
         }
         x += g->advance;
         x += style.letter_spacing;
@@ -339,21 +344,21 @@ float FontManager::text_width(const std::string& utf8, const ComputedStyle& styl
 float FontManager::ascent(const ComputedStyle& style) {
     int f = primary_face(style, false);
     if (f < 0) return style.font_size * 0.8f;
-    float scale = stbtt_ScaleForPixelHeight(&faces_[f]->info, style.font_size);
+    float scale = stbtt_ScaleForMappingEmToPixels(&faces_[f]->info, style.font_size);
     return faces_[f]->ascent * scale;
 }
 
 float FontManager::descent(const ComputedStyle& style) {
     int f = primary_face(style, false);
     if (f < 0) return style.font_size * 0.2f;
-    float scale = stbtt_ScaleForPixelHeight(&faces_[f]->info, style.font_size);
+    float scale = stbtt_ScaleForMappingEmToPixels(&faces_[f]->info, style.font_size);
     return -faces_[f]->descent * scale;
 }
 
 float FontManager::normal_line_height(const ComputedStyle& style) {
     int f = primary_face(style, false);
     if (f < 0) return style.font_size * 1.2f;
-    float scale = stbtt_ScaleForPixelHeight(&faces_[f]->info, style.font_size);
+    float scale = stbtt_ScaleForMappingEmToPixels(&faces_[f]->info, style.font_size);
     return (faces_[f]->ascent - faces_[f]->descent + faces_[f]->line_gap) * scale;
 }
 
@@ -377,7 +382,7 @@ void FontManager::draw_text(Canvas& canvas, const std::string& utf8, float x, fl
         }
         if (prev_face >= 0 && face_idx == prev_face) {
             pen += stbtt_GetCodepointKernAdvance(&faces_[face_idx]->info, (int)prev_cp, (int)cp) *
-                   stbtt_ScaleForPixelHeight(&faces_[face_idx]->info, style.font_size);
+                   stbtt_ScaleForMappingEmToPixels(&faces_[face_idx]->info, style.font_size);
         }
         if (g->w > 0 && g->h > 0) {
             int bx = (int)std::lround(pen) + g->xoff;

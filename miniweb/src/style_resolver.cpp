@@ -335,7 +335,9 @@ void apply_four(Edges<Length>& e, const std::string& value, float font_size, flo
 }
 
 struct BorderParse {
+    bool valid = true;
     bool has_width = false, has_style = false, has_color = false;
+    bool current_color = true;
     float width = 0;
     BorderStyle style = BorderStyle::None;
     Color color{0, 0, 0, 255};
@@ -344,49 +346,46 @@ struct BorderParse {
 BorderParse parse_border_tokens(const std::string& value, const ComputedStyle& st) {
     BorderParse b;
     auto toks = split_ws_paren(value);
+    if (toks.empty()) b.valid = false;
     for (auto& tok : toks) {
+        const int before = b.has_width | (b.has_style << 1) | (b.has_color << 2);
         std::string t = util::to_lower(tok);
         if (t == "thin") { b.width = 1; b.has_width = true; }
         else if (t == "medium") { b.width = 3; b.has_width = true; }
         else if (t == "thick") { b.width = 5; b.has_width = true; }
-        else if (t == "none") { b.style = BorderStyle::None; b.has_style = true; b.width = 0; b.has_width = true; }
+        else if (t == "none") { b.style = BorderStyle::None; b.has_style = true; }
         else if (t == "solid") { b.style = BorderStyle::Solid; b.has_style = true; }
         else if (t == "dashed") { b.style = BorderStyle::Dashed; b.has_style = true; }
         else if (t == "dotted") { b.style = BorderStyle::Dotted; b.has_style = true; }
         else if (t == "double") { b.style = BorderStyle::Double; b.has_style = true; }
-        else if (t == "hidden") { b.style = BorderStyle::None; b.has_style = true; b.width = 0; b.has_width = true; }
+        else if (t == "hidden") { b.style = BorderStyle::None; b.has_style = true; }
         else if (t == "currentcolor") { b.color = st.color; b.has_color = true; }
         else {
             bool ok = false;
             Color c = util::parse_color(t, &ok);
-            if (ok) { b.color = c; b.has_color = true; }
+            if (ok) { b.color = c; b.has_color = true; b.current_color = false; }
             else {
                 bool len_ok = false;
                 Length l = parse_length_value(t, st.font_size, 16, false, &len_ok);
-                if (len_ok) { b.width = l.unit == Length::Px ? l.value : 3; b.has_width = true; }
+                if (len_ok && l.unit != Length::Percent) {
+                    const float width = resolve_length(l, 0, st.font_size);
+                    if (std::isfinite(width) && width >= 0) { b.width = width; b.has_width = true; }
+                }
             }
         }
+        if ((b.has_width | (b.has_style << 1) | (b.has_color << 2)) == before) b.valid = false;
     }
     return b;
 }
 
 void apply_border_side(BorderSide& side, const BorderParse& b, bool set_width, bool set_style, bool set_color) {
+    if (!b.valid) return;
     if (set_width && b.has_width) side.width = b.width;
     if (set_style && b.has_style) side.style = b.style;
-    if (set_color && b.has_color) side.color = b.color;
-    if (side.style == BorderStyle::None) side.width = 0;
-    if (side.style != BorderStyle::None && side.width <= 0) side.width = 3;
+    if (set_color && b.has_color) { side.color = b.color; side.current_color = b.current_color; }
 }
 
-void apply_border_all(ComputedStyle& st, const std::string& value, bool width_only, bool style_only, bool color_only) {
-    BorderParse b = parse_border_tokens(value, st);
-    for (auto& side : st.border) apply_border_side(side, b, !style_only && !color_only, !width_only && !color_only,
-                                                   !width_only && !style_only);
-    // If a shorthand explicitly sets a style but no width, use medium.
-    if (!width_only && !style_only && !b.has_width) {
-        for (auto& side : st.border) if (side.style != BorderStyle::None && side.width <= 0) side.width = 3;
-    }
-}
+
 
 Display parse_display(const std::string& v) {
     if (v == "block") return Display::Block;
@@ -936,9 +935,11 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
     } else if (p == "border" || p == "border-top" || p == "border-right" || p == "border-bottom" ||
                p == "border-left") {
         BorderParse b = parse_border_tokens(v, st);
+        if (!b.valid) return;
         int idx = p == "border-top" ? 0 : p == "border-right" ? 1 : p == "border-bottom" ? 2 : p == "border-left" ? 3 : -1;
-        if (idx >= 0) apply_border_side(st.border[idx], b, true, true, true);
-        else for (auto& side : st.border) apply_border_side(side, b, true, true, true);
+        // Shorthands reset omitted components; longhands retain their specified values.
+        if (idx >= 0) { st.border[idx] = BorderSide{}; apply_border_side(st.border[idx], b, true, true, true); }
+        else for (auto& side : st.border) { side = BorderSide{}; apply_border_side(side, b, true, true, true); }
     } else if (p == "border-width" || p == "border-style" || p == "border-color") {
         auto toks = split_ws_paren(v);
         if (toks.empty()) return;
@@ -948,34 +949,18 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         else if (toks.size() == 3) vals = {toks[0], toks[1], toks[2], toks[1]};
         else vals = {toks[0], toks[1], toks[2], toks[3]};
         for (int i = 0; i < 4; i++) {
-            BorderParse b;
-            b.has_width = b.has_style = b.has_color = true;
-            b.width = st.border[i].width;
-            b.style = st.border[i].style;
-            b.color = st.border[i].color;
-            BorderParse parsed = parse_border_tokens(vals[i], st);
-            if (p == "border-width") { b.width = parsed.has_width ? parsed.width : parse_float_value(vals[i], 0); b.has_width = true; }
-            if (p == "border-style") { b.style = parsed.has_style ? parsed.style : BorderStyle::Solid; b.has_style = true; }
-            if (p == "border-color") { b.color = parsed.has_color ? parsed.color : st.color; b.has_color = true; }
-            apply_border_side(st.border[i], b, true, true, true);
+            const auto parsed = parse_border_tokens(vals[i], st);
+            apply_border_side(st.border[i], parsed, p == "border-width", p == "border-style", p == "border-color");
         }
     } else if (util::starts_with(p, "border-") && util::ends_with(p, "-width")) {
         int idx = p == "border-top-width" ? 0 : p == "border-right-width" ? 1 : p == "border-bottom-width" ? 2 : 3;
-        float w = parse_float_value(vl, 0);
-        if (vl == "thin") w = 1; else if (vl == "medium") w = 3; else if (vl == "thick") w = 5;
-        st.border[idx].width = w;
-        if (st.border[idx].style == BorderStyle::None && w > 0) st.border[idx].style = BorderStyle::Solid;
+        apply_border_side(st.border[idx], parse_border_tokens(vl, st), true, false, false);
     } else if (util::starts_with(p, "border-") && util::ends_with(p, "-style")) {
         int idx = p == "border-top-style" ? 0 : p == "border-right-style" ? 1 : p == "border-bottom-style" ? 2 : 3;
-        BorderParse b = parse_border_tokens(vl, st);
-        if (b.has_style) st.border[idx].style = b.style;
-        if (st.border[idx].style == BorderStyle::None) st.border[idx].width = 0;
-        else if (st.border[idx].width <= 0) st.border[idx].width = 3;
+        apply_border_side(st.border[idx], parse_border_tokens(vl, st), false, true, false);
     } else if (util::starts_with(p, "border-") && util::ends_with(p, "-color")) {
         int idx = p == "border-top-color" ? 0 : p == "border-right-color" ? 1 : p == "border-bottom-color" ? 2 : 3;
-        bool ok = false;
-        Color c = util::parse_color(vl, &ok);
-        if (ok) st.border[idx].color = c;
+        apply_border_side(st.border[idx], parse_border_tokens(vl, st), false, false, true);
     } else if (p == "flex") {
         if (vl == "none") { st.flex_grow = 0; st.flex_shrink = 0; st.flex_basis = Length{}; }
         else if (vl == "auto") { st.flex_grow = 1; st.flex_shrink = 1; st.flex_basis = Length{}; }
@@ -1297,6 +1282,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
             apply_property(st, it.name, val, parent ? &parent->style : nullptr, node);
         }
 
+        for (auto& side : st.border) if (side.current_color) side.color = st.color;
         if (node->has_attr("hidden")) st.display = Display::None;
         st.display_none = st.display == Display::None;
 
