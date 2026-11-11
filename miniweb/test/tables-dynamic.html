@@ -1,0 +1,42 @@
+<!doctype html><html><head><style>
+html,body{margin:0;font:14px/20px "DejaVu Sans Mono",monospace;background:white}
+#dyn{position:absolute;left:10px;top:10px;width:300px;table-layout:fixed;border-spacing:0;border:1px solid #000}
+td{padding:4px;border:1px solid #444}
+#mv{position:absolute;left:10px;top:400px;width:300px;table-layout:auto;border-spacing:0;border:1px solid #000}
+button{position:absolute;font:14px/20px "DejaVu Sans Mono",monospace;padding:2px;border:1px solid #000;background:#ddd}
+#addBtn{left:400px;top:10px;width:70px;height:26px}
+#delBtn{left:400px;top:50px;width:70px;height:26px}
+#hideBtn{left:400px;top:90px;width:70px;height:26px}
+#showBtn{left:400px;top:130px;width:70px;height:26px}
+</style></head><body>
+<table id="dyn"><thead id="dh"><tr id="dhr"><th id="dh1">H1</th><th id="dh2">H2</th></tr></thead><tbody id="db"><tr id="d1"><td id="d1a">one</td><td id="d1b">two</td></tr><tr id="d2"><td id="d2a">three</td><td id="d2b">four</td></tr></tbody><tfoot id="df"><tr id="dfr"><td id="df1">foot</td><td id="df2">end</td></tr></tfoot></table>
+<table id="mv"><tr id="mv1"><td id="mv1a">alpha</td><td id="mv1b">beta</td></tr><tr id="mv2"><td id="mv2a">gamma</td><td id="mv2b">delta</td></tr></table>
+<button id="addBtn">add</button><button id="delBtn">del</button><button id="hideBtn">hide</button><button id="showBtn">show</button>
+<script>
+var count=0;
+function measure(){
+  var f=document.getElementById('df').getBoundingClientRect();
+  var m=document.getElementById('mv2a').getBoundingClientRect();
+  document.body.setAttribute('data-measure',[f.y,f.height,m.x,m.y,m.height].map(function(v){return Math.round(v*10)/10;}).join(','));
+  document.body.setAttribute('data-display',getComputedStyle(document.getElementById('mv2')).display);
+  var last=document.getElementById('added'+count);
+  document.body.setAttribute('data-added-display',last?getComputedStyle(last).display:'none');
+  document.body.setAttribute('data-added-height',last?String(Math.round(last.getBoundingClientRect().height)):'0');
+}
+document.getElementById('addBtn').addEventListener('click',function(){
+  count++;
+  var row=document.createElement('tr');row.id='added'+count;
+  ['n','n2'].forEach(function(t,i){var c=document.createElement('td');c.id='added'+count+'c'+i;c.textContent=t+count;row.appendChild(c);});
+  var body=document.getElementById('db');body.appendChild(row);measure();
+});
+document.getElementById('delBtn').addEventListener('click',function(){
+  var row=document.getElementById('added'+count);if(row)row.remove();count--;measure();
+});
+document.getElementById('hideBtn').addEventListener('click',function(){
+  var row=document.getElementById('mv2');row.style.display='none';measure();
+});
+document.getElementById('showBtn').addEventListener('click',function(){
+  var row=document.getElementById('mv2');row.style.display='';measure();
+});
+</script>
+</body></html>

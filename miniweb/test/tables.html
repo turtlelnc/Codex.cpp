@@ -10,6 +10,14 @@ table{position:absolute}td,th{padding:6px;border:1px solid #444}button{font:inhe
 .css-row{display:table-row}.css-cell{display:table-cell;vertical-align:top;padding:4px;border:1px solid black}
 #narrow{left:300px;top:530px;width:260px;table-layout:auto;border-spacing:0;border:1px solid black}
 #narrow td{padding:4px}
+#shrinkwrap{position:absolute;left:10px;top:780px;width:300px}
+#shrink{position:static;border-spacing:0;border:1px solid black}#shrink td{width:80px;padding:4px}
+#pctfix{left:10px;top:900px;width:300px;table-layout:fixed;border-spacing:8px;border:1px solid black}#pctfix td{width:25%;padding:4px}
+#constrain{left:10px;top:1000px;width:240px;table-layout:fixed;border-spacing:0;border:1px solid black}#constrain td{width:40px;max-width:50px;padding:4px}
+#lh{left:10px;top:1100px;border-spacing:0;border:1px solid black}#lh td{font:20px/20px "DejaVu Sans Mono",monospace;padding:4px}
+#flowwrap{position:absolute;left:10px;top:1200px;width:300px}
+#flowa{top:10px}
+#absfit{left:520px;top:1300px;border-spacing:0;border:1px solid black}#absfit td{width:80px;padding:4px}
 #responsive{left:10px;top:650px;width:90%;table-layout:fixed;border-spacing:0;border:1px solid black}
 </style></head><body>
 <table id="report"><tfoot id="foot"><tr id="footer"><td id="f1">Total</td><td id="f2">2 rows</td><td id="f3">Done</td></tr></tfoot><thead id="head"><tr id="header"><th id="h1">Name</th><th id="h2">Details</th><th id="h3">Action</th></tr></thead>
@@ -22,5 +30,11 @@ table{position:absolute}td,th{padding:6px;border:1px solid #444}button{font:inhe
 <div id="css"><div id="css-r1" class="css-row"><div id="d1" class="css-cell">Left</div><div id="d2" class="css-cell">Right</div></div><div id="css-r2" class="css-row"><div id="d3" class="css-cell">Long<br>row</div><div id="d4" class="css-cell">Short</div></div></div>
 <table id="narrow"><tbody><tr><td id="n1">alpha beta gamma delta</td><td id="n2">alpha beta gamma delta</td></tr></tbody></table>
 <table id="responsive"><tr><td id="resp-a">A</td><td id="resp-b">B</td></tr><tr><td id="resp-c">Two<br>lines</td><td id="resp-d">One</td></tr></table>
-<script>document.body.setAttribute('data-table-display',getComputedStyle(document.getElementById('report')).display);document.body.setAttribute('data-cell-display',getComputedStyle(document.getElementById('a1')).display);document.body.setAttribute('data-spacing',getComputedStyle(document.getElementById('report')).borderSpacing);document.getElementById('add').addEventListener('click',function(){var row=document.createElement('tr');row.id='added';['New','More detail','OK'].forEach(function(text){var cell=document.createElement('td');cell.textContent=text;row.appendChild(cell);});document.getElementById('body').appendChild(row);});</script>
+<div id="shrinkwrap"><table id="shrink"><tr id="shrinkrow"><td id="sh1">a</td><td id="sh2">b</td><td id="sh3">c</td><td id="sh4">d</td></tr></table></div>
+<table id="pctfix"><tr id="pctfixrow"><td id="pf1">a</td><td id="pf2">b</td><td id="pf3">c</td><td id="pf4">d</td></tr></table>
+<table id="constrain"><tr id="constrainrow"><td id="co1">a</td><td id="co2">b</td></tr></table>
+<table id="lh"><tr id="lhrow"><td id="lh1">A</td><td id="lh2">B</td></tr></table>
+<div id="flowwrap"><div id="flowa">Alpha</div><div id="flowb">Beta</div></div>
+<table id="absfit"><tr id="absrow"><td id="af1">a</td><td id="af2">b</td><td id="af3">c</td><td id="af4">d</td></tr></table>
+<script>document.body.setAttribute('data-table-display',getComputedStyle(document.getElementById('report')).display);document.body.setAttribute('data-cell-display',getComputedStyle(document.getElementById('a1')).display);document.body.setAttribute('data-spacing',getComputedStyle(document.getElementById('report')).borderSpacing);document.body.setAttribute('data-layout',getComputedStyle(document.getElementById('report')).tableLayout);document.body.setAttribute('data-valign',getComputedStyle(document.getElementById('a1')).verticalAlign);document.getElementById('add').addEventListener('click',function(){var row=document.createElement('tr');row.id='added';['New','More detail','OK'].forEach(function(text){var cell=document.createElement('td');cell.textContent=text;row.appendChild(cell);});document.getElementById('body').appendChild(row);});</script>
 </body></html>
