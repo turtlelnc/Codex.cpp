@@ -26,7 +26,7 @@ Host timeout/cancellation terminates the worker process tree before temporary cl
 
 ## Confirmed layout fixes
 
-The integrated fork corrects percentage `translate()`/`translateX()`/`translateY()` positioning, sibling positioned/flex/grid `z-index` paint and hit-test order, and row-major `grid-column: span N` auto-placement. `min()`/`max()`/`clamp()` lengths resolve against their containing width instead of falling back to auto. These are bounded subsets, not general transform, stacking-context or Grid implementations. Structural pixel, hit-test and Chromium geometry regressions cover these cases.
+The integrated fork corrects percentage `translate()`/`translateX()`/`translateY()` positioning, sibling positioned/flex/grid `z-index` paint and hit-test order, and row-major `grid-column: span N` auto-placement. `min()`/`max()`/`clamp()` lengths resolve against their containing width instead of falling back to auto. Stylesheets preserve live document order, script/click-driven style edits are recollected, and CSS image URLs keep their stylesheet origin (including inherited custom properties). `var()` argument scanning is corrected. These are bounded subsets, not general transform, stacking-context or Grid implementations. Structural pixel, hit-test and Chromium geometry regressions cover these cases.
 
 ## Compatibility limitations
 

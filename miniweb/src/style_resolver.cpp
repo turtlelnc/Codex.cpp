@@ -1149,7 +1149,7 @@ std::string substitute_vars(const std::string& input, const std::unordered_map<s
         size_t close = std::string::npos;
         int par = 1;
         char quote = 0;
-        for (size_t j = open; j < input.size(); j++) {
+        for (size_t j = open + 1; j < input.size(); j++) {
             char c = input[j];
             if (quote) { if (c == quote) quote = 0; continue; }
             if (c == '"' || c == '\'') quote = c;
@@ -1160,7 +1160,7 @@ std::string substitute_vars(const std::string& input, const std::unordered_map<s
             }
         }
         if (close == std::string::npos) { out += input.substr(vpos); break; }
-        std::string body = input.substr(open, close - open);
+        std::string body = input.substr(open + 1, close - open - 1);
         std::string name = body;
         std::string fallback;
         size_t comma = std::string::npos;

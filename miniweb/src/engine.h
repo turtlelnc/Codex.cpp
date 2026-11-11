@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 class JsRuntime;
 
@@ -47,6 +48,7 @@ private:
     FontManager fonts_;
     ImageCache images_;
     std::vector<Stylesheet> sheets_;
+    std::unordered_map<std::string,std::string> stylesheet_cache_;
     std::unique_ptr<Canvas> canvas_;
     std::vector<LinkHit> links_;
 

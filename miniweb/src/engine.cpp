@@ -4,6 +4,7 @@
 #include "util.h"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 Engine::Engine(int viewport_w, int viewport_h, const std::vector<std::string>& extra_fonts)
     : viewport_w_(std::max(1, viewport_w)), viewport_h_(std::max(1, viewport_h)), extra_fonts_(extra_fonts),
@@ -43,6 +44,7 @@ bool Engine::load(const std::string& url_or_path, std::string* error) {
     doc_ = std::move(doc);
     loader_ = std::move(loader);
     images_.clear();
+    stylesheet_cache_.clear();
     images_.set_loader(loader_.get());
     url_ = url;
     title_ = doc_->title;
@@ -59,25 +61,26 @@ void Engine::collect_stylesheets() {
     sheets_.clear();
     if (!doc_ || !loader_) return;
     int order = 0;
-    for (auto* st : doc_->style_nodes) {
-        if (!st) continue;
-        std::string css = st->text_content();
-        if (!css.empty()) sheets_.push_back(parse_css(css, doc_->url, viewport_w_, viewport_h_, &order));
-    }
-    for (auto* link : doc_->link_nodes) {
-        if (!link) continue;
-        std::string rel = util::to_lower(link->attr("rel"));
-        if (rel.find("stylesheet") == std::string::npos) continue;
-        std::string href = link->attr("href");
-        if (href.empty()) continue;
-        std::string curl = doc_->resolve(href);
-        LoadResult css = loader_->load_absolute(curl);
-        if (!css.ok) {
-            util::warn("stylesheet load failed (%s): %s", curl.c_str(), css.error.c_str());
-            continue;
+    // Walk the live tree, not parser-time lists: scripts may insert/move styles.
+    std::function<void(Node*)> visit=[&](Node* node){
+        if(!node||node->is_element("template"))return;
+        if(node->is_element("style")){
+            const auto text=node->text_content();if(!text.empty())sheets_.push_back(parse_css(text,doc_->base_url.empty()?doc_->url:doc_->base_url,viewport_w_,viewport_h_,&order));
+        }else if(node->is_element("link")&&!node->has_attr("disabled")){
+            auto rel=util::split_ws(util::to_lower(node->attr("rel")));
+            if(std::find(rel.begin(),rel.end(),"stylesheet")!=rel.end()&&!node->attr("href").empty()){
+                const auto url=doc_->resolve(node->attr("href"));auto cached=stylesheet_cache_.find(url);
+                if(cached==stylesheet_cache_.end()){
+                    auto loaded=loader_->load_absolute(url);
+                    if(loaded.ok)cached=stylesheet_cache_.emplace(url,std::move(loaded.data)).first;
+                    else util::warn("stylesheet load failed (%s): %s",url.c_str(),loaded.error.c_str());
+                }
+                if(cached!=stylesheet_cache_.end())sheets_.push_back(parse_css(cached->second,url,viewport_w_,viewport_h_,&order));
+            }
         }
-        sheets_.push_back(parse_css(css.data, curl, viewport_w_, viewport_h_, &order));
-    }
+        for(auto* child:node->children)visit(child);
+    };
+    visit(doc_->root);
 }
 
 void Engine::apply_styles() {
@@ -103,6 +106,7 @@ bool Engine::render(bool full_page) {
         if (js->init()) {
             js->run(wait_ms_);
             doc_->recompute_head_body();
+            collect_stylesheets();
             apply_styles();
             do_layout();
             js_runtime_ = std::move(js);
@@ -130,6 +134,7 @@ bool Engine::click(float x, float y) {
                        util::format_float(x, 2) + "," + util::format_float(y, 2) + ");";
     if (!js_runtime_->eval(code, "<viewer-click>", false)) return false;
     js_runtime_->drain_timers(500);
+    collect_stylesheets();
     apply_styles();
     do_layout();
     return true;

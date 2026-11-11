@@ -683,6 +683,23 @@ bool css_matches(const Node* node, const std::string& selector, const Document* 
     return false;
 }
 
+// Preserve URL origin even through custom properties and later var() substitution.
+static std::string stylesheet_urls(const std::string& value,const std::string& source){
+    std::string out;const auto lower=util::to_lower(value);char quote=0;
+    for(size_t i=0;i<value.size();){const char c=value[i];
+        if(quote){out+=c;++i;if(c=='\\'&&i<value.size())out+=value[i++];else if(c==quote)quote=0;continue;}
+        if(c=='\''||c=='"'){quote=c;out+=c;++i;continue;}
+        if(lower.compare(i,4,"url(")==0&&(i==0||!is_ident_char(value[i-1]))){
+            size_t end=i+4;char inner=0;for(;end<value.size();++end){const char v=value[end];if(v=='\\'){++end;continue;}if(inner){if(v==inner)inner=0;}else if(v=='\''||v=='"')inner=v;else if(v==')')break;}
+            if(end<value.size()){auto url=util::trim(value.substr(i+4,end-i-4));if(url.size()>=2&&((url.front()=='"'&&url.back()=='"')||(url.front()=='\''&&url.back()=='\'')))url=url.substr(1,url.size()-2);
+                // Unsupported CSS escapes are left untouched rather than misresolved.
+                if(!url.empty()&&url.find('\\')==std::string::npos){out+="url(\""+util::resolve_url(source,url)+"\")";i=end+1;continue;}
+            }
+        }
+        out+=c;++i;
+    }return out;
+}
+
 Stylesheet parse_css(const std::string& css, const std::string& source_url, int viewport_w, int viewport_h,
                      int* rule_order) {
     Stylesheet sheet;
@@ -691,5 +708,6 @@ Stylesheet parse_css(const std::string& css, const std::string& source_url, int 
     int local_order = 0;
     parse_rules(clean, 0, clean.size(), sheet.rules, rule_order ? rule_order : &local_order, viewport_w,
                 viewport_h);
+    for(auto& rule:sheet.rules)for(auto& declaration:rule.declarations)declaration.value=stylesheet_urls(declaration.value,source_url);
     return sheet;
 }

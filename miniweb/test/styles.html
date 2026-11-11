@@ -1,0 +1,8 @@
+<!doctype html><html><head><link rel="stylesheet" href="style-assets/main.css"><style>
+html,body{margin:0;width:640px;height:480px}body{position:relative}
+#cascade,#dynamic,#asset,#custom,#inline-asset,#inserted{position:absolute;top:0;width:50px;height:50px}
+#cascade{left:0;background:#0000ff}#dynamic{left:60px}#asset{left:120px}#custom{left:180px}#inline-asset{left:240px;background-image:url(root-tile.svg)}
+#inserted{left:300px;background:#ff0000}
+</style><style id="dynamic-css">#dynamic{background:#ff0000}</style></head><body>
+<div id="cascade"></div><div id="dynamic"></div><div id="asset"></div><div id="custom"></div><div id="inline-asset"></div><div id="inserted"></div>
+<script>document.getElementById('dynamic-css').textContent='#dynamic{background:#0000ff}';document.getElementById('dynamic').addEventListener('click',function(){document.getElementById('dynamic-css').textContent='#dynamic{background:#008000}'});var extra=document.createElement("style");extra.textContent="#inserted{background:#0000ff}";document.head.appendChild(extra);document.getElementById("inserted").addEventListener("click",function(){extra.textContent="#inserted{background:#008000}"});</script></body></html>

@@ -64,6 +64,7 @@ jobs:
           node tests/runtime_dependencies.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           CODEX_TEST_EMBEDDED_ASSETS=1 node tests/native_smoke.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
           node tests/direct_team_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
+          node tests/miniweb_test.cjs '${{ matrix.binary }}' 2>&1 | tee -a release-build.log
       - name: Verify Creator on native macOS and Windows executables
         if: runner.os != 'Linux'
         shell: bash

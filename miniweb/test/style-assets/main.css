@@ -1,0 +1,4 @@
+#cascade{background:#ff0000}
+#asset{background-image:url(tile.svg)}
+body{--tile:url(tile.svg)}
+#custom{background-image:var(--tile)}
