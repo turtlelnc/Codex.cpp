@@ -209,27 +209,22 @@ const wait = async (fn) => {
             (p) => p.type === 'image_url' || p.type === 'input_image',
           ),
       );
+      if (imageRequest && body.messages) {
+        const index = body.messages.findIndex(m => m.tool_calls?.length);
+        const pending = new Set(body.messages[index].tool_calls.map(c => c.id));
+        for (const message of body.messages.slice(index + 1)) {
+          if (pending.size && (message.role !== 'tool' || !pending.delete(message.tool_call_id))) {
+            res.statusCode = 400; res.end(JSON.stringify({error:{message:'tool results must precede image observations'}})); return;
+          }
+        }
+        assert.equal(pending.size, 0);
+      }
       const message = imageRequest
         ? { role: 'assistant', content: 'IMAGE_RECEIVED' }
         : {
             role: 'assistant',
             content: null,
-            tool_calls: [
-              {
-                id: 'preview-one',
-                type: 'function',
-                function: {
-                  name: 'preview_screenshot',
-                  arguments: JSON.stringify({
-                    path: 'index.html',
-                    width: 320,
-                    height: 240,
-                    wait_ms: 0,
-                    clicks: [],
-                  }),
-                },
-              },
-            ],
+            tool_calls: ['preview-one','preview-two'].map(id => ({id,type:'function',function:{name:'preview_screenshot',arguments:JSON.stringify({path:'index.html',width:320,height:240,wait_ms:0,clicks:[]})}})),
           };
       res.end(
         JSON.stringify(
@@ -246,14 +241,7 @@ const wait = async (fn) => {
                         ],
                       },
                     ]
-                  : [
-                      {
-                        type: 'function_call',
-                        call_id: 'preview-one',
-                        name: 'preview_screenshot',
-                        arguments: message.tool_calls[0].function.arguments,
-                      },
-                    ],
+                  : message.tool_calls.map(call => ({type:'function_call',call_id:call.id,name:call.function.name,arguments:call.function.arguments})),
               },
         ),
       );
@@ -289,11 +277,13 @@ const wait = async (fn) => {
       assert.equal(requests.length, start + 2);
       const image = (requests[start + 1].messages || requests[start + 1].input)
         .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-        .find((p) => p.type === 'image_url' || p.type === 'input_image');
+        .filter((p) => p.type === 'image_url' || p.type === 'input_image');
+      assert.equal(image.length, 2, 'both tool images must reach the provider');
+      const firstImage = image[0];
       assert(
-        (image.type === 'image_url'
-          ? image.image_url.url
-          : image.image_url
+        (firstImage.type === 'image_url'
+          ? firstImage.image_url.url
+          : firstImage.image_url
         ).startsWith('data:image/png;base64,'),
       );
       assert(!JSON.stringify(requests[start + 1]).includes('codex_tool_image'));
@@ -382,13 +372,13 @@ const wait = async (fn) => {
         journal.replace('.items.jsonl', ''),
       );
       await page.reload();
-      await page.locator('.preview-result summary').click();
+      await page.locator('.preview-result summary').first().click();
       await page.waitForFunction(
         () =>
           document.querySelector('.preview-result img')?.naturalWidth === 320,
       );
       await page.reload();
-      await page.locator('.preview-result summary').waitFor();
+      await page.locator('.preview-result summary').first().waitFor();
       const regression = path.resolve(process.argv[3]);
       const result = spawnSync(
         regression,

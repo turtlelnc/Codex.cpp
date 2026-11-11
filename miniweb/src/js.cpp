@@ -788,7 +788,7 @@ bool JsRuntime::init() {
     if (!install_bridge()) return false;
     JS_SetModuleLoaderFunc(rt, module_normalize_cb, module_load_cb, bridge_);
     deadline_ms_ = util::now_ms() + 2000;
-    JSValue v = JS_Eval(ctx, kJsPrelude, strlen(kJsPrelude), "<miniweb-prelude>", JS_EVAL_TYPE_GLOBAL);
+    JSValue v = JS_Eval(ctx, miniweb_prelude(), strlen(miniweb_prelude()), "<miniweb-prelude>", JS_EVAL_TYPE_GLOBAL);
     deadline_ms_ = 0;
     if (JS_IsException(v)) {
         dump_exception("prelude");

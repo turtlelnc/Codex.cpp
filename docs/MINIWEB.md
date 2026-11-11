@@ -14,6 +14,8 @@ codex-cpp preview shot index.html -o clicked.png --click 100,150
 
 The Agent tool `preview_screenshot` returns a PNG observation for vision-capable models. Each call reloads the document, runs scripts and replays up to 16 clicks in order. Calls do not share a browser session, cookies or storage. There is no keyboard-input, scrolling or full-page capture tool in this version. TUI receives textual tool results; WebUI provides collapsed image results, retained after reload. The image uses ordinary provider context/input tokens; no independent model call is added.
 
+Image observations are stored as `codex_tool_image` records, separate from human messages. Recent images survive context compaction. In a multi-tool round, every tool result is recorded before images are sent to the provider, preserving Chat/Responses continuation ordering. Older executables cannot continue journals containing these new records; keep an updated runtime when moving or resuming these sessions.
+
 ## Isolation
 
 Pages run in a child of the same executable under the existing OS sandbox with a read-only workspace and a private writable output directory. The child does not inherit model credentials, provider config or enabled native plugins. All HTTP (including loopback), HTTPS and external network resources are refused; use workspace-local assets. Canonical resource paths must remain within the workspace; protected internal directories and hardlinked resources are refused. Symlink escapes are rejected. This embedded mode intentionally restricts the original prototype's loopback loader.

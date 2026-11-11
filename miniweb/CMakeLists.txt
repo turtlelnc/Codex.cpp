@@ -1,9 +1,16 @@
+# Embed the DOM prelude as bytes, not a compiler-limited string literal.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/prelude.js")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/prelude.js" prelude HEX)
+string(REGEX REPLACE "(..)" "0x\\1," prelude "${prelude}")
+string(REPEAT "0x[0-9a-f][0-9a-f]," 16 prelude_row)
+string(REGEX REPLACE "(${prelude_row})" "\\1\n" prelude "${prelude}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/prelude.cpp" "extern const unsigned char codex_miniweb_prelude[]={${prelude}0};\n")
 # Embedded headless renderer. No windowing toolkit or external runtime.
 set(qjs "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs")
 add_library(codex-miniweb STATIC
   src/canvas.cpp src/css.cpp src/dom.cpp src/engine.cpp src/font.cpp src/html.cpp
   src/image.cpp src/js.cpp src/layout.cpp src/loader.cpp src/paint.cpp src/stb_impl.cpp
-  src/style_resolver.cpp src/svg.cpp src/util.cpp worker.cpp
+  src/style_resolver.cpp src/svg.cpp src/util.cpp worker.cpp ${CMAKE_CURRENT_BINARY_DIR}/prelude.cpp
   ${qjs}/quickjs.c ${qjs}/dtoa.c ${qjs}/libregexp.c ${qjs}/libunicode.c)
 target_include_directories(codex-miniweb PRIVATE src third_party ${qjs})
 target_compile_features(codex-miniweb PUBLIC cxx_std_17)
