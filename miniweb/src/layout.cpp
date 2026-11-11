@@ -684,7 +684,17 @@ const std::vector<Node*>& LayoutEngine::flex_items(Node* parent) {
             box->parent = parent;
             box->style = inherited_style(parent->style);
             box->style.display = Display::Block;
-            box->children = std::move(text);
+            doc.layout_nodes.emplace_back();
+            auto* run = &doc.layout_nodes.back();
+            run->type = NodeType::Text;
+            run->anonymous = true;
+            // One text run for both measurement and tokenization. DOM node
+            // boundaries are not word breaks; clicks/links still target the
+            // original flex container rather than a synthetic DOM element.
+            run->parent = parent;
+            run->style = parent->style;
+            for (auto* child : text) run->data += child->data;
+            box->children.push_back(run);
             items.push_back(box);
         }
         text.clear();
@@ -988,11 +998,6 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
 float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
     if (!n || !n->is_element() || depth > 30) return 0;
     if (n->style.display == Display::None) return 0;
-    if (n->anonymous) {
-        std::string text;
-        for (auto* child : n->children) text += child->data;
-        return fonts.text_width(collapse_text(text, n->style), n->style);
-    }
     if (n->is_element("img")) {
         float w = 0, h = 0;
         image_content_size(n, basis, w, h, nullptr);

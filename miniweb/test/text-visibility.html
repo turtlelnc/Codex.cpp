@@ -19,6 +19,8 @@ button{box-sizing:border-box;border:0;padding:0;background:white;font:inherit}
 #zero div{visibility:visible;width:80px;height:80px;background:red}
 #none{display:none}#none div{visibility:visible;width:100px;height:100px;background:red}
 #opacity{left:0;top:400px;opacity:.5}
+#plainword{left:240px;top:400px;width:60px}
+#splitword{left:440px;top:400px;width:60px}
 </style></head><body>
 <button id="label" class="label">Visible label</button>
 <div id="mixed" class="label">alpha<!-- contiguous text --> beta<span id="badge">box</span>tail</div>
@@ -30,6 +32,8 @@ button{box-sizing:border-box;border:0;padding:0;background:white;font:inherit}
 <input id="hidden-input" value="secret">
 <div id="zero"><div></div></div><div id="none"><div></div></div>
 <div id="opacity" class="label">translucent</div>
+<div id="plainword" class="label">abcdefghi</div>
+<div id="splitword" class="label">abcd<!-- no word break -->efghi</div>
 <div style="display:none">
 <span id="line-px" style="font:20px/24px monospace"></span>
 <span id="line-percent" style="font:20px/150% monospace"></span>

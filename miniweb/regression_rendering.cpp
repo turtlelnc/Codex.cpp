@@ -48,6 +48,11 @@ void check_text_visibility(const std::filesystem::path& directory) {
     auto* whitespace=doc->get_element_by_id("whitespace");
     if(mixed->layout.box_children.size()!=3||whitespace->layout.box_children.size()!=2)
         throw std::runtime_error("Anonymous flex text grouping/whitespace mismatch");
+    auto* plain=doc->get_element_by_id("plainword")->layout.box_children.at(0);
+    auto* split=doc->get_element_by_id("splitword")->layout.box_children.at(0);
+    if(plain->layout.lines.size()!=1||split->layout.lines.size()!=1||
+        plain->layout.content_h!=split->layout.content_h)
+        throw std::runtime_error("DOM text-node boundaries introduced word breaks");
     if(!engine.click(100,40)||doc->body->attr("data-label-click")!="yes")
         throw std::runtime_error("Flex text click failed");
     if(!engine.click(50,280)||doc->body->attr("data-visible-click")!="yes")
