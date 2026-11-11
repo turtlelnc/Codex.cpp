@@ -20,7 +20,7 @@
 <div id="workspace">
   <button type="button" id="sidebar-backdrop" aria-label="关闭侧栏" tabindex="-1"></button>
   <aside id="navigation-sidebar" class="sidebar" aria-label="工作区导航">
-    <a class="logo" href="/"><i class="logo-mark" aria-hidden="true">⌘</i>Codex.cpp <span class="mode-label">Code</span></a>
+    <a class="logo" href="/"><span class="logo-mark" aria-hidden="true"></span>Codex.cpp</a>
     <section id="host-controls" hidden><label>项目<select id="host-project" aria-label="项目"></select></label><div class="host-actions"><button id="host-create">创建项目</button><button id="host-manage">协作</button></div><label>会话<select id="host-scope" aria-label="会话范围"><option value="shared">共同会话</option><option value="personal">个人会话</option></select></label><p id="host-jobs" role="status"></p><button id="host-logout">退出登录</button></section>
     <button id="new-chat" class="nav-item"><span aria-hidden="true">＋</span> 新会话</button>
     <div class="sidebar-heading"><span>工作区</span></div>
@@ -169,9 +169,13 @@
 
 <template id="empty-state">
   <div class="empty">
-    <i class="empty-logo" aria-hidden="true">⌘</i>
-    <h2>让想法跑起来。</h2>
-    <p>描述一个任务，或打开项目文件继续工作。</p>
+    <h2>本地代码工作区</h2>
+    <p>描述你想构建、修改或修复的内容。文件、会话和模型调用都在这台机器上。</p>
+    <div class="starters" aria-label="开始任务">
+      <button type="button" class="starter" data-q="读懂这个项目的结构，指出入口文件和关键模块">读懂这个项目的结构</button>
+      <button type="button" class="starter" data-q="运行项目的测试，修复失败项并说明原因">跑一遍测试并修复失败</button>
+      <button type="button" class="starter" data-q="检查当前工作区的未提交改动，指出可能的风险">检查当前改动的风险</button>
+    </div>
     <div class="sugg" aria-label="缓存的模型建议"></div>
   </div>
 </template>

@@ -1,6 +1,6 @@
 # WebUI 状态与交互回归
 
-使用中性色表面、暖色强调和中文界面，跟随系统深浅色；设计参照见 [Code 模式界面说明](WEBUI_CODE_DESIGN.md)。继续使用原生 JavaScript、HTTP 快照轮询与 C++17 服务，没有改变 API、权限或沙箱协议，也没有增加应用运行时依赖。
+使用冷灰纸面与单一墨绿信号色、中文界面，跟随系统深浅色；视觉系统见 [WebUI 视觉身份](WEBUI_VISUAL_IDENTITY.md)，交互结构参照见 [Code 模式界面说明](WEBUI_CODE_DESIGN.md)。继续使用原生 JavaScript、HTTP 快照轮询与 C++17 服务，没有改变 API、权限或沙箱协议，也没有增加应用运行时依赖。
 
 ## 状态边界
 

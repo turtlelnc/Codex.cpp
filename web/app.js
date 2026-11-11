@@ -206,17 +206,18 @@ for (const [id, name] of [
       if(generation===state.generation)applyPreferences(preferences);
     }
   };
+function fillPrompt(text) {
+  if ($('prompt').value.trim() && !confirm('替换尚未发送的输入？')) return;
+  $('prompt').value = text;
+  $('prompt').focus();
+}
 function suggestionButton(action) {
   const chars = Array.from(String(action.title || '')),
     label = chars.length > 12 ? chars.slice(0, 11).join('') + '…' : chars.join('');
   const b = el('button', label);
   b.type = 'button';
   b.title = action.prompt;
-  b.onclick = () => {
-    if ($('prompt').value.trim() && !confirm('替换尚未发送的输入？')) return;
-    $('prompt').value = action.prompt;
-    $('prompt').focus();
-  };
+  b.onclick = () => fillPrompt(action.prompt);
   return b;
 }
 function paintSuggestions() {
@@ -1138,7 +1139,21 @@ function buildChat(snap, wasBusy = false) {
   for (const [index, row] of rows.entries()) {
     const key = snap.session_id + ':' + row.k + ':' + (row.id || row.row_key || index);
     if(row.k==='preview'){
-      flushGroup();nodes.push(cached(key,JSON.stringify(row.images),()=>{const box=el('details',undefined,'preview-result');box.append(el('summary','工具返回的图片'));for(const url of row.images||[]){if(typeof url!=='string'||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(url))continue;const image=el('img');image.src=url;image.alt='工具返回的图片；渲染器限制请参阅工具结果';image.loading='lazy';box.append(image);}return box;}));
+      flushGroup();
+      nodes.push(cached(key,JSON.stringify({i:row.images,c:row.capability||''}),()=>{
+        const box=el('details',undefined,'preview-result');box.append(el('summary','工具返回的图片'));
+        for(const url of row.images||[]){if(typeof url!=='string'||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(url))continue;const image=el('img');image.src=url;image.alt='工具返回的图片；渲染器限制请参阅工具结果';image.loading='lazy';box.append(image);}
+        if(typeof row.capability==='string'&&row.capability.trim()){
+          const clean=/no known unsupported features/i.test(row.capability);
+          const text=clean?'未检测到已知不支持项；缺失不代表完整支持。':row.capability.replace(/^Capability report:\s*/i,'').replace(/\s*Treat layout and rendering[\s\S]*$/i,'').trim()+' · 这些区域可能不可靠';
+          const cap=el('div',undefined,'preview-capability');
+          cap.dataset.state=clean?'clean':'warn';
+          cap.title=row.capability;
+          cap.append(el('b','MiniWeb'),el('span',text));
+          box.append(cap);
+        }
+        return box;
+      }));
     } else if(row.k==='context'){
       flushGroup();nodes.push(cached(key,row.text,()=>{const box=el('details',undefined,'context-summary');box.append(el('summary','旧格式上下文摘要（内部记录）'),markdown(row.text));return box;}));
     } else if (row.k === 'reasoning') {
@@ -1272,13 +1287,9 @@ function drawMessages(nodes, view = captureChatView()) {
   reconcileChildren(box, nodes);
   if (!nodes.length) {
     const empty = $('empty-state').content.cloneNode(true);
-    empty.querySelector('h2').textContent=state.user?.welcome||empty.querySelector('h2').textContent;
     for(const action of suggestions.cache?.actions||[])empty.querySelector('.sugg').append(suggestionButton(action));
     empty.querySelectorAll('[data-q]').forEach((button) => {
-      button.onclick = () => {
-        $('prompt').value = button.dataset.q;
-        $('composer').requestSubmit();
-      };
+      button.onclick = () => fillPrompt(button.dataset.q);
     });
     box.append(empty);
   }
