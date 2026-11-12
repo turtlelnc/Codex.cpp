@@ -338,6 +338,14 @@ const wait = async (fn) => {
       const borderShot = shot('borders.html', ['--width', '640', '--height', '240', '--wait', '0', '-o', 'borders.png']);
       assert.equal(borderShot.status, 0, borderShot.stderr);
       await require('./miniweb_rendering_browser.cjs').borders(page, borderFixture, png('borders.png', 640, 240));
+      const tableFixture=fs.readFileSync(path.resolve('miniweb/test/tables.html'),'utf8');
+      fs.writeFileSync(path.join(project,'tables.html'),tableFixture);
+      const tableShot=shot('tables.html',['--width','640','--height','800','--wait','0','-o','tables.png']);
+      assert.equal(tableShot.status,0,tableShot.stderr);
+      const tableProbe=spawnSync(path.resolve(process.argv[3]),['--table-geometry',path.resolve('miniweb/test/tables.html')],{encoding:'utf8'});
+      assert.equal(tableProbe.status,0,tableProbe.stderr);
+      const narrowProbe=spawnSync(path.resolve(process.argv[3]),['--table-geometry-narrow',path.resolve('miniweb/test/tables.html')],{encoding:'utf8'});assert.equal(narrowProbe.status,0,narrowProbe.stderr);
+      await require('./miniweb_tables_browser.cjs')(page,tableFixture,png('tables.png',640,800),JSON.parse(tableProbe.stdout),JSON.parse(narrowProbe.stdout));
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();

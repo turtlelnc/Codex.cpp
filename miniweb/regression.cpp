@@ -4,8 +4,16 @@
 #include <stdexcept>
 #include <cmath>
 void check_text_visibility(const std::filesystem::path& directory);
+void check_tables(const std::filesystem::path& directory);
+void check_dynamic_tables(const std::filesystem::path& directory);
+int table_geometry(const std::filesystem::path& path,int width);
+int geometry_probe(const std::filesystem::path& path,int width,const std::string& ids_csv,const std::string& clicks);
 void check_font_border(const std::filesystem::path& directory);
 int main(int argc,char** argv){try{
+ if(argc==3&&(std::string(argv[1])=="--table-geometry"||std::string(argv[1])=="--table-geometry-narrow"))return table_geometry(std::filesystem::u8path(argv[2]),std::string(argv[1])=="--table-geometry"?640:320);
+ if((argc==5||argc==6)&&std::string(argv[1])=="--geometry"){
+     return geometry_probe(std::filesystem::u8path(argv[2]),std::atoi(argv[3]),argv[4],argc==6?argv[5]:"");
+ }
  if(argc!=2)return 2;auto page=std::filesystem::canonical(std::filesystem::u8path(argv[1]));Loader::set_access_root(page.parent_path().u8string());Engine engine(640,480);engine.set_wait_ms(0);std::string error;if(!engine.load(page.u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
  auto pixel=[&](int x,int y,int r,int g,int b){const auto& data=engine.canvas()->pixels();size_t i=(y*640+x)*4;if(data[i]!=r||data[i+1]!=g||data[i+2]!=b)throw std::runtime_error("Unexpected rendered pixel at "+std::to_string(x)+","+std::to_string(y));};
  pixel(300,230,255,0,0);pixel(260,230,255,255,255);pixel(40,40,255,0,0);pixel(390,340,255,0,0);pixel(420,340,0,0,255);pixel(20,390,0,128,0);
@@ -28,5 +36,7 @@ int main(int argc,char** argv){try{
  if(clock.document()->body->has_attr("data-timer")||!clock.click(2,2)||clock.document()->body->attr("data-click-clock")!="500"||clock.document()->body->attr("data-timer")!="fired")throw std::runtime_error("Idle clock did not advance through replay wait");
  check_text_visibility(page.parent_path());
  check_font_border(page.parent_path());
+ check_tables(page.parent_path());
+ check_dynamic_tables(page.parent_path());
  return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

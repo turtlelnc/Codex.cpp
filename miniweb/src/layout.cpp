@@ -84,10 +84,16 @@ private:
 
     void resolve_edges(Node* n, float cb_w);
     void apply_auto_margins(Node* n, float cb_w);
-    void layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w = -1, float forced_h = -1);
+    void layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w = -1, float forced_h = -1,
+                     bool clamp_width = true, float avail_w = -1);
     float layout_block_content(Node* n, float content_w, float hspec, float child_cb_h);
     float layout_flex(Node* n, float content_w, float hspec);
     float layout_grid(Node* n, float content_w, float hspec);
+    struct TableRow { Node* node; Node* group; std::vector<Node*> cells; };
+    std::vector<TableRow> table_rows(Node* table);
+    std::vector<float> table_columns(const std::vector<TableRow>& rows, float basis, bool minimum, int depth);
+    float minimum_width(Node* node, float basis, int depth);
+    float layout_table(Node* n, float& content_w, float hspec);
     float layout_inline_group(Node* parent, const std::vector<Node*>& group, float content_w, float start_y);
 
     void build_tokens(Node* group_node, std::vector<Token>& out, float content_w, Node* box_parent);
@@ -295,7 +301,8 @@ void LayoutEngine::layout_image(Node* n, float cb_w, float forced_w, float force
     apply_auto_margins(n, cb_w);
 }
 
-void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w, float forced_h) {
+void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w, float forced_h,
+                               bool clamp_width, float avail_w) {
     if (!n || !n->is_element()) return;
     n->layout = LayoutInfo{};
     if (n->style.display == Display::None) {
@@ -315,7 +322,8 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     auto& st = n->style;
     float ph = n->layout.padding_left + n->layout.padding_right + n->layout.border_left + n->layout.border_right;
     float pv = n->layout.padding_top + n->layout.padding_bottom + n->layout.border_top + n->layout.border_bottom;
-    float avail = std::max(0.0f, cb_w - n->layout.margin_left - n->layout.margin_right - ph);
+    float avail = std::max(0.0f, (avail_w >= 0 ? avail_w : cb_w) - n->layout.margin_left -
+                                     n->layout.margin_right - ph);
     float cw = 0;
     if (forced_w >= 0) {
         cw = forced_w;
@@ -323,14 +331,16 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
         float spec = resolve_length(st.width, cb_w, st.font_size, 16.0f, false);
         cw = st.box_sizing_border ? spec - ph : spec;
         cw = std::max(0.0f, cw);
-    } else if (shrink || st.display == Display::InlineBlock) {
+    } else if (shrink || st.display == Display::InlineBlock || st.display == Display::Table) {
         float intrinsic = intrinsic_content_width(n, avail, 0);
         cw = std::min(avail, std::max(0.0f, intrinsic));
     } else {
         cw = avail;
     }
-    if (!st.min_width.is_auto()) cw = std::max(cw, resolve_length(st.min_width, cb_w, st.font_size, 16, false));
-    if (!st.max_width.is_auto()) cw = std::min(cw, resolve_length(st.max_width, cb_w, st.font_size, 16, false));
+    if (clamp_width) {
+        if (!st.min_width.is_auto()) cw = std::max(cw, resolve_length(st.min_width, cb_w, st.font_size, 16, false));
+        if (!st.max_width.is_auto()) cw = std::min(cw, resolve_length(st.max_width, cb_w, st.font_size, 16, false));
+    }
     cw = std::max(0.0f, cw);
 
     float hspec = -1;
@@ -348,8 +358,10 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     float child_cb_h = hspec >= 0 ? hspec : (cb_h > 0 ? cb_h : 0);
     if (st.display == Display::Flex) used = layout_flex(n, cw, hspec);
     else if (st.display == Display::Grid) used = layout_grid(n, cw, hspec);
+    else if (st.display == Display::Table) used = layout_table(n, cw, hspec);
     else used = layout_block_content(n, cw, hspec, child_cb_h);
     float ch = hspec >= 0 ? hspec : used;
+    if (st.display == Display::Table) ch = std::max(ch, used);
     if (!st.min_height.is_auto()) ch = std::max(ch, resolve_length(st.min_height, child_cb_h, st.font_size, 16, false));
     if (!st.max_height.is_auto()) ch = std::min(ch, resolve_length(st.max_height, child_cb_h, st.font_size, 16, false));
     ch = std::max(0.0f, ch);
@@ -366,11 +378,19 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
 
 void LayoutEngine::place_absolute(Node* parent, Node* child, float content_w, float child_cb_h, float cursor,
                                   float parent_height) {
-    layout_node(child, content_w, child_cb_h, true);
+    const float left = child->style.left.is_auto()
+                           ? 0
+                           : resolve_l(child->style.left, content_w, child->style.font_size);
+    const float right = child->style.right.is_auto()
+                            ? 0
+                            : resolve_l(child->style.right, content_w, child->style.font_size);
+    // Shrink-to-fit into the space the inset properties leave, not the whole
+    // containing block.
+    layout_node(child, content_w, child_cb_h, true, -1, -1, true,
+                std::max(0.0f, content_w - left - right));
     float x = 0, y = cursor;
-    if (!child->style.left.is_auto()) x = resolve_l(child->style.left, content_w, child->style.font_size);
-    else if (!child->style.right.is_auto())
-        x = content_w - child->layout.border.w - resolve_l(child->style.right, content_w, child->style.font_size);
+    if (!child->style.left.is_auto()) x = left;
+    else if (!child->style.right.is_auto()) x = content_w - child->layout.border.w - right;
     if (!child->style.top.is_auto()) y = resolve_l(child->style.top, child_cb_h, child->style.font_size);
     else if (!child->style.bottom.is_auto()) {
         float base = parent_height > 0 ? parent_height : child_cb_h;
@@ -412,14 +432,17 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         layout_node(child, content_w, child_cb_h, false);
         float x = child->layout.margin_left;
         float y = cursor + child->layout.margin_top;
-        if (child->style.position == Position::Relative) {
+        const bool relative = child->style.position == Position::Relative;
+        if (relative) {
             x += flat_relative_x(child, content_w);
             y += flat_relative_y(child, child_cb_h);
         }
         child->layout.border.x = x;
         child->layout.border.y = y;
         n->layout.box_children.push_back(child);
-        cursor = y - flat_relative_y(child, child_cb_h) + child->layout.border.h + child->layout.margin_bottom;
+        // Flow advances by the un-offset box; top/left only move a relatively
+        // positioned box visually. Static boxes ignore them entirely.
+        cursor = cursor + child->layout.margin_top + child->layout.border.h + child->layout.margin_bottom;
     }
     flush();
     return cursor;
@@ -550,6 +573,11 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         t.h = g->layout.border.h;
         t.ascent = t.h;
         t.descent = 0;
+        if (g->style.display == Display::InlineBlock && g->style.overflow == Overflow::Visible && !g->layout.lines.empty()) {
+            const auto& last = g->layout.lines.back();
+            t.ascent = std::min(t.h, g->layout.content_y + last.y + last.baseline);
+            t.descent = t.h - t.ascent;
+        }
         t.wrap = true;
         if (box_parent && std::find(box_parent->layout.box_children.begin(), box_parent->layout.box_children.end(), g) ==
                                box_parent->layout.box_children.end())
@@ -583,9 +611,10 @@ float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& 
             ascent = std::max(ascent, t.ascent);
             descent = std::max(descent, t.descent);
             if (t.style) lh = std::max(lh, style_line_height(*t.style));
-            lh = std::max(lh, t.ascent + t.descent);
+            // Text glyphs may overflow a deliberately small line-height; replaced and
+            // inline-block boxes still occupy their full height in the line box.
+            if (t.kind == Token::ImageTok || t.kind == Token::BoxTok) lh = std::max(lh, t.h);
         }
-        if (ascent + descent > lh) lh = ascent + descent;
         float leading = std::max(0.0f, lh - (ascent + descent));
         float baseline = leading / 2 + ascent; // relative to the top of this line
         float leftover = content_w - line_w;
@@ -621,7 +650,7 @@ float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& 
             lb.items.push_back(std::move(item));
             if (t.kind == Token::BoxTok && t.box) {
                 t.box->layout.border.x = x;
-                t.box->layout.border.y = lb.y + (baseline - t.h);
+                t.box->layout.border.y = lb.y + (baseline - t.ascent);
             }
         }
         parent->layout.lines.push_back(std::move(lb));
@@ -932,6 +961,172 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
     return used_h;
 }
 
+std::vector<LayoutEngine::TableRow> LayoutEngine::table_rows(Node* table) {
+    std::vector<TableRow> headers, body, footers;
+    auto append = [&](Node* row, Node* group, std::vector<TableRow>& output) {
+        if (!row || row->style.display != Display::TableRow) return;
+        TableRow result{row,group,{}};
+        for (auto* cell : row->children)
+            if (cell && cell->is_element() && cell->style.display == Display::TableCell) result.cells.push_back(cell);
+        output.push_back(std::move(result));
+    };
+    for (auto* child : table->children) {
+        if (!child || !child->is_element()) continue;
+        auto display=child->style.display;
+        if (display == Display::TableRow) append(child,nullptr,body);
+        else if (display==Display::TableHeader || display==Display::TableGroup || display==Display::TableFooter) {
+            auto& output=display==Display::TableHeader?headers:display==Display::TableFooter?footers:body;
+            for (auto* row : child->children) append(row,child,output);
+        }
+    }
+    headers.insert(headers.end(),body.begin(),body.end());
+    headers.insert(headers.end(),footers.begin(),footers.end());
+    return headers;
+}
+
+float LayoutEngine::minimum_width(Node* node,float basis,int depth) {
+    if (!node || depth>30 || node->style.display==Display::None) return 0;
+    if (node->is_text()) {
+        if (node->style.white_space==WhiteSpace::Nowrap || node->style.white_space==WhiteSpace::Pre)
+            return fonts.text_width(collapse_text(node->data,node->style),node->style);
+        std::vector<Token> tokens;append_text_tokens(node,tokens);float width=0;
+        for (const auto& token:tokens) if(token.kind==Token::Word) width=std::max(width,token.w);
+        return width;
+    }
+    if (!node->is_element()) return 0;
+    if (node->is_element("img") || node->is_element("svg")) return intrinsic_content_width(node,basis,depth+1);
+    if (node->style.display==Display::Table) {
+        const auto columns=table_columns(table_rows(node),basis,true,depth+1);
+        float width=columns.empty()?0:node->style.border_spacing_x*(columns.size()+1);
+        for(float value:columns)width+=value;
+        return width;
+    }
+    float width=0;
+    for(auto* child:node->children)width=std::max(width,minimum_width(child,basis,depth+1));
+    return width;
+}
+
+std::vector<float> LayoutEngine::table_columns(const std::vector<TableRow>& rows,float basis,bool minimum,int depth) {
+    std::vector<float> columns;
+    if(depth>30)return columns;
+    for(const auto& row:rows){
+        columns.resize(std::max(columns.size(),row.cells.size()),0);
+        for(size_t i=0;i<row.cells.size();++i){auto* cell=row.cells[i];
+            float content=minimum?minimum_width(cell,basis,depth+1):intrinsic_content_width(cell,basis,depth+1);
+            // A specified cell width is a preference, not a minimum: the automatic
+            // algorithm may shrink the column down to its minimum content width.
+            if(!minimum&&!cell->style.width.is_auto()){
+                float requested=resolve_l(cell->style.width,basis,cell->style.font_size);
+                if(cell->style.box_sizing_border)requested-=pad_h(cell,basis);
+                content=std::max(content,requested);
+            }
+            if(!cell->style.min_width.is_auto())content=std::max(content,resolve_l(cell->style.min_width,basis,cell->style.font_size));
+            columns[i]=std::max(columns[i],content+pad_h(cell,basis));
+        }
+    }
+    return columns;
+}
+
+float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
+    auto rows=table_rows(table);if(rows.empty())return 0;
+    auto preferred=table_columns(rows,width,false,0), minimum=table_columns(rows,width,true,0);
+    const size_t count=preferred.size();if(!count)return 0;
+    const float sx=table->style.border_spacing_x,sy=table->style.border_spacing_y;
+    const float gutters=sx*(count+1);
+    std::vector<float> columns(count,0);
+    const bool fixed=table->style.table_fixed&&!table->style.width.is_auto();
+    if(fixed){
+        std::vector<char> is_percent(count,0),is_auto(count,0);
+        size_t unspecified=0,length_columns=0;
+        float fixed_sum=0,percent_sum=0;
+        for(size_t i=0;i<count;++i){
+            Node* cell=i<rows.front().cells.size()?rows.front().cells[i]:nullptr;
+            if(cell&&!cell->style.width.is_auto()){
+                const bool percent=cell->style.width.unit==Length::Percent;
+                float value=resolve_l(cell->style.width,width,cell->style.font_size);
+                if(!cell->style.box_sizing_border)value+=pad_h(cell,width);
+                columns[i]=value;is_percent[i]=percent;
+                if(percent){percent_sum+=value;}
+                else{fixed_sum+=value;++length_columns;}
+            }else{is_auto[i]=1;++unspecified;}
+        }
+        // Only fixed lengths enlarge the table; percentage columns are fitted into
+        // the space left after them and the border spacing.
+        width=std::max(width,fixed_sum+gutters);
+        const float column_area=std::max(0.0f,width-gutters);
+        if(fixed_sum+percent_sum>column_area){
+            const float scale=percent_sum>0?std::max(0.0f,column_area-fixed_sum)/percent_sum:0;
+            for(size_t i=0;i<count;++i)if(is_percent[i])columns[i]*=scale;
+        }else{
+            const float extra=column_area-fixed_sum-percent_sum;
+            if(unspecified){
+                const float each=extra/std::max<size_t>(1,unspecified);
+                for(size_t i=0;i<count;++i)if(is_auto[i])columns[i]=each;
+            }else if(length_columns){
+                const float each=extra/length_columns;
+                for(size_t i=0;i<count;++i)if(!is_percent[i])columns[i]+=each;
+            }else{
+                const float each=extra/count;
+                for(auto& column:columns)column+=each;
+            }
+        }
+    }else{
+        float min_sum=0,pref_sum=0;for(size_t i=0;i<count;++i){preferred[i]=std::max(preferred[i],minimum[i]);min_sum+=minimum[i];pref_sum+=preferred[i];}
+        width=std::max(width,min_sum+gutters);
+        const float available=std::max(0.0f,width-gutters);
+        for(size_t i=0;i<count;++i){
+            if(available>=pref_sum)columns[i]=preferred[i]+(available-pref_sum)*(pref_sum>0?preferred[i]/pref_sum:1.f/count);
+            else columns[i]=minimum[i]+(available-min_sum)*(pref_sum>min_sum?(preferred[i]-minimum[i])/(pref_sum-min_sum):1.f/count);
+        }
+    }
+    float row_width=std::max(0.0f,width-2*sx);
+    std::vector<float> heights(rows.size(),0);
+    for(size_t i=0;i<rows.size();++i){auto& row=rows[i];float baseline=0,descent=0;
+        for(size_t j=0;j<row.cells.size();++j){auto* cell=row.cells[j];
+            // The column width already accounts for the cell's own preferred and
+            // minimum widths; re-applying min/max here would detach the cell box
+            // from its shared column.
+            layout_node(cell,width,hspec>0?hspec:0,false,std::max(0.0f,columns[j]-pad_h(cell,width)),-1,false);
+            heights[i]=std::max(heights[i],cell->layout.border.h);
+            if(cell->style.vertical_align==VerticalAlign::Baseline){
+                float b=cell->layout.content_y+(cell->layout.lines.empty()?cell->layout.content_h:cell->layout.lines.front().baseline);
+                baseline=std::max(baseline,b);descent=std::max(descent,cell->layout.border.h-b);
+            }
+        }
+        heights[i]=std::max(heights[i],baseline+descent);
+        if(!row.node->style.height.is_auto())heights[i]=std::max(heights[i],resolve_l(row.node->style.height,hspec>0?hspec:0,row.node->style.font_size));
+    }
+    float total=sy*(rows.size()+1);for(float height:heights)total+=height;
+    if(hspec>total){float extra=(hspec-total)/rows.size();for(auto& height:heights)height+=extra;total=hspec;}
+    auto box=[](Node* node,float x,float y,float w,float h){node->layout=LayoutInfo{};auto& l=node->layout;l.has_box=true;l.border={x,y,w,h};l.content_w=w;l.content_h=h;};
+    float y=sy;
+    for(size_t i=0;i<rows.size();++i){auto& row=rows[i];const float height=heights[i];
+        if(row.group){auto& group=row.group->layout;
+            if(!group.has_box){box(row.group,sx,y,row_width,0);table->layout.box_children.push_back(row.group);}
+            box(row.node,0,y-group.border.y,row_width,height);group.box_children.push_back(row.node);
+            group.border.h=y+height-group.border.y;group.content_h=group.border.h;
+        }else{box(row.node,sx,y,row_width,height);table->layout.box_children.push_back(row.node);}
+        float row_baseline=0;for(auto* cell:row.cells)if(cell->style.vertical_align==VerticalAlign::Baseline)
+            row_baseline=std::max(row_baseline,cell->layout.content_y+(cell->layout.lines.empty()?cell->layout.content_h:cell->layout.lines.front().baseline));
+        float x=0;
+        for(size_t j=0;j<row.cells.size();++j){auto* cell=row.cells[j];auto& l=cell->layout;
+            const float extra=std::max(0.0f,height-l.border.h);float shift=0;
+            if(cell->style.vertical_align==VerticalAlign::Middle)shift=extra/2;
+            else if(cell->style.vertical_align==VerticalAlign::Bottom)shift=extra;
+            else if(cell->style.vertical_align==VerticalAlign::Baseline)shift=row_baseline-l.content_y-(l.lines.empty()?l.content_h:l.lines.front().baseline);
+            for(auto& line:l.lines){line.y+=shift;for(auto& item:line.items)item.y+=shift;}
+            for(auto* child:l.box_children){
+                if(child->style.position==Position::Absolute||child->style.position==Position::Fixed){if(child->style.top.is_auto()&&!child->style.bottom.is_auto())child->layout.border.y+=extra;}
+                else child->layout.border.y+=shift;
+            }
+            l.border.x=x;l.border.y=0;l.content_h+=extra;l.border.h=height;
+            row.node->layout.box_children.push_back(cell);x+=columns[j]+sx;
+        }
+        y+=height+sy;
+    }
+    return total;
+}
+
 float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
     const auto& st = n->style;
     std::vector<Node*> items, absolutes;
@@ -1009,6 +1204,11 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
         return w;
     }
     if (n->is_element("br")) return 0;
+    if (n->style.display == Display::Table) {
+        const auto columns=table_columns(table_rows(n),basis,false,depth+1);
+        float width=columns.empty()?0:n->style.border_spacing_x*(columns.size()+1);
+        for(float column:columns)width+=column;return width;
+    }
     if (n->style.display == Display::Grid) {
         int cols = (int)n->style.grid_columns.size();
         if (cols <= 0 || n->style.grid_columns[0].kind == TrackKind::AutoFit) cols = 1;

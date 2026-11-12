@@ -189,6 +189,12 @@ std::string display_css(Display d) {
         case Display::InlineBlock: return "inline-block";
         case Display::Flex: return "flex";
         case Display::Grid: return "grid";
+        case Display::Table: return "table";
+        case Display::TableHeader: return "table-header-group";
+        case Display::TableGroup: return "table-row-group";
+        case Display::TableFooter: return "table-footer-group";
+        case Display::TableRow: return "table-row";
+        case Display::TableCell: return "table-cell";
         case Display::None: return "none";
     }
     return "inline";
@@ -230,6 +236,12 @@ std::string align_css(AlignItems a) {
 std::string prop_css(const Node* n, const std::string& prop) {
     const ComputedStyle& st = n->style;
     if (prop == "display") return display_css(st.display);
+    if (prop == "table-layout") return st.table_fixed ? "fixed" : "auto";
+    if (prop == "border-spacing") {const auto x=util::format_float(st.border_spacing_x,2)+"px";return st.border_spacing_x==st.border_spacing_y?x:x+" "+util::format_float(st.border_spacing_y,2)+"px";}
+    if (prop == "vertical-align") {
+        switch(st.vertical_align){case VerticalAlign::Top:return "top";case VerticalAlign::Middle:return "middle";
+            case VerticalAlign::Bottom:return "bottom";case VerticalAlign::Baseline:return "baseline";}
+    }
     if (prop == "position") return position_css(st.position);
     if (prop == "color") return color_css(st.color);
     if (prop == "background-color") return color_css(st.background);

@@ -136,7 +136,9 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
         bool has_border = border_left(n->style) > 0 || border_right(n->style) > 0 || border_top(n->style) > 0 ||
                           border_bottom(n->style) > 0;
-        if (has_border) canvas.draw_border(box, n->style, op);
+        const auto d=n->style.display;
+        const bool internal_table=d==Display::TableRow||d==Display::TableGroup||d==Display::TableHeader||d==Display::TableFooter;
+        if (has_border&&!internal_table) canvas.draw_border(box, n->style, op);
     }
 
     bool clip = n->style.overflow == Overflow::Hidden;
