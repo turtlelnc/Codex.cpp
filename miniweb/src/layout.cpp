@@ -1,5 +1,6 @@
 #include "layout.h"
 #include "canvas.h"
+#include "diagnostics.h"
 #include "svg.h"
 #include "util.h"
 #include <algorithm>
@@ -22,6 +23,12 @@ struct Token {
     bool preserve_space = false;
     bool wrap = true;
 };
+
+std::string table_label(const Node* table) {
+    std::string label = table->tag.empty() ? "table" : table->tag;
+    if (table->has_attr("id")) label += "#" + table->attr("id");
+    return label;
+}
 
 float resolve_l(const Length& l, float basis, float fs) {
     return resolve_length(l, basis, fs, 16.0f, true);
@@ -1028,13 +1035,34 @@ std::vector<float> LayoutEngine::table_columns(const std::vector<TableRow>& rows
 }
 
 float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
+    const std::string label=table_label(table);
+    for(auto* child:table->children){
+        if(!child||!child->is_element())continue;
+        if(child->is_element("caption"))diag::structural("table caption is ignored",label);
+        else if(child->is_element("colgroup")||child->is_element("col"))diag::structural("table col/colgroup sizing is ignored",label);
+    }
     auto rows=table_rows(table);if(rows.empty())return 0;
+    bool percent_cells=false,max_width_cells=false;
+    for(const auto& row:rows)for(auto* cell:row.cells){
+        if(cell->has_attr("rowspan")||cell->has_attr("colspan")){
+            const std::string rowspan=util::trim(cell->attr("rowspan")),colspan=util::trim(cell->attr("colspan"));
+            if((!rowspan.empty()&&rowspan!="1")||(!colspan.empty()&&colspan!="1"))
+                diag::structural("table rowspan/colspan is ignored",label);
+        }
+        if(!cell->style.width.is_auto()&&cell->style.width.unit==Length::Percent)percent_cells=true;
+        if(!cell->style.max_width.is_auto())max_width_cells=true;
+    }
     auto preferred=table_columns(rows,width,false,0), minimum=table_columns(rows,width,true,0);
     const size_t count=preferred.size();if(!count)return 0;
     const float sx=table->style.border_spacing_x,sy=table->style.border_spacing_y;
     const float gutters=sx*(count+1);
     std::vector<float> columns(count,0);
     const bool fixed=table->style.table_fixed&&!table->style.width.is_auto();
+    if(!fixed&&(percent_cells||max_width_cells))diag::approximate("automatic table column distribution",label);
+    if(table->style.table_fixed&&table->style.width.is_auto())
+        diag::approximate("table-layout:fixed with auto width uses automatic layout",label);
+    if(table->parent&&table->parent->style.display==Display::TableCell&&table->style.width.is_auto())
+        diag::approximate("auto-width table nested in a cell",label);
     if(fixed){
         std::vector<char> is_percent(count,0),is_auto(count,0);
         size_t unspecified=0,length_columns=0;

@@ -1,5 +1,6 @@
 #include "worker.h"
 #include "engine.h"
+#include "diagnostics.h"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -54,5 +55,7 @@ int codex_miniweb_worker(int argc,char** argv){try{
   if(!engine.render(false))throw std::runtime_error("Preview render failed");
   for(int i=8;i<argc;i+=2){engine.click(static_cast<float>(number(argv[i],0,width-1)),static_cast<float>(number(argv[i+1],0,height-1)));if(!engine.render(false))throw std::runtime_error("Preview click render failed");}
   if(!engine.canvas()||!engine.canvas()->save_png(argv[4]))throw std::runtime_error("Cannot save preview PNG");
+  std::cout<<"[miniweb] capability: "<<diag::report().summary()<<'\n';
+  std::cout<<"[miniweb] capability-json: "<<diag::report().json()<<'\n';
   std::cout<<"MiniWeb experimental preview "<<width<<"x"<<height<<"; not Chromium verification\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Preview: "<<e.what()<<'\n';return 2;}}

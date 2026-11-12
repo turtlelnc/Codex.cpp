@@ -1,0 +1,14 @@
+<!doctype html><html><head><style>
+html,body{margin:0;font:14px/20px "DejaVu Sans Mono",monospace;background:white;color:#111}
+#a{color:red;padding:4px;border:1px solid #333;margin:2px}
+table{border-spacing:0;border:1px solid #000;table-layout:fixed;width:160px}
+td{padding:2px;border:1px solid #444;vertical-align:middle}
+</style></head><body>
+<div id="a">supported text</div>
+<table id="t"><thead><tr><th id="th">H</th></tr></thead><tbody><tr><td id="td">cell</td></tr></tbody></table>
+<script>
+document.getElementById('a').addEventListener('click', function () { this.setAttribute('data-clicked', 'yes'); });
+document.getElementById('td').textContent = 'updated';
+document.body.setAttribute('data-width', String(document.getElementById('td').getBoundingClientRect().width));
+</script>
+</body></html>
