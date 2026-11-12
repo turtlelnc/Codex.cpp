@@ -429,6 +429,11 @@ const wait = async (fn) => {
         () =>
           document.querySelector('.preview-result img')?.naturalWidth === 320,
       );
+      assert.match(
+        await page.locator('.preview-result .preview-capability').first().textContent(),
+        /MiniWeb/,
+        'preview must carry its capability report into the WebUI',
+      );
       await page.reload();
       await page.locator('.preview-result summary').first().waitFor();
       const regression = path.resolve(process.argv[3]);

@@ -1,5 +1,7 @@
 # Code 模式界面参照（2026-11-09）
 
+> 2026-11-11：交互结构继续沿用下文的三栏布局与工具披露；视觉系统已替换为冷灰纸面与单一墨绿信号色的 Workbench 身份，见 [WebUI 视觉身份](WEBUI_VISUAL_IDENTITY.md)。
+
 参照本机 Claude Desktop 的 **Code** 模式，重新检查布局；实现仍使用原生 HTML/CSS/JavaScript。
 
 ## 已观察到的结构与本次应用
