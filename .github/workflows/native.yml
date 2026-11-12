@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Select a resolvable Ubuntu package mirror
+        if: runner.os == 'Linux'
+        run: sh scripts/ci-ubuntu-mirror.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -43,6 +46,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select a resolvable Ubuntu package mirror
+        if: runner.os == 'Linux'
+        run: sh scripts/ci-ubuntu-mirror.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -181,6 +187,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Select a resolvable Ubuntu package mirror
+        if: runner.os == 'Linux'
+        run: sh scripts/ci-ubuntu-mirror.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -208,6 +217,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Select a resolvable Ubuntu package mirror
+        if: runner.os == 'Linux'
+        run: sh scripts/ci-ubuntu-mirror.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -222,6 +234,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Select a resolvable Ubuntu package mirror
+        if: runner.os == 'Linux'
+        run: sh scripts/ci-ubuntu-mirror.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22

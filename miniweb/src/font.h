@@ -36,7 +36,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<FontFace>> faces_;
-    std::unordered_map<uint64_t, GlyphBitmap> glyphs_;
+    // Outer key: face and exact float size; inner key: Unicode codepoint.
+    std::unordered_map<uint64_t, std::unordered_map<uint32_t, GlyphBitmap>> glyphs_;
     int default_regular_ = -1, default_bold_ = -1, default_italic_ = -1, default_bold_italic_ = -1;
     int mono_regular_ = -1, mono_bold_ = -1;
     int serif_regular_ = -1, serif_bold_ = -1;

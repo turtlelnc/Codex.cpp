@@ -66,3 +66,29 @@ void check_text_visibility(const std::filesystem::path& directory) {
             throw std::runtime_error("Anonymous boxes accumulated between layouts");
     }
 }
+
+void check_font_border(const std::filesystem::path& directory) {
+    FontManager fonts;
+    if(!fonts.init())throw std::runtime_error("No test fonts available");
+    ComputedStyle style;style.font_family="monospace";style.font_size=12;
+    const auto small=fonts.text_width("Fractional metrics",style);
+    style.font_size=12.5f;const auto fractional=fonts.text_width("Fractional metrics",style);
+    if(small<=0||std::abs(fractional/small-12.5f/12.f)>.0001f)
+        throw std::runtime_error("Fractional font size rounded to a whole pixel");
+    style.font_size=0;
+    if(fonts.text_width("Zero size",style)!=0)throw std::runtime_error("Zero-size text has width");
+    Engine engine(640,240);engine.set_wait_ms(0);std::string error;
+    if(!engine.load((directory/"borders.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
+    for(const auto& entry:std::vector<std::pair<const char*,float>>{{"zero",40},{"none",40},{"zero-solid",40},
+        {"width-first",48},{"style-first",48},{"transparent",48},{"width-only",40},{"hidden-width",50},
+        {"side-zero",45},{"medium",46},{"reset-style",40},{"current",46},{"invalid",50},{"negative",50},{"initial",46},{"unset",46},{"reset-width",46},{"reset-style-long",50},
+        {"reset-side",48},{"reset-radius",50},{"reset-color",50}})
+        if(engine.document()->get_element_by_id(entry.first)->layout.border.w!=entry.second)
+            throw std::runtime_error(std::string("Border width mismatch: ")+entry.first);
+    const auto& pixels=engine.canvas()->pixels();
+    for(const auto& point:std::vector<std::pair<int,int>>{{10,10},{70,10},{130,10},{330,10},{400,10},{530,20},{70,80}}){
+        const auto i=(point.second*640+point.first)*4;
+        if(pixels[i]!=255||pixels[i+1]!=255||pixels[i+2]!=255)throw std::runtime_error("Zero/hidden/transparent border painted");}
+    const auto i=(80*640+130)*4;
+    if(pixels[i]!=255||pixels[i+1]!=0||pixels[i+2]!=0)throw std::runtime_error("Border currentColor did not resolve final color");
+}
