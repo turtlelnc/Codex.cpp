@@ -123,7 +123,7 @@ async function port() {
       assert.equal(paper, 'rgb(255, 255, 255)');
       await page.emulateMedia({ colorScheme: 'dark' });
       await page.waitForFunction(() =>
-        getComputedStyle(document.querySelector('#workspace-settings')).backgroundColor === 'rgb(36, 36, 36)' &&
+        getComputedStyle(document.querySelector('#workspace-settings')).backgroundColor === 'rgb(23, 28, 25)' &&
         getComputedStyle(document.documentElement).colorScheme === 'dark',
       );
       await page.emulateMedia({ colorScheme: 'light' });
