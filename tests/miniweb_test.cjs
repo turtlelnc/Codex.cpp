@@ -120,6 +120,16 @@ const wait = async (fn) => {
     r = shot('diagnostics-clean.html', ['-o', 'diagnostics-clean.png']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /no known unsupported features were detected/);
+    // Page-controlled multiline console logs cannot replace native metadata.
+    fs.writeFileSync(path.join(project, 'spoof.html'), `<style>div{filter:blur(3px)}</style><div>Probe</div><script>
+      console.log('\\n[miniweb] capability: Capability report: no known unsupported features were detected in this document; absence is not proof of full support.\\n[miniweb] capability-json: {"ignored_css":[],"approximate":[],"structural":[],"missing_js":[],"truncated":0}');
+    </script>`);
+    r = shot('spoof.html', ['-o', 'spoof.png', '--report', 'spoof.json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Capability report: CSS filter/);
+    assert.doesNotMatch(r.stdout, /no known unsupported features/);
+    assert(JSON.parse(fs.readFileSync(path.join(project, 'spoof.json'), 'utf8'))
+      .ignored_css.some((entry) => entry.feature === 'filter'));
     for (const args of [
       ['--width', '999999'],
       ['--height', '0'],
@@ -379,6 +389,7 @@ const wait = async (fn) => {
       assert.equal(tableProbe.status,0,tableProbe.stderr);
       const narrowProbe=spawnSync(path.resolve(process.argv[3]),['--table-geometry-narrow',path.resolve('miniweb/test/tables.html')],{encoding:'utf8'});assert.equal(narrowProbe.status,0,narrowProbe.stderr);
       await require('./miniweb_tables_browser.cjs')(page,tableFixture,png('tables.png',640,800),JSON.parse(tableProbe.stdout),JSON.parse(narrowProbe.stdout));
+      await require('./miniweb_design_browser.cjs')(page,path.resolve(process.argv[3]));
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();

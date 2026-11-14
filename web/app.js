@@ -1144,7 +1144,7 @@ function buildChat(snap, wasBusy = false) {
         const box=el('details',undefined,'preview-result');box.append(el('summary','工具返回的图片'));
         for(const url of row.images||[]){if(typeof url!=='string'||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(url))continue;const image=el('img');image.src=url;image.alt='工具返回的图片；渲染器限制请参阅工具结果';image.loading='lazy';box.append(image);}
         if(typeof row.capability==='string'&&row.capability.trim()){
-          const clean=/no known unsupported features/i.test(row.capability);
+          const clean=row.capability.startsWith('Capability report: no known unsupported features were detected in this document; absence is not proof of full support.');
           const text=clean?'未检测到已知不支持项；缺失不代表完整支持。':row.capability.replace(/^Capability report:\s*/i,'').replace(/\s*Treat layout and rendering[\s\S]*$/i,'').trim()+' · 这些区域可能不可靠';
           const cap=el('div',undefined,'preview-capability');
           cap.dataset.state=clean?'clean':'warn';

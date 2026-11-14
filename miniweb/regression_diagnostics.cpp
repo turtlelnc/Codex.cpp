@@ -52,4 +52,27 @@ void check_diagnostics(const std::filesystem::path& directory) {
     Engine clean(640, 800);
     load_diagnostic_page(clean, directory / "diagnostics-clean.html");
     if (!diag::report().empty()) throw std::runtime_error("Clean page produced: " + diag::report().summary());
+
+    Engine bounds(640,800);load_diagnostic_page(bounds,directory/"box-bounds.html");
+    for(const auto& item:std::vector<std::pair<const char*,float>>{{"max",200},{"min",100},{"conflict",100},{"content",224}})
+        if(std::abs(bounds.document()->get_element_by_id(item.first)->absolute_rect().w-item.second)>.02f)
+            throw std::runtime_error(std::string("Box sizing min/max mismatch: ")+item.first);
+    // Exercise a real report's responsive columns and actual DOM click state.
+    for(int width:{1280,390}){
+        Engine design(width,844);load_diagnostic_page(design,directory/"design-report.html");
+        auto* doc=design.document();
+        auto rect=[&](const char* id){return doc->get_element_by_id(id)->absolute_rect();};
+        const auto main=rect("main"),overview=rect("overview"),progress=rect("progress"),next=rect("next");
+        if(std::abs(main.w-std::min(width,960))>.02f||std::abs(main.x-(width-main.w)/2)>.02f)
+            throw std::runtime_error("Border-box max-width includes padding twice");
+        if(width>600?(std::abs(progress.y-next.y)>.02f||next.x<=progress.x+progress.w):
+                     (next.y<progress.y+progress.h||std::abs(next.w-overview.w)>.02f))
+            throw std::runtime_error("Design report responsive columns failed");
+        const auto button=rect("review");
+        for(const char* expected:{"true","false"}){
+            if(!design.click(button.x+4,button.y+4)||!design.render(false)||
+               doc->get_element_by_id("review")->attr("aria-expanded")!=expected)
+                throw std::runtime_error("Design report checklist toggle failed");
+        }
+    }
 }

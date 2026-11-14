@@ -3,6 +3,7 @@
 #include "diagnostics.h"
 #include <filesystem>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
@@ -55,6 +56,13 @@ int codex_miniweb_worker(int argc,char** argv){try{
   if(!engine.render(false))throw std::runtime_error("Preview render failed");
   for(int i=8;i<argc;i+=2){engine.click(static_cast<float>(number(argv[i],0,width-1)),static_cast<float>(number(argv[i+1],0,height-1)));if(!engine.render(false))throw std::runtime_error("Preview click render failed");}
   if(!engine.canvas()||!engine.canvas()->save_png(argv[4]))throw std::runtime_error("Cannot save preview PNG");
+  // JavaScript console output is untrusted. The host reads this private artifact,
+  // not the human-readable log lines below, as the capability result.
+  std::ofstream metadata(std::filesystem::u8path(std::string(argv[4])+miniweb_report_suffix),std::ios::binary|std::ios::trunc);
+  metadata<<"{\"version\":1,\"summary\":\""<<diag::detail::json_escape(diag::report().summary())
+          <<"\",\"report\":"<<diag::report().json()<<'}';
+  metadata.close();
+  if(!metadata)throw std::runtime_error("Cannot save preview capability report");
   std::cout<<"[miniweb] capability: "<<diag::report().summary()<<'\n';
   std::cout<<"[miniweb] capability-json: "<<diag::report().json()<<'\n';
   std::cout<<"MiniWeb experimental preview "<<width<<"x"<<height<<"; not Chromium verification\n";return 0;

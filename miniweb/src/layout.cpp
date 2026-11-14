@@ -345,8 +345,13 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
         cw = avail;
     }
     if (clamp_width) {
-        if (!st.min_width.is_auto()) cw = std::max(cw, resolve_length(st.min_width, cb_w, st.font_size, 16, false));
-        if (!st.max_width.is_auto()) cw = std::min(cw, resolve_length(st.max_width, cb_w, st.font_size, 16, false));
+        // Min/max constrain the same sizing box as width, not always content.
+        auto width_bound = [&](const Length& value) {
+            const float resolved = resolve_length(value, cb_w, st.font_size, 16, false);
+            return std::max(0.0f, resolved - (st.box_sizing_border ? ph : 0.0f));
+        };
+        if (!st.max_width.is_auto()) cw = std::min(cw, width_bound(st.max_width));
+        if (!st.min_width.is_auto()) cw = std::max(cw, width_bound(st.min_width));
     }
     cw = std::max(0.0f, cw);
 
