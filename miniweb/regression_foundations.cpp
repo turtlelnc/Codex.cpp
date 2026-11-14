@@ -27,6 +27,17 @@ void check_foundations(const std::filesystem::path& directory){
     equal(rect("font-stack").w,rect("font-mono").w,"Font family fallback list");
     equal(rect("percent-auto").y,rect("height-auto").y,"Indefinite percentage relative offset");
     equal(rect("font-shorthand").w,rect("font-mono").w,"Font shorthand fallback list");
+    // Family-cache pressure and a large uncached list must not change fallback
+    // selection. Pixel size remains a separate glyph-metric input.
+    FontManager fonts;if(!fonts.init())throw std::runtime_error("No regression fonts");
+    ComputedStyle font;font.font_family="monospace";font.font_size=16;
+    const float mono_width=fonts.text_width("iiiiWWWW 012345",font);
+    for(int i=0;i<140;++i){font.font_family="\"Missing family "+std::to_string(i)+"\",monospace";
+        equal(fonts.text_width("iiiiWWWW 012345",font),mono_width,"Fallback under family cache pressure");}
+    font.font_family="\""+std::string(1100,'x')+"\",monospace";
+    equal(fonts.text_width("iiiiWWWW 012345",font),mono_width,"Long uncached font list");
+    font.font_family="monospace";font.font_size=32;
+    equal(fonts.text_width("iiiiWWWW 012345",font),2*mono_width,"Cached font selection preserves font size");
 
     if(!engine.load((directory/"clipping.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
     equal(rect("auto-parent").h,80,"Absolute child does not affect auto parent flow");

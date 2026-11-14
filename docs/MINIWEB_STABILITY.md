@@ -21,6 +21,11 @@ where available, and checks the common Linux Liberation Sans substitute for
 Arial/Helvetica. This is not a complete fontconfig/CoreText/DirectWrite resolver.
 Complex shaping, web fonts and non-ASCII family metadata remain limited.
 
+Family selection is cached separately from glyph size, with at most 128 entries
+and no cached list longer than 1024 bytes. This avoids re-parsing the same family
+list for every glyph without allowing an unbounded cache from page-controlled
+CSS. Regression cases exercise cache pressure, long uncached lists and size changes.
+
 ## Repeatable acceptance cases
 
 - `miniweb/test/foundations.html`: Chromium/native x/y/width/height comparisons at

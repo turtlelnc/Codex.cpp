@@ -103,6 +103,7 @@ int FontManager::add_face(const std::string& path, bool bold, bool italic, bool 
 }
 
 bool FontManager::init(const std::vector<std::string>& extra_fonts) {
+    primary_cache_.clear();
     auto add = [&](const std::string& path, bool bold, bool italic, bool mono, bool cjk, bool serif) {
         if (util::file_exists(path)) add_face(path, bold, italic, mono, cjk, serif);
     };
@@ -229,6 +230,19 @@ void FontManager::pick_defaults() {
 }
 
 int FontManager::primary_face(const ComputedStyle& style, bool for_cjk) {
+    // Selection depends on family/weight/style, not on glyph or pixel size.
+    // Keep family-list parsing and face-name matching out of per-glyph loops.
+    if(style.font_family.size()>1024)return select_primary_face(style,for_cjk);
+    std::string key=style.font_family;
+    key+='\0';key+=char((style.font_weight>=600?1:0)|(style.font_style!=FontStyle::Normal?2:0)|(for_cjk?4:0));
+    const auto found=primary_cache_.find(key);
+    if(found!=primary_cache_.end())return found->second;
+    const int selected=select_primary_face(style,for_cjk);
+    if(primary_cache_.size()<128)primary_cache_.emplace(std::move(key),selected);
+    return selected;
+}
+
+int FontManager::select_primary_face(const ComputedStyle& style, bool for_cjk) {
     if (faces_.empty()) return -1;
     if (for_cjk) {
         if (style.font_weight >= 600) return cjk_bold_ >= 0 ? cjk_bold_ : cjk_regular_;
