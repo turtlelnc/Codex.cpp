@@ -12,6 +12,13 @@
 #partial{width:300px}#partial-a{max-width:50px}#partial-b{flex-grow:.25}
 #basis{width:250px}#basis-a,#basis-b{flex:0 0 100px;padding:10px;border:2px solid black;height:30px}
 #wrapping{width:140px;flex-wrap:wrap}#wrap-a,#wrap-b{max-width:60px}
+.stretch{display:flex;width:200px;height:200px;padding:0;border:0}.stretch-item{flex:1;min-width:0}
+.stretch-child{height:100%;background:#086}#stretch-limited{max-height:100px}
+#auto-stretch-height{height:auto}#auto-stretch-child{height:50%}#tall-peer{height:100px}
+#not-stretched{align-items:flex-start}
+.grid-stretch{display:grid;width:200px;height:200px;grid-template-columns:1fr;grid-template-rows:200px;padding:0;border:0}
+.column-stretch{display:flex;flex-direction:column;width:200px;height:200px;padding:0;border:0}
+.column-item{flex:1;min-height:0}
 #height-ancestor{height:200px}#height-content{height:20px}#percent-auto{height:50%;position:relative;top:50%}
 #height-bound-parent{height:200px}#percent-bound{height:200px;max-height:50%}
 #height-fixed{height:100px}#percent-fixed{height:50%}
@@ -35,6 +42,12 @@
 <section class="case flex" id="partial"><div class="item" id="partial-a"></div><div class="item" id="partial-b"></div></section>
 <section class="case flex" id="basis"><div class="item" id="basis-a"></div><div class="item" id="basis-b"></div></section>
 <section class="case flex" id="wrapping"><div class="item" id="wrap-a"></div><div class="item" id="wrap-b"></div></section>
+<section class="case stretch"><div class="stretch-item" id="stretch-item"><div class="stretch-child" id="stretch-child">Fill</div></div></section>
+<section class="case stretch"><div class="stretch-item" id="stretch-limited"><div class="stretch-child" id="stretch-limited-child">Fill</div></div></section>
+<section class="case stretch" id="auto-stretch-height"><div class="stretch-item" id="auto-stretch-item"><div class="stretch-child" id="auto-stretch-child">Fill</div></div><div class="stretch-item" id="tall-peer"></div></section>
+<section class="case stretch" id="not-stretched"><div class="stretch-item" id="nonstretch-item"><div class="stretch-child" id="nonstretch-child">Fill</div></div></section>
+<section class="case grid-stretch"><div id="grid-stretch-item"><div class="stretch-child" id="grid-stretch-child">Fill</div></div></section>
+<section class="case column-stretch"><div class="column-item" id="column-item-a"><div class="stretch-child" id="column-child-a">Fill</div></div><div class="column-item" id="column-item-b"><div class="stretch-child" id="column-child-b">Fill</div></div></section>
 <section class="case" id="height-ancestor"><div id="height-auto"><div id="percent-auto"><div id="height-content"></div></div></div></section>
 <section class="case" id="height-fixed"><div id="percent-fixed"></div></section>
 <section class="case" id="height-zero"><div id="percent-zero"></div></section>

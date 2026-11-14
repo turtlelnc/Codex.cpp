@@ -48,6 +48,10 @@ module.exports = async function(page, probe) {
   const foundationIds = ['positive-a','positive-b','mixed-a','mixed-b','negative-a','negative-b',
     'empty-a','empty','empty-b','inline-a','inline-b','grow-a','grow-b','shrink-a','shrink-b',
     'partial-a','partial-b','basis-a','basis-b','wrap-a','wrap-b',
+    'stretch-item','stretch-child','stretch-limited','stretch-limited-child',
+    'auto-stretch-height','auto-stretch-item','auto-stretch-child',
+    'nonstretch-item','nonstretch-child',
+    'grid-stretch-item','grid-stretch-child','column-item-a','column-child-a','column-item-b','column-child-b',
     'height-auto','percent-auto','percent-fixed','percent-zero','percent-bound','min-height','max-height',
     'height-conflict','height-content-box','clip','clip-child'];
   for(const width of [640,390]){

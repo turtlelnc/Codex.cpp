@@ -372,6 +372,17 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
         hspec = std::max(0.0f, hspec);
     }
 
+    auto constrain_height = [&](float height) {
+        auto bound = [&](const Length& value) {
+            return std::max(0.0f,resolve_length(value,std::max(0.0f,cb_h),st.font_size,16,false)-(st.box_sizing_border?pv:0.0f));
+        };
+        if (!st.max_height.is_auto() && (cb_h>=0 || !percentage_dependent(st.max_height))) height=std::min(height,bound(st.max_height));
+        if (!st.min_height.is_auto() && (cb_h>=0 || !percentage_dependent(st.min_height))) height=std::max(height,bound(st.min_height));
+        return std::max(0.0f,height);
+    };
+    // Descendant percentages use the constrained definite size, including a
+    // stretched flex size, rather than the unconstrained requested height.
+    if(hspec>=0)hspec=constrain_height(hspec);
     float used = 0;
     // Indefinite is different from a definite zero. An auto-height block must
     // not lend its ancestor's height to percentage-height descendants.
@@ -382,12 +393,7 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     else used = layout_block_content(n, cw, hspec, child_cb_h);
     float ch = hspec >= 0 ? hspec : used;
     if (st.display == Display::Table) ch = std::max(ch, used);
-    auto height_bound = [&](const Length& value) {
-        return std::max(0.0f,resolve_length(value,std::max(0.0f,cb_h),st.font_size,16,false)-(st.box_sizing_border?pv:0.0f));
-    };
-    if (!st.max_height.is_auto() && (cb_h>=0 || !percentage_dependent(st.max_height))) ch=std::min(ch,height_bound(st.max_height));
-    if (!st.min_height.is_auto() && (cb_h>=0 || !percentage_dependent(st.min_height))) ch=std::max(ch,height_bound(st.min_height));
-    ch = std::max(0.0f, ch);
+    ch = constrain_height(ch);
 
     n->layout.content_w = cw;
     n->layout.content_h = ch;
@@ -853,6 +859,12 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
                 }
             }
         }
+        // A definite column container makes allocated main sizes definite.
+        // Reflow percentage descendants after flexing their parent's box.
+        if(hspec>=0)for(auto* it:items){
+            const float width=it->layout.content_w,height=it->layout.content_h;
+            layout_node(it,content_w,hspec,true,width,height);
+        }
         float used_main = 0;
         for (size_t i = 0; i < items.size(); i++) used_main += items[i]->layout.border.h +
             resolve_l(items[i]->style.margin.top, content_w, items[i]->style.font_size) +
@@ -992,24 +1004,28 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             Node* it = items[i];
             if(it->style.min_width.is_auto()&&it->style.overflow==Overflow::Visible&&final_content[k]+.01f<minimum_width(it,content_w,0))
                 diag::approximate("flex automatic minimum size",node_label(it));
-            layout_node(it, content_w, hspec, true, final_content[k], -1);
+            const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size);
+            const bool definite_stretch=hspec>=0&&lines.size()==1&&st.align_items==AlignItems::Stretch&&it->style.height.is_auto();
+            const float stretched_height=definite_stretch?std::max(0.0f,hspec-mt-mb-pad_v(it,content_w)):-1;
+            layout_node(it, content_w, hspec, true, final_content[k], stretched_height);
             outer_h[k] = it->layout.border.h + resolve_l(it->style.margin.top, content_w, it->style.font_size) +
                          resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
         }
         float line_cross = 0;
         for (float h : outer_h) line_cross = std::max(line_cross, h);
         float cross_size = line_cross;
-        if (hspec >= 0 && lines.size() == 1) cross_size = std::max(cross_size, hspec);
+        if (hspec >= 0 && lines.size() == 1) cross_size = hspec;
         for (size_t k = 0; k < line.size(); k++) {
             Node* it = items[line[k]];
             if (st.align_items == AlignItems::Stretch && it->style.height.is_auto() &&
                 it->style.display != Display::Inline) {
                 float mt = resolve_l(it->style.margin.top, content_w, it->style.font_size);
                 float mb = resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
-                float target = cross_size - mt - mb - pad_v(it, content_w);
-                if (target > it->layout.content_h) {
-                    it->layout.content_h = target;
-                    it->layout.border.h = target + pad_v(it, content_w);
+                const float target=std::max(0.0f,cross_size-mt-mb-pad_v(it,content_w));
+                if (!(hspec>=0&&lines.size()==1)) {
+                    // Auto-sized lines need a second layout with a definite
+                    // used cross size; resizing just the box leaves children stale.
+                    layout_node(it,content_w,hspec,true,final_content[k],target);
                     outer_h[k] = it->layout.border.h + mt + mb;
                 }
             }
@@ -1294,7 +1310,11 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
     for(int r=0;r<rows&&r<(int)st.grid_rows.size();++r){const auto t=st.grid_rows[r];if(t.kind==TrackKind::Px)row_h[r]=std::max(row_h[r],t.value);else if(t.kind==TrackKind::Percent)row_h[r]=std::max(row_h[r],t.value*std::max(0.0f,hspec)/100);}
     float y=0;for(int r=0;r<rows;++r){for(auto& p:placed){if(p.row!=r)continue;auto* it=p.node;float x=0;for(int c=0;c<p.col;++c)x+=cols[c]+col_gap;
         const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size),ml=resolve_l(it->style.margin.left,content_w,it->style.font_size);
-        if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){const float target=row_h[r]-mt-mb-pad_v(it,content_w);if(target>it->layout.content_h){it->layout.content_h=target;it->layout.border.h=target+pad_v(it,content_w);}}
+        if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){
+            const float target=std::max(0.0f,row_h[r]-mt-mb-pad_v(it,content_w));
+            const float width=it->layout.content_w;
+            layout_node(it,p.width,row_h[r],true,width,target);
+        }
         it->layout.border.x=x+ml;it->layout.border.y=y+mt;n->layout.box_children.push_back(it);
     }y+=row_h[r]+st.row_gap;}
     float used = hspec >= 0 ? hspec : std::max(0.0f, y - (rows ? st.row_gap : 0));

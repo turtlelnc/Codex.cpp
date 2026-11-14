@@ -22,8 +22,14 @@ void check_foundations(const std::filesystem::path& directory){
     equal(rect("wrap-a").y,rect("wrap-b").y,"Flex wrapping uses constrained hypothetical widths");
     for(const auto& item:std::vector<std::pair<const char*,float>>{
         {"percent-auto",20},{"percent-fixed",39},{"percent-zero",0},{"min-height",100},
-        {"max-height",80},{"height-conflict",100},{"height-content-box",124},{"percent-bound",89}})
+        {"max-height",80},{"height-conflict",100},{"height-content-box",124},{"percent-bound",89},
+        {"stretch-item",200},{"stretch-child",200},{"stretch-limited",100},{"stretch-limited-child",100},
+        {"auto-stretch-height",100},{"auto-stretch-item",100},{"auto-stretch-child",50},
+        {"nonstretch-item",20},{"nonstretch-child",20},{"grid-stretch-item",200},{"grid-stretch-child",200},
+        {"column-item-a",100},{"column-child-a",100},{"column-item-b",100},{"column-child-b",100}})
         equal(rect(item.first).h,item.second,"Percentage and constrained heights");
+    if(engine.document()->get_element_by_id("auto-stretch-item")->layout.box_children.size()!=1)
+        throw std::runtime_error("Flex relayout duplicated child boxes");
     equal(rect("font-stack").w,rect("font-mono").w,"Font family fallback list");
     equal(rect("percent-auto").y,rect("height-auto").y,"Indefinite percentage relative offset");
     equal(rect("font-shorthand").w,rect("font-mono").w,"Font shorthand fallback list");

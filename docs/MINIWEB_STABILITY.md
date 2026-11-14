@@ -9,7 +9,7 @@ general development tools.
 | Path | Defect | Regression evidence |
 | --- | --- | --- |
 | Block flow | Adjoining positive/negative sibling margins were added; empty blocks and whitespace broke margin groups | Positive, mixed and negative margins; empty block; inline text separating groups |
-| Height resolution | Auto blocks lent an ancestor's definite height to percentage descendants; zero and indefinite were conflated | Nested auto, definite and zero-height parents; percentage relative offsets |
+| Height resolution | Auto blocks lent an ancestor's definite height to percentage descendants; zero and indefinite were conflated | Nested auto, definite and zero-height parents; percentage relative offsets; stretched/unstretched flex items and constrained stretch |
 | Height constraints | Border-box min/max heights added padding/borders twice; max could override min; percentages used the child's own height | Border/content-box bounds, contradictory bounds, percentage max against parent content height |
 | Row Flexbox | One-pass allocation left gaps or overflow after min/max clamping | Max-constrained growth, min-constrained shrink, fractional grow factor, fixed padded flex basis, constrained wrapping |
 | Absolute layout | Direct positioned parent's padding box was confused with its content box; auto-height parent was measured before later flow children | Padded containing block geometry and clipped positioned child; existing absolute/translated hit tests |
@@ -31,6 +31,10 @@ CSS. Regression cases exercise cache pressure, long uncached lists and size chan
 - `miniweb/test/foundations.html`: Chromium/native x/y/width/height comparisons at
   640px and 390px, with a 0.1px rounding tolerance; font fallback widths agree
   within each renderer rather than assuming identical default fonts across OSes.
+  Stretched flex items supply their constrained used height to percentage
+  descendants; intrinsic cross sizes trigger a content relayout. Ordinary auto
+  blocks and non-stretched flex items retain an indefinite height basis. Grid
+  stretch and definite column-flex allocation likewise reflow their descendants.
 - `miniweb/test/clipping.html`: actual painting and click behavior at border,
   visible content and outside coordinates; native link rectangles must stay
   inside the clipping padding box.
@@ -64,7 +68,8 @@ the shipped executable still needs no Node.js or Chromium runtime.
    containing-block selection and stacking contexts need their own acceptance
    cases; direct padded positioned parents are the repaired path.
 3. Row Flexbox still lacks a complete automatic minimum-content algorithm.
-   Column flexing, reverse axes, auto margins, baseline and align-content need
+   Column flex-basis/constraint distribution, reverse axes, auto margins,
+   baseline and align-content need
    further work. The row freeze loop does not establish those capabilities.
 4. Grid intrinsic sizing and complex placement, nested scrolling, fixed/sticky,
    advanced tables, pseudo-elements, Canvas/WebGL and modern framework APIs
