@@ -16,6 +16,9 @@ void check_positioning(const std::filesystem::path& directory){
     eq(node("fill")->absolute_rect().w,184,"Opposing horizontal insets");
     eq(node("fill")->absolute_rect().h,94,"Opposing vertical insets");
     eq(node("center")->absolute_rect().x,102,"Absolute automatic margins");
+    eq(node("span-child")->absolute_rect().x,244,"Blockified span establishes containing block");
+    eq(node("span-child")->absolute_rect().y,204,"Nested span uses containing-block top");
+    if(node("span-parent")->style.display!=Display::Block)throw std::runtime_error("Positioned inline display did not blockify");
     if(node("pin")->parent!=node("inner")||node("pin")->layout.parent!=node("cb"))
         throw std::runtime_error("DOM and layout ancestry are not separated");
     const auto& pixels=engine.canvas()->pixels();
@@ -29,5 +32,14 @@ void check_positioning(const std::filesystem::path& directory){
     for(float expected:{620.f,222.f}){
         if(!engine.click(10,10)||!engine.render(false))throw std::runtime_error("Transform toggle failed");
         eq(node("zero-pin")->absolute_rect().x,expected,"Transform mutation updates containing block");
+    }
+    if(!engine.load((directory/"flex-paint.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
+    const auto& paint=engine.canvas()->pixels();const auto sample=(20*640+75)*4;
+    if(paint[sample]!=255||paint[sample+1]!=0||paint[sample+2]!=0)throw std::runtime_error("Flex order did not control painting");
+    int y=20;
+    for(const char* expected:{"relative-a","transformed-a","translucent-a"}){
+        if(!engine.click(75,float(y))||engine.document()->body->attr("data-measure")!=expected)
+            throw std::runtime_error("Flex order did not control hit testing");
+        y+=80;
     }
 }

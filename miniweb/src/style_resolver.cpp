@@ -1368,6 +1368,11 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
 
         for (auto& side : st.border) if (side.current_color) side.color = st.color;
         if (node->has_attr("hidden")) st.display = Display::None;
+        // Positioned boxes and flex/grid items blockify inline outer display.
+        // Normalize before descendants resolve styles/containing blocks.
+        const bool blockified=st.position==Position::Absolute||st.position==Position::Fixed||
+            (parent_style&&(parent_style->display==Display::Flex||parent_style->display==Display::Grid));
+        if(blockified&&(st.display==Display::Inline||st.display==Display::InlineBlock))st.display=Display::Block;
         st.display_none = st.display == Display::None;
 
         node->style = st;

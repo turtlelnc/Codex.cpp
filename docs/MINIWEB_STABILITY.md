@@ -55,6 +55,9 @@ CSS. Regression cases exercise cache pressure, long uncached lists and size chan
   transform toggles, viewport fallback and nested positioning. Native pixel and
   click assertions cover an absolute child escaping a static clipping ancestor,
   preserved opacity and unchanged DOM event bubbling.
+  Absolutely positioned spans are blockified before containing-block selection.
+  `miniweb/test/flex-paint.html` checks order-modified painting and hit targets for
+  overlapping positioned, transformed and translucent flex items.
 - `miniweb/test/margins.html`: ordinary blocks, nested mixed margins, empty blocks,
   border/padding/overflow boundaries, definite heights and minimum heights.
   A fixed-seed browser suite also compares 35 small nested combinations.
