@@ -60,6 +60,13 @@ Counts are encounter counts from rendering (including replayed clicks), not prec
 
 ## Compatibility limitations
 
+The [stability baseline](MINIWEB_STABILITY.md) records the repaired foundational
+paths, repeatable comparisons and known gaps. Current reports also flag likely
+parent/child margin-collapse, absolute containing blocks through static
+ancestors, and flex automatic-minimum-size mismatches. Sibling margins, normal
+flow percentage heights and bounded row flexing have dedicated regressions;
+this does not imply the full CSS algorithms are implemented.
+
 For new pages explicitly targeting this renderer, see the bounded
 [design profile and actual-page assessment](MINIWEB_DESIGN_PROFILE.md).
 

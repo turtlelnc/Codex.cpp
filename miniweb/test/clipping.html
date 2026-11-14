@@ -1,0 +1,8 @@
+<!doctype html><html><head><style>
+html,body{margin:0}#clip{position:relative;margin:20px;width:100px;height:60px;padding:10px;border:10px solid black;box-sizing:border-box;overflow:hidden}
+#child{position:absolute;left:0;top:0;width:140px;height:100px;background:#008866;display:block}
+#auto-parent{position:relative;margin:20px;width:100px;padding:10px;border:10px solid black;box-sizing:border-box}
+#flow{height:40px}#bottom{position:absolute;left:0;bottom:0;width:20px;height:10px;background:#008866}
+</style></head><body data-clicks="0"><div id="clip"><a id="child" href="local.html"></a></div><script>
+document.getElementById('child').addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-clicks',String(Number(document.body.getAttribute('data-clicks'))+1));});
+</script><div id="auto-parent"><div id="bottom"></div><div id="flow"></div></div></body></html>

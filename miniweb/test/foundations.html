@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}html,body{margin:0;font:16px/20px monospace}
+.case{width:300px;padding:10px;border:1px solid #222;margin-bottom:12px}
+.block{height:20px;background:#086}
+#positive-a{margin-bottom:20px}#positive-b{margin-top:30px}
+#mixed-a{margin-bottom:20px}#mixed-b{margin-top:-8px}
+#negative-a{margin-bottom:-8px}#negative-b{margin-top:-12px}
+#empty-a{margin-bottom:10px}#empty{margin-top:30px;margin-bottom:20px}#empty-b{margin-top:5px}
+#inline-a{margin-bottom:20px}#inline-b{margin-top:30px}
+.flex{display:flex;width:200px;padding:0;border:0}.item{flex:1 1 100px;height:20px;min-width:0}
+#grow-a{max-width:60px}#shrink-a{min-width:120px}
+#partial{width:300px}#partial-a{max-width:50px}#partial-b{flex-grow:.25}
+#basis{width:250px}#basis-a,#basis-b{flex:0 0 100px;padding:10px;border:2px solid black;height:30px}
+#wrapping{width:140px;flex-wrap:wrap}#wrap-a,#wrap-b{max-width:60px}
+#height-ancestor{height:200px}#height-content{height:20px}#percent-auto{height:50%;position:relative;top:50%}
+#height-bound-parent{height:200px}#percent-bound{height:200px;max-height:50%}
+#height-fixed{height:100px}#percent-fixed{height:50%}
+#height-zero{height:0}#percent-zero{height:50%}
+.height-box{padding:10px;border:2px solid black;width:100px}
+#min-height{min-height:100px}#max-height{height:200px;max-height:80px}#height-conflict{min-height:100px;max-height:80px}
+#height-content-box{box-sizing:content-box;min-height:100px}
+#clip{height:60px;width:100px;padding:10px;border:10px solid black;overflow:hidden;position:relative;margin-bottom:20px}
+#clip-child{position:absolute;left:0;top:0;width:140px;height:100px;background:#086}
+#font-stack,#font-mono,#font-shorthand{display:inline-block}
+#font-stack{font-family:"Not Installed Probe", monospace}#font-mono{font-family:monospace}
+#font-shorthand{font:16px/20px "Not Installed Probe", monospace}
+</style></head><body>
+<section class="case"><div class="block" id="positive-a"></div><div class="block" id="positive-b"></div></section>
+<section class="case"><div class="block" id="mixed-a"></div><div class="block" id="mixed-b"></div></section>
+<section class="case"><div class="block" id="negative-a"></div><div class="block" id="negative-b"></div></section>
+<section class="case"><div class="block" id="empty-a"></div><div id="empty"></div><div class="block" id="empty-b"></div></section>
+<section class="case"><div class="block" id="inline-a"></div>Text between blocks<div class="block" id="inline-b"></div></section>
+<section class="case flex"><div class="item" id="grow-a"></div><div class="item" id="grow-b"></div></section>
+<section class="case flex"><div class="item" id="shrink-a"></div><div class="item" id="shrink-b"></div></section>
+<section class="case flex" id="partial"><div class="item" id="partial-a"></div><div class="item" id="partial-b"></div></section>
+<section class="case flex" id="basis"><div class="item" id="basis-a"></div><div class="item" id="basis-b"></div></section>
+<section class="case flex" id="wrapping"><div class="item" id="wrap-a"></div><div class="item" id="wrap-b"></div></section>
+<section class="case" id="height-ancestor"><div id="height-auto"><div id="percent-auto"><div id="height-content"></div></div></div></section>
+<section class="case" id="height-fixed"><div id="percent-fixed"></div></section>
+<section class="case" id="height-zero"><div id="percent-zero"></div></section>
+<section class="case" id="height-bound-parent"><div id="percent-bound"></div></section>
+<div class="height-box" id="min-height"></div><div class="height-box" id="max-height"></div><div class="height-box" id="height-conflict"></div><div class="height-box" id="height-content-box"></div>
+<div id="clip"><div id="clip-child"></div></div>
+<div id="font-stack">iiiiWWWW 012345</div><div id="font-mono">iiiiWWWW 012345</div><div id="font-shorthand">iiiiWWWW 012345</div>
+</body></html>

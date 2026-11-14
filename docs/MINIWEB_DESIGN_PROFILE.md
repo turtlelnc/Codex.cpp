@@ -14,7 +14,9 @@ It retains readable typography, color hierarchy and a clear next action without
 requiring browser features outside the basic subset.
 
 At 1280px and 390px, native and Chromium checks compare horizontal geometry
-for the page, header, title, Grid panels and table. Native and browser tests
+for the page, header, title, Grid panels, button, table, notice and footer.
+When the shared Linux Arial substitute is installed, comparisons also include
+vertical positions and heights (0.1px tolerance). Native and browser tests
 both exercise repeated checklist expansion/collapse. Separate cases compare
 content-box/border-box min/max sizing, including contradictory constraints.
 
@@ -22,10 +24,12 @@ This assessment exposed a real bug: padding and borders were added outside a
 border-box `max-width`, making a 960px container 1008px wide. The accompanying
 layout fix and regression cases address it.
 
-The comparison does **not** establish pixel equivalence. System font fallback
-differs, affecting glyph widths, wrapping and row heights; adjacent block
-margins do not always collapse like Chromium. In the initial 390px comparison
-the report was about 101px taller in MiniWeb. Even basic content needs inspection.
+The comparison does **not** establish pixel equivalence. In the initial 390px
+comparison the report was about 101px taller in MiniWeb. Subsequent fixes to
+sibling margin collapse, font fallback lists and installed family matching
+bring the measured boxes into agreement on the shared-font test environment.
+Other fonts and unsupported parent/child margin collapse can still change
+wrapping and vertical geometry. Even basic content needs inspection.
 The capability report flagged `cursor:pointer`, which has no screenshot impact,
 but did not detect these geometry differences. Absence of structural warnings
 is therefore insufficient for acceptance.

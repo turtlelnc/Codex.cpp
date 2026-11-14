@@ -7,6 +7,7 @@ void check_text_visibility(const std::filesystem::path& directory);
 void check_tables(const std::filesystem::path& directory);
 void check_dynamic_tables(const std::filesystem::path& directory);
 void check_diagnostics(const std::filesystem::path& directory);
+void check_foundations(const std::filesystem::path& directory);
 int table_geometry(const std::filesystem::path& path,int width);
 int geometry_probe(const std::filesystem::path& path,int width,const std::string& ids_csv,const std::string& clicks);
 void check_font_border(const std::filesystem::path& directory);
@@ -40,5 +41,6 @@ int main(int argc,char** argv){try{
  check_tables(page.parent_path());
  check_dynamic_tables(page.parent_path());
  check_diagnostics(page.parent_path());
+ check_foundations(page.parent_path());
  return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
