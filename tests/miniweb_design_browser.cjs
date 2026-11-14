@@ -82,4 +82,15 @@ module.exports = async function(page, probe) {
     await page.mouse.click(x,y);
     assert.equal(await page.locator('body').getAttribute('data-clicks'),expected);
   }
+  // Each fixture has 26 levels. The eager recursive second pass previously
+  // exceeded the worker's 25s budget; the probe must finish within 10s here.
+  const nested=path.resolve('miniweb/test/nested-layout.html');
+  const idsNested=['grid-fixed','grid-fixed-leaf','grid-percent','percent-leaf','mixed','mixed-leaf','mixed-percent','mixed-percent-leaf'];
+  const nestedProbe=spawnSync(probe,['--geometry',nested,'640',idsNested.join(',')],{encoding:'utf8',timeout:10000});
+  assert(!nestedProbe.error,String(nestedProbe.error));assert.equal(nestedProbe.status,0,nestedProbe.stderr);
+  await page.setContent(fs.readFileSync(nested,'utf8'));
+  const nativeNested=JSON.parse(nestedProbe.stdout);
+  for(const id of idsNested){const r=await page.locator('#'+id).boundingBox();
+    for(const [axis,key] of ['x','y','width','height'].entries())assert(Math.abs(nativeNested[id][axis]-r[key])<.1,`${id}: deep nested geometry differs`);
+  }
 };

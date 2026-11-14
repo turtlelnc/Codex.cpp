@@ -65,4 +65,10 @@ void check_foundations(const std::filesystem::path& directory){
     if(!engine.load((directory/"foundation-limits.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
     for(const char* feature:{"parent-child margin collapse","absolute containing block through static ancestors","flex automatic minimum size"})
         if(!diag::has(diag::Kind::Approximate,feature))throw std::runtime_error(std::string("Known limitation not reported: ")+feature);
+
+    if(!engine.load((directory/"nested-layout.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
+    for(const char* id:{"grid-fixed","grid-fixed-leaf","grid-percent","mixed","mixed-leaf","mixed-percent"})
+        equal(rect(id).h,20,"Deep nested layout retains intrinsic height");
+    equal(rect("percent-leaf").h,10,"Deep nested percentages still finalize");
+    equal(rect("mixed-percent-leaf").h,10,"Mixed nested percentages still finalize");
 }

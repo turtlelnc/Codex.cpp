@@ -46,6 +46,18 @@ CSS. Regression cases exercise cache pressure, long uncached lists and size chan
   event, sandbox and Agent image round-trip regressions remain enabled.
 - `miniweb/test/foundation-limits.html`: known unsupported paths must produce
   explicit approximate entries rather than a clean capability report.
+- `miniweb/test/nested-layout.html`: 26-level pure Grid and mixed Flex/Grid
+  trees, with fixed and percentage-height leaves. The Chromium probe has a
+  10-second timeout, below the preview worker's 25-second wall-time budget.
+
+Stretch finalization is separate from intrinsic measurement. Unchanged items
+without height-dependent percentages keep their measured subtree. Items that
+need a new height basis record a request; a single top-down walk finalizes each
+item once, restoring its parent-relative position. Nested containers record
+later work instead of recursively launching another full finalization pass.
+This avoids exponential work while preserving percentage descendants. The
+remaining worst case can still revisit descendants through ancestor layouts;
+this is not a claim of linear complexity for every layout.
 
 Commands (after the ordinary CMake configuration):
 
