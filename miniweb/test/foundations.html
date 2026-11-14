@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}html,body{margin:0;font:16px/20px monospace}
+.case{width:300px;padding:10px;border:1px solid #222;margin-bottom:12px}
+.block{height:20px;background:#086}
+#positive-a{margin-bottom:20px}#positive-b{margin-top:30px}
+#mixed-a{margin-bottom:20px}#mixed-b{margin-top:-8px}
+#negative-a{margin-bottom:-8px}#negative-b{margin-top:-12px}
+#empty-a{margin-bottom:10px}#empty{margin-top:30px;margin-bottom:20px}#empty-b{margin-top:5px}
+#inline-a{margin-bottom:20px}#inline-b{margin-top:30px}
+.flex{display:flex;width:200px;padding:0;border:0}.item{flex:1 1 100px;height:20px;min-width:0}
+#grow-a{max-width:60px}#shrink-a{min-width:120px}
+#partial{width:300px}#partial-a{max-width:50px}#partial-b{flex-grow:.25}
+#basis{width:250px}#basis-a,#basis-b{flex:0 0 100px;padding:10px;border:2px solid black;height:30px}
+#wrapping{width:140px;flex-wrap:wrap}#wrap-a,#wrap-b{max-width:60px}
+.stretch{display:flex;width:200px;height:200px;padding:0;border:0}.stretch-item{flex:1;min-width:0}
+.stretch-child{height:100%;background:#086}#stretch-limited{max-height:100px}
+#auto-stretch-height{height:auto}#auto-stretch-child{height:50%}#tall-peer{height:100px}
+#not-stretched{align-items:flex-start}
+.grid-stretch{display:grid;width:200px;height:200px;grid-template-columns:1fr;grid-template-rows:200px;padding:0;border:0}
+.column-stretch{display:flex;flex-direction:column;width:200px;height:200px;padding:0;border:0}
+.column-item{flex:1;min-height:0}
+#height-ancestor{height:200px}#height-content{height:20px}#percent-auto{height:50%;position:relative;top:50%}
+#height-bound-parent{height:200px}#percent-bound{height:200px;max-height:50%}
+#height-fixed{height:100px}#percent-fixed{height:50%}
+#height-zero{height:0}#percent-zero{height:50%}
+.height-box{padding:10px;border:2px solid black;width:100px}
+#min-height{min-height:100px}#max-height{height:200px;max-height:80px}#height-conflict{min-height:100px;max-height:80px}
+#height-content-box{box-sizing:content-box;min-height:100px}
+#clip{height:60px;width:100px;padding:10px;border:10px solid black;overflow:hidden;position:relative;margin-bottom:20px}
+#clip-child{position:absolute;left:0;top:0;width:140px;height:100px;background:#086}
+#font-stack,#font-mono,#font-shorthand{display:inline-block}
+#font-stack{font-family:"Not Installed Probe", monospace}#font-mono{font-family:monospace}
+#font-shorthand{font:16px/20px "Not Installed Probe", monospace}
+</style></head><body>
+<section class="case"><div class="block" id="positive-a"></div><div class="block" id="positive-b"></div></section>
+<section class="case"><div class="block" id="mixed-a"></div><div class="block" id="mixed-b"></div></section>
+<section class="case"><div class="block" id="negative-a"></div><div class="block" id="negative-b"></div></section>
+<section class="case"><div class="block" id="empty-a"></div><div id="empty"></div><div class="block" id="empty-b"></div></section>
+<section class="case"><div class="block" id="inline-a"></div>Text between blocks<div class="block" id="inline-b"></div></section>
+<section class="case flex"><div class="item" id="grow-a"></div><div class="item" id="grow-b"></div></section>
+<section class="case flex"><div class="item" id="shrink-a"></div><div class="item" id="shrink-b"></div></section>
+<section class="case flex" id="partial"><div class="item" id="partial-a"></div><div class="item" id="partial-b"></div></section>
+<section class="case flex" id="basis"><div class="item" id="basis-a"></div><div class="item" id="basis-b"></div></section>
+<section class="case flex" id="wrapping"><div class="item" id="wrap-a"></div><div class="item" id="wrap-b"></div></section>
+<section class="case stretch"><div class="stretch-item" id="stretch-item"><div class="stretch-child" id="stretch-child">Fill</div></div></section>
+<section class="case stretch"><div class="stretch-item" id="stretch-limited"><div class="stretch-child" id="stretch-limited-child">Fill</div></div></section>
+<section class="case stretch" id="auto-stretch-height"><div class="stretch-item" id="auto-stretch-item"><div class="stretch-child" id="auto-stretch-child">Fill</div></div><div class="stretch-item" id="tall-peer"></div></section>
+<section class="case stretch" id="not-stretched"><div class="stretch-item" id="nonstretch-item"><div class="stretch-child" id="nonstretch-child">Fill</div></div></section>
+<section class="case grid-stretch"><div id="grid-stretch-item"><div class="stretch-child" id="grid-stretch-child">Fill</div></div></section>
+<section class="case column-stretch"><div class="column-item" id="column-item-a"><div class="stretch-child" id="column-child-a">Fill</div></div><div class="column-item" id="column-item-b"><div class="stretch-child" id="column-child-b">Fill</div></div></section>
+<section class="case" id="height-ancestor"><div id="height-auto"><div id="percent-auto"><div id="height-content"></div></div></div></section>
+<section class="case" id="height-fixed"><div id="percent-fixed"></div></section>
+<section class="case" id="height-zero"><div id="percent-zero"></div></section>
+<section class="case" id="height-bound-parent"><div id="percent-bound"></div></section>
+<div class="height-box" id="min-height"></div><div class="height-box" id="max-height"></div><div class="height-box" id="height-conflict"></div><div class="height-box" id="height-content-box"></div>
+<div id="clip"><div id="clip-child"></div></div>
+<div id="font-stack">iiiiWWWW 012345</div><div id="font-mono">iiiiWWWW 012345</div><div id="font-shorthand">iiiiWWWW 012345</div>
+</body></html>

@@ -761,9 +761,7 @@ void apply_font_shorthand(ComputedStyle& st, const std::string& value, const Com
         if (!fam.empty()) fam += " ";
         fam += toks[i];
     }
-    size_t comma = fam.find(',');
-    if (comma != std::string::npos) fam = fam.substr(0, comma);
-    st.font_family = util::to_lower(strip_quotes(util::trim(fam)));
+    st.font_family = util::trim(fam);
 }
 
 static void report_display_value(const std::string& value) {
@@ -913,9 +911,9 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
             }
         }
     } else if (p == "font-family") {
-        size_t comma = v.find(',');
-        std::string fam = comma == std::string::npos ? v : v.substr(0, comma);
-        fam = util::to_lower(strip_quotes(util::trim(fam)));
+        // Keep the ordered fallback list. Discarding everything after the first
+        // comma made an unavailable custom family override even monospace.
+        std::string fam = util::trim(v);
         if (!fam.empty()) st.font_family = fam;
     } else if (p == "font-weight") {
         if (vl == "normal") st.font_weight = 400;

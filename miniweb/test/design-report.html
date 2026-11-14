@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Codex.cpp release review</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f2;color:#202d28;font-family:Arial,sans-serif;font-size:16px;line-height:1.5}
+main{max-width:960px;margin:0 auto;padding:32px 24px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cdd5ce;padding-bottom:20px}
+.brand{font-size:18px;font-weight:bold}.meta{font-size:14px;color:#526259}h1{font-size:36px;line-height:1.2;margin:28px 0 12px}h2{font-size:22px;line-height:1.3;margin:0 0 12px}p{margin:0 0 16px}.intro{max-width:620px;color:#526259}
+.overview{display:grid;grid-template-columns:2fr 1fr;gap:24px;margin:28px 0}.progress{padding:22px;background:#e2ece5;border-left:4px solid #1c6b5a}.progress strong{font-size:24px}.track{height:8px;background:#c4d5ca;margin:16px 0}.fill{height:8px;width:75%;background:#1c6b5a}
+.next{padding:22px;background:#fff}.next p{font-size:15px}button{font:inherit;font-size:15px;background:#1c6b5a;color:#fff;border:1px solid #1c6b5a;padding:8px 14px;border-radius:4px;cursor:pointer}button:focus{outline:2px solid #202d28;outline-offset:3px}
+table{width:100%;border-spacing:0;table-layout:fixed;background:#fff}th,td{text-align:left;padding:12px;border-bottom:1px solid #dce2dc;font-size:15px;vertical-align:top}th{background:#e8ede7;font-weight:bold}.status{color:#1c6b5a}.pending{color:#85551f}#note{margin:16px 0;padding:14px;background:#f0e7d8;color:#624a24}#details{display:none;padding:14px;background:#fff}footer{font-size:14px;color:#526259;margin-top:24px;border-top:1px solid #cdd5ce;padding-top:16px}
+@media(max-width:600px){main{padding:20px 16px}header{display:block}h1{font-size:28px}.overview{grid-template-columns:1fr;gap:16px}th,td{padding:8px;font-size:14px}}
+</style></head>
+<body><main id="main">
+<header id="header"><div class="brand">Codex.cpp</div><div class="meta">Release review · Sample project</div></header>
+<h1 id="title">One check before shipping.</h1><p class="intro">The desktop builds are ready. Review the remaining browser check before approving this release.</p>
+<section class="overview" id="overview">
+<div class="progress" id="progress"><h2>Verification</h2><strong>3 of 4 checks passed</strong><div class="track"><div class="fill" id="fill"></div></div><p>Builds complete. Browser review pending.</p></div>
+<div class="next" id="next"><h2>Next action</h2><p>Confirm that the settings panel remains usable on a narrow screen.</p><button id="review" aria-expanded="false" aria-controls="details">Review checklist</button></div>
+</section>
+<h2>Platform checks</h2><table id="checks"><thead><tr><th>Target</th><th>Check</th><th>Result</th></tr></thead><tbody>
+<tr><td>Linux</td><td>Native runtime</td><td class="status">Passed</td></tr>
+<tr><td>macOS</td><td>Apple Silicon build</td><td class="status">Passed</td></tr>
+<tr><td>Windows</td><td>x64 build</td><td class="status">Passed</td></tr>
+<tr><td>WebUI</td><td>Narrow screen review</td><td class="pending">Needs review</td></tr>
+</tbody></table>
+<div id="note">Approval remains manual. Successful builds do not establish browser compatibility.</div>
+<div id="details"><h2>Browser checklist</h2><p>Open settings at 390px width. Check navigation, keyboard focus, and unsaved-file protection.</p></div>
+<footer id="footer">Release notes are ready. Finish the browser check before publishing.</footer>
+</main><script>
+document.getElementById('review').addEventListener('click',function(){
+  var open=this.getAttribute('aria-expanded')!=='true';
+  this.setAttribute('aria-expanded',open?'true':'false');
+  document.getElementById('details').style.display=open?'block':'none';
+  this.textContent=open?'Hide checklist':'Review checklist';
+});
+</script></body></html>

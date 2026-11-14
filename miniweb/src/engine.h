@@ -57,6 +57,6 @@ private:
     void do_layout();
     void ensure_layout();
     uint64_t layout_revision_ = 0;
-    void collect_links(Node* n, float ox, float oy);
+    void collect_links(Node* n, float ox, float oy, const RectF* clip = nullptr);
     Node* hit_test(Node* n, float ox, float oy, float px, float py);
 };

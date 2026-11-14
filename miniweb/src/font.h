@@ -36,6 +36,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<FontFace>> faces_;
+    // A page can invent arbitrarily many family lists; insertion is bounded.
+    std::unordered_map<std::string,int> primary_cache_;
     // Outer key: face and exact float size; inner key: Unicode codepoint.
     std::unordered_map<uint64_t, std::unordered_map<uint32_t, GlyphBitmap>> glyphs_;
     int default_regular_ = -1, default_bold_ = -1, default_italic_ = -1, default_bold_italic_ = -1;
@@ -45,6 +47,7 @@ private:
 
     int add_face(const std::string& path, bool bold, bool italic, bool mono, bool cjk, bool serif);
     int primary_face(const ComputedStyle& style, bool for_cjk = false);
+    int select_primary_face(const ComputedStyle& style, bool for_cjk);
     int face_for(uint32_t cp, const ComputedStyle& style);
     void pick_defaults();
 };

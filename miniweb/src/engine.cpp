@@ -153,7 +153,10 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None) return nullptr;
     const LayoutInfo& L = n->layout;
     RectF box=visual_box(n,ox,oy);
-    if(n->style.overflow==Overflow::Hidden&&!box.contains(px,py))return nullptr;
+    // A clipped descendant cannot paint or receive clicks over the border.
+    // The border itself still belongs to this element.
+    if(n->style.overflow==Overflow::Hidden&&!padding_box(n,box).contains(px,py))
+        return n->style.visibility==Visibility::Visible&&box.contains(px,py)?n:nullptr;
     float cx = box.x + L.content_x;
     float cy = box.y + L.content_y;
     const auto ordered=paint_order(n);
@@ -175,13 +178,15 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     return nullptr;
 }
 
-void Engine::collect_links(Node* n, float ox, float oy) {
+void Engine::collect_links(Node* n, float ox, float oy, const RectF* clip) {
     if (!n || !n->is_element() || !n->layout.has_box) return;
     const LayoutInfo& L = n->layout;
     RectF box=visual_box(n,ox,oy);
     float cx = box.x + L.content_x;
     float cy = box.y + L.content_y;
-    auto add_link = [&](const RectF& r, Node* a) {
+    auto add_link = [&](RectF r, Node* a) {
+        if(clip){const float right=std::min(r.right(),clip->right()),bottom=std::min(r.bottom(),clip->bottom());
+            r.x=std::max(r.x,clip->x);r.y=std::max(r.y,clip->y);r.w=right-r.x;r.h=bottom-r.y;}
         if (!a || !a->has_attr("href") || r.w <= 0 || r.h <= 0) return;
         std::string raw = a->attr("href");
         if (raw.empty() || raw[0] == '#') return;
@@ -194,15 +199,23 @@ void Engine::collect_links(Node* n, float ox, float oy) {
         hit.href = doc_->resolve(raw);
         links_.push_back(std::move(hit));
     };
-    if (n->is_element("a") && n->has_attr("href")) {
+    if (n->style.visibility==Visibility::Visible&&n->is_element("a") && n->has_attr("href")) {
         add_link(box, n);
+    }
+    RectF child_clip;
+    if(n->style.overflow==Overflow::Hidden){
+        child_clip=padding_box(n,box);
+        if(clip){const float right=std::min(child_clip.right(),clip->right()),bottom=std::min(child_clip.bottom(),clip->bottom());
+            child_clip.x=std::max(child_clip.x,clip->x);child_clip.y=std::max(child_clip.y,clip->y);
+            child_clip.w=std::max(0.0f,right-child_clip.x);child_clip.h=std::max(0.0f,bottom-child_clip.y);}
+        clip=&child_clip;
     }
     for (auto& line : L.lines) {
         for (auto& item : line.items) {
-            if (item.link && item.w > 0 && item.h > 0) {
+            if (item.style&&item.style->visibility==Visibility::Visible&&item.link && item.w > 0 && item.h > 0) {
                 add_link(RectF{cx + item.x, cy + item.y, item.w, item.h}, item.link);
             }
         }
     }
-    for (auto* child : L.box_children) collect_links(child, cx, cy);
+    for (auto* child : L.box_children) collect_links(child, cx, cy,clip);
 }

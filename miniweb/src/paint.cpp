@@ -142,7 +142,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
     }
 
     bool clip = n->style.overflow == Overflow::Hidden;
-    if (clip) canvas.push_clip(box);
+    if (clip) canvas.push_clip(padding_box(n,box));
 
     float cx = box.x + L.content_x;
     float cy = box.y + L.content_y;

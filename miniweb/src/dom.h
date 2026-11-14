@@ -115,6 +115,12 @@ std::string serialize_html(const Node* node, bool outer = true);
 inline RectF visual_box(const Node* n,float ox,float oy){
     const auto& l=n->layout;return {ox+l.border.x+resolve_length(n->style.translate_x,l.border.w,n->style.font_size),oy+l.border.y+resolve_length(n->style.translate_y,l.border.h,n->style.font_size),l.border.w,l.border.h};
 }
+inline RectF padding_box(const Node* n,const RectF& border){
+    const auto& l=n->layout;
+    return {border.x+l.border_left,border.y+l.border_top,
+            std::max(0.0f,border.w-l.border_left-l.border_right),
+            std::max(0.0f,border.h-l.border_top-l.border_bottom)};
+}
 inline std::vector<Node*> paint_order(const Node* n){auto children=n->layout.box_children;
     auto z=[&](const Node* c){return c->style.position!=Position::Static||n->style.display==Display::Flex||n->style.display==Display::Grid?c->style.z_index:0;};
     std::stable_sort(children.begin(),children.end(),[&](const Node* a,const Node* b){return z(a)<z(b);});return children;

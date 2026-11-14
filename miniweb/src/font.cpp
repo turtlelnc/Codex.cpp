@@ -34,9 +34,9 @@ std::string normalize_family(const std::string& s) {
 }
 
 std::string face_family_from_path(const std::string& path) {
-    std::string name = std::filesystem::path(path).stem().string();
-    std::string low = util::to_lower(name);
-    static const char* suffixes[] = {" regular", " bold italic", " bold", " italic", " oblique", " medium",
+    std::string name = normalize_family(std::filesystem::path(path).stem().string());
+    std::string low = name;
+    static const char* suffixes[] = {" regular", " bold italic", " bold oblique", " bold", " italic", " oblique", " medium",
                                      " light", " semibold", " black", " narrow", " condensed", " mt", " ms"};
     for (auto* s : suffixes) {
         size_t p = low.rfind(s);
@@ -46,10 +46,6 @@ std::string face_family_from_path(const std::string& path) {
         }
     }
     return normalize_family(name);
-}
-
-bool family_in(const std::string& family, const char* needle) {
-    return family.find(needle) != std::string::npos;
 }
 
 uint32_t normalize_cp(uint32_t cp) {
@@ -80,6 +76,19 @@ int FontManager::add_face(const std::string& path, bool bold, bool italic, bool 
         return -1;
     }
     face->family = face_family_from_path(path);
+    // Prefer the font's family record over OS-specific filenames (arialbd,
+    // timesbd, DejaVuSans-Bold). English UTF-16 records cover the bundled system
+    // choices; otherwise retain the bounded filename fallback.
+    int family_bytes=0;
+    const char* family_name=stbtt_GetFontNameString(&face->info,&family_bytes,3,1,0x409,1);
+    if(family_name&&family_bytes>0&&family_bytes<=512&&family_bytes%2==0){
+        std::string family;bool ascii=true;
+        for(int i=0;i<family_bytes;i+=2){
+            if(family_name[i]!=0||static_cast<unsigned char>(family_name[i+1])>=128){ascii=false;break;}
+            family+=family_name[i+1];
+        }
+        if(ascii&&!family.empty())face->family=normalize_family(family);
+    }
     face->bold = bold;
     face->italic = italic;
     face->mono = mono;
@@ -94,6 +103,7 @@ int FontManager::add_face(const std::string& path, bool bold, bool italic, bool 
 }
 
 bool FontManager::init(const std::vector<std::string>& extra_fonts) {
+    primary_cache_.clear();
     auto add = [&](const std::string& path, bool bold, bool italic, bool mono, bool cjk, bool serif) {
         if (util::file_exists(path)) add_face(path, bold, italic, mono, cjk, serif);
     };
@@ -150,6 +160,11 @@ bool FontManager::init(const std::vector<std::string>& extra_fonts) {
     for (auto* p : regs) add(p, false, false, false, false, false);
     for (auto* p : bolds) add(p, true, false, false, false, false);
     for (auto* p : italics) add(p, false, true, false, false, false);
+    // Debian/Ubuntu installations may keep the same families under liberation2.
+    add("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",false,false,false,false,false);
+    add("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",true,false,false,false,false);
+    add("/usr/share/fonts/truetype/liberation2/LiberationSans-Italic.ttf",false,true,false,false,false);
+    add("/usr/share/fonts/truetype/liberation2/LiberationSans-BoldItalic.ttf",true,true,false,false,false);
     add("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", false, false, true, false, false);
     add("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", true, false, true, false, false);
     add("/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf", false, false, true, false, false);
@@ -215,24 +230,49 @@ void FontManager::pick_defaults() {
 }
 
 int FontManager::primary_face(const ComputedStyle& style, bool for_cjk) {
+    // Selection depends on family/weight/style, not on glyph or pixel size.
+    // Keep family-list parsing and face-name matching out of per-glyph loops.
+    if(style.font_family.size()>1024)return select_primary_face(style,for_cjk);
+    std::string key=style.font_family;
+    key+='\0';key+=char((style.font_weight>=600?1:0)|(style.font_style!=FontStyle::Normal?2:0)|(for_cjk?4:0));
+    const auto found=primary_cache_.find(key);
+    if(found!=primary_cache_.end())return found->second;
+    const int selected=select_primary_face(style,for_cjk);
+    if(primary_cache_.size()<128)primary_cache_.emplace(std::move(key),selected);
+    return selected;
+}
+
+int FontManager::select_primary_face(const ComputedStyle& style, bool for_cjk) {
     if (faces_.empty()) return -1;
     if (for_cjk) {
         if (style.font_weight >= 600) return cjk_bold_ >= 0 ? cjk_bold_ : cjk_regular_;
         return cjk_regular_;
     }
-    std::string fam = normalize_family(style.font_family);
-    bool mono = family_in(fam, "mono") || family_in(fam, "courier") || family_in(fam, "menlo") ||
-                family_in(fam, "consol");
-    bool serif = (family_in(fam, "serif") && !family_in(fam, "sans")) || family_in(fam, "times") ||
-                 family_in(fam, "georgia") || family_in(fam, "song");
     bool bold = style.font_weight >= 600;
     bool italic = style.font_style != FontStyle::Normal;
-    if (!fam.empty() && fam != "sans-serif" && fam != "system-ui" && !mono && !serif) {
+    auto key=[](const std::string& family){auto value=normalize_family(family);value.erase(std::remove(value.begin(),value.end(),' '),value.end());return value;};
+    // Commas inside quoted family names do not separate fallback entries.
+    std::vector<std::string> families;std::string part;char quote=0;
+    for(char c:style.font_family){
+        if(c=='\''||c=='"'){if(!quote)quote=c;else if(quote==c)quote=0;else part+=c;}
+        else if(c==','&&!quote){families.push_back(key(part));part.clear();}
+        else part+=c;
+    }
+    families.push_back(key(part));
+    for(auto fam:families){
+        if(fam=="monospace"||fam=="uimonospace")return bold?mono_bold_:mono_regular_;
+        if(fam=="serif"||fam=="uiserif")return bold?serif_bold_:serif_regular_;
+        if(fam=="sansserif"||fam=="systemui"||fam=="uisansserif")break;
+#ifdef __linux__
+        // Match the common Linux Arial substitute when it is installed; still
+        // fall through to the next requested family if no face is available.
+        if(fam=="arial"||fam=="helvetica")fam="liberationsans";
+#endif
         int best = -1, best_score = -1;
         for (size_t i = 0; i < faces_.size(); i++) {
             auto& f = faces_[i];
             if (f->cjk) continue;
-            if (f->family != fam) continue;
+            if (key(f->family) != fam) continue;
             int score = 0;
             if (f->bold == bold) score += 2;
             if (f->italic == italic) score += 1;
@@ -240,8 +280,6 @@ int FontManager::primary_face(const ComputedStyle& style, bool for_cjk) {
         }
         if (best >= 0) return best;
     }
-    if (mono) return bold && mono_bold_ >= 0 ? mono_bold_ : mono_regular_;
-    if (serif) return bold && serif_bold_ >= 0 ? serif_bold_ : serif_regular_;
     if (bold && italic) return default_bold_italic_;
     if (bold) return default_bold_;
     if (italic) return default_italic_;

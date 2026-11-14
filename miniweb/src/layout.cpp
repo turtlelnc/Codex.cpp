@@ -24,14 +24,19 @@ struct Token {
     bool wrap = true;
 };
 
-std::string table_label(const Node* table) {
-    std::string label = table->tag.empty() ? "table" : table->tag;
-    if (table->has_attr("id")) label += "#" + table->attr("id");
+std::string node_label(const Node* node) {
+    std::string label = node->tag.empty() ? "element" : node->tag;
+    if (node->has_attr("id")) label += "#" + node->attr("id");
     return label;
 }
 
 float resolve_l(const Length& l, float basis, float fs) {
     return resolve_length(l, basis, fs, 16.0f, true);
+}
+
+bool percentage_dependent(const Length& length) {
+    if (length.unit == Length::Percent) return true;
+    return std::any_of(length.arguments.begin(), length.arguments.end(), percentage_dependent);
 }
 
 std::string transform_text(const std::string& in, TextTransform tt) {
@@ -87,6 +92,12 @@ private:
     ImageCache& images;
     float vw = 1280, vh = 800;
     std::unordered_map<Node*, std::vector<Node*>> flex_item_cache;
+    struct Stretch {float width,basis_width,basis_height,height;};
+    std::unordered_map<Node*,Stretch> stretches;
+    std::unordered_map<Node*,bool> height_percentage_cache;
+    bool has_height_percentages(Node* node);
+    void finish_stretches(Node* node);
+    float clamp_height(Node* node,float height,float basis_width,float basis_height);
     const std::vector<Node*>& flex_items(Node* parent);
 
     void resolve_edges(Node* n, float cb_w);
@@ -111,7 +122,7 @@ private:
     void layout_svg(Node* n, float cb_w, float forced_w, float forced_h);
     float intrinsic_outer_width(Node* n, float basis, int depth);
     float intrinsic_content_width(Node* n, float basis, int depth);
-    void place_absolute(Node* parent, Node* child, float content_w, float child_cb_h, float cursor,
+    void place_absolute(Node* parent, Node* child, float content_w, float cursor,
                         float parent_height);
     float pad_h(Node* n, float basis);
     float pad_v(Node* n, float basis);
@@ -183,8 +194,9 @@ float LayoutEngine::flat_relative_x(Node* n, float basis) {
 }
 float LayoutEngine::flat_relative_y(Node* n, float basis) {
     float v = 0;
-    if (!n->style.top.is_auto()) v += resolve_l(n->style.top, basis, n->style.font_size);
-    else if (!n->style.bottom.is_auto()) v -= resolve_l(n->style.bottom, basis, n->style.font_size);
+    const auto& top=n->style.top;const auto& bottom=n->style.bottom;
+    if (!top.is_auto()&&(basis>=0||!percentage_dependent(top))) v += resolve_l(top, std::max(0.0f,basis), n->style.font_size);
+    else if (!bottom.is_auto()&&(basis>=0||!percentage_dependent(bottom))) v -= resolve_l(bottom, std::max(0.0f,basis), n->style.font_size);
     return v;
 }
 
@@ -311,6 +323,7 @@ void LayoutEngine::layout_image(Node* n, float cb_w, float forced_w, float force
 void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w, float forced_h,
                                bool clamp_width, float avail_w) {
     if (!n || !n->is_element()) return;
+    stretches.erase(n); // A fresh layout supersedes any earlier measured request.
     n->layout = LayoutInfo{};
     if (n->style.display == Display::None) {
         n->layout.none = true;
@@ -345,8 +358,13 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
         cw = avail;
     }
     if (clamp_width) {
-        if (!st.min_width.is_auto()) cw = std::max(cw, resolve_length(st.min_width, cb_w, st.font_size, 16, false));
-        if (!st.max_width.is_auto()) cw = std::min(cw, resolve_length(st.max_width, cb_w, st.font_size, 16, false));
+        // Min/max constrain the same sizing box as width, not always content.
+        auto width_bound = [&](const Length& value) {
+            const float resolved = resolve_length(value, cb_w, st.font_size, 16, false);
+            return std::max(0.0f, resolved - (st.box_sizing_border ? ph : 0.0f));
+        };
+        if (!st.max_width.is_auto()) cw = std::min(cw, width_bound(st.max_width));
+        if (!st.min_width.is_auto()) cw = std::max(cw, width_bound(st.min_width));
     }
     cw = std::max(0.0f, cw);
 
@@ -355,23 +373,26 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
         hspec = forced_h;
     } else if (st.aspect_ratio > 0 && st.height.is_auto() && cw > 0) {
         hspec = cw / st.aspect_ratio;
-    } else if (!st.height.is_auto()) {
-        float spec = resolve_length(st.height, cb_h > 0 ? cb_h : 0, st.font_size, 16, false);
+    } else if (!st.height.is_auto() && (cb_h >= 0 || !percentage_dependent(st.height))) {
+        float spec = resolve_length(st.height, std::max(0.0f,cb_h), st.font_size, 16, false);
         hspec = st.box_sizing_border ? spec - pv : spec;
         hspec = std::max(0.0f, hspec);
     }
 
+    // Descendant percentages use the constrained definite size, including a
+    // stretched flex size, rather than the unconstrained requested height.
+    if(hspec>=0)hspec=clamp_height(n,hspec,cb_w,cb_h);
     float used = 0;
-    float child_cb_h = hspec >= 0 ? hspec : (cb_h > 0 ? cb_h : 0);
+    // Indefinite is different from a definite zero. An auto-height block must
+    // not lend its ancestor's height to percentage-height descendants.
+    float child_cb_h = hspec;
     if (st.display == Display::Flex) used = layout_flex(n, cw, hspec);
     else if (st.display == Display::Grid) used = layout_grid(n, cw, hspec);
     else if (st.display == Display::Table) used = layout_table(n, cw, hspec);
     else used = layout_block_content(n, cw, hspec, child_cb_h);
     float ch = hspec >= 0 ? hspec : used;
     if (st.display == Display::Table) ch = std::max(ch, used);
-    if (!st.min_height.is_auto()) ch = std::max(ch, resolve_length(st.min_height, child_cb_h, st.font_size, 16, false));
-    if (!st.max_height.is_auto()) ch = std::min(ch, resolve_length(st.max_height, child_cb_h, st.font_size, 16, false));
-    ch = std::max(0.0f, ch);
+    ch = clamp_height(n,ch,cb_w,cb_h);
 
     n->layout.content_w = cw;
     n->layout.content_h = ch;
@@ -383,25 +404,32 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     apply_auto_margins(n, cb_w);
 }
 
-void LayoutEngine::place_absolute(Node* parent, Node* child, float content_w, float child_cb_h, float cursor,
+void LayoutEngine::place_absolute(Node* parent, Node* child, float content_w, float cursor,
                                   float parent_height) {
+    if(child->style.position==Position::Absolute&&parent->style.position==Position::Static&&parent!=doc.html)
+        diag::approximate("absolute containing block through static ancestors",node_label(parent));
+    // Positioned containing blocks use the padding box. Stored child positions
+    // are relative to the content origin, so explicit insets need that offset.
+    const float padding_x=parent->layout.padding_left+parent->layout.padding_right;
+    const float padding_y=parent->layout.padding_top+parent->layout.padding_bottom;
+    const float containing_w=content_w+padding_x;
+    const float containing_h=std::max(0.0f,parent_height)+padding_y;
     const float left = child->style.left.is_auto()
                            ? 0
-                           : resolve_l(child->style.left, content_w, child->style.font_size);
+                           : resolve_l(child->style.left, containing_w, child->style.font_size);
     const float right = child->style.right.is_auto()
                             ? 0
-                            : resolve_l(child->style.right, content_w, child->style.font_size);
+                            : resolve_l(child->style.right, containing_w, child->style.font_size);
     // Shrink-to-fit into the space the inset properties leave, not the whole
     // containing block.
-    layout_node(child, content_w, child_cb_h, true, -1, -1, true,
-                std::max(0.0f, content_w - left - right));
+    layout_node(child, containing_w, containing_h, true, -1, -1, true,
+                std::max(0.0f, containing_w - left - right));
     float x = 0, y = cursor;
-    if (!child->style.left.is_auto()) x = left;
-    else if (!child->style.right.is_auto()) x = content_w - child->layout.border.w - right;
-    if (!child->style.top.is_auto()) y = resolve_l(child->style.top, child_cb_h, child->style.font_size);
+    if (!child->style.left.is_auto()) x = left-parent->layout.padding_left;
+    else if (!child->style.right.is_auto()) x = containing_w - child->layout.border.w - right-parent->layout.padding_left;
+    if (!child->style.top.is_auto()) y = resolve_l(child->style.top, containing_h, child->style.font_size)-parent->layout.padding_top;
     else if (!child->style.bottom.is_auto()) {
-        float base = parent_height > 0 ? parent_height : child_cb_h;
-        y = base - child->layout.border.h - resolve_l(child->style.bottom, child_cb_h, child->style.font_size);
+        y = containing_h - child->layout.border.h - resolve_l(child->style.bottom, containing_h, child->style.font_size)-parent->layout.padding_top;
     }
     child->layout.border.x = x;
     child->layout.border.y = y;
@@ -410,11 +438,22 @@ void LayoutEngine::place_absolute(Node* parent, Node* child, float content_w, fl
 
 float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, float child_cb_h) {
     float cursor = 0;
+    bool flow_content=false;
+    const bool escaping_margins=n!=doc.html&&n->style.display==Display::Block&&n->style.overflow==Overflow::Visible&&
+        n->style.position!=Position::Absolute&&n->style.position!=Position::Fixed&&
+        (!n->parent||(n->parent->style.display!=Display::Flex&&n->parent->style.display!=Display::Grid));
+    // Adjoining sibling margins form one strut: greatest positive + least
+    // negative. Empty blocks can join the same strut; inline content breaks it.
+    float positive_margin=0,negative_margin=0;
+    auto add_margin=[&](float margin){positive_margin=std::max(positive_margin,margin);negative_margin=std::min(negative_margin,margin);};
+    auto margin=[&](){return positive_margin+negative_margin;};
+    auto clear_margin=[&](){positive_margin=negative_margin=0;};
     std::vector<Node*> group;
+    std::vector<std::pair<Node*,float>> absolutes;
     auto flush = [&]() {
         if (group.empty()) return;
-        float used = layout_inline_group(n, group, content_w, cursor);
-        cursor += used;
+        float used = layout_inline_group(n, group, content_w, cursor+margin());
+        if(used>0){cursor+=margin()+used;clear_margin();flow_content=true;}
         group.clear();
     };
     for (auto* child : n->children) {
@@ -428,7 +467,8 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         if (child->is_element("br")) { group.push_back(child); continue; }
         if (child->style.position == Position::Absolute || child->style.position == Position::Fixed) {
             flush();
-            place_absolute(n, child, content_w, child_cb_h, cursor, hspec >= 0 ? hspec : cursor);
+            absolutes.push_back({child,cursor+margin()});
+            n->layout.box_children.push_back(child); // Preserve DOM paint order.
             continue;
         }
         if (child->style.display == Display::Inline || child->style.display == Display::InlineBlock) {
@@ -437,8 +477,11 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         }
         flush();
         layout_node(child, content_w, child_cb_h, false);
+        if(!flow_content&&escaping_margins&&n->layout.padding_top==0&&n->layout.border_top==0&&child->layout.margin_top!=0)
+            diag::approximate("parent-child margin collapse",node_label(n));
         float x = child->layout.margin_left;
-        float y = cursor + child->layout.margin_top;
+        add_margin(child->layout.margin_top);
+        float y = cursor + margin();
         const bool relative = child->style.position == Position::Relative;
         if (relative) {
             x += flat_relative_x(child, content_w);
@@ -449,10 +492,20 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         n->layout.box_children.push_back(child);
         // Flow advances by the un-offset box; top/left only move a relatively
         // positioned box visually. Static boxes ignore them entirely.
-        cursor = cursor + child->layout.margin_top + child->layout.border.h + child->layout.margin_bottom;
+        const bool empty=child->style.display==Display::Block&&child->style.overflow==Overflow::Visible&&
+            child->layout.border.h==0&&child->layout.box_children.empty()&&!child->layout.has_lines;
+        if(!empty){cursor+=margin()+child->layout.border.h;clear_margin();flow_content=true;}
+        add_margin(child->layout.margin_bottom);
     }
     flush();
-    return cursor;
+    if(escaping_margins&&hspec<0&&n->layout.padding_bottom==0&&n->layout.border_bottom==0&&margin()!=0&&
+       (n->style.min_height.is_auto()||n->style.min_height.is_zero()))
+        diag::approximate("parent-child margin collapse",node_label(n));
+    for(const auto& entry:absolutes){
+        place_absolute(n,entry.first,content_w,entry.second,hspec>=0?hspec:cursor+margin());
+        n->layout.box_children.pop_back(); // Already inserted at its DOM position.
+    }
+    return cursor+margin();
 }
 
 void LayoutEngine::append_text_tokens(Node* tn, std::vector<Token>& out) {
@@ -569,7 +622,7 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
     }
     if (g->style.display == Display::InlineBlock || g->style.display == Display::Block ||
         g->style.display == Display::Flex || g->style.display == Display::Grid) {
-        layout_node(g, content_w, 0, true);
+        layout_node(g, content_w, -1, true);
         Token t;
         t.kind = Token::BoxTok;
         t.node = g;
@@ -764,6 +817,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
     if (column) {
         float total = 0;
         std::vector<float> outer_heights(items.size(), 0);
+        std::vector<float> measured_heights(items.size(),0);
         for (size_t i = 0; i < items.size(); i++) {
             auto* it = items[i];
             float ml = resolve_l(it->style.margin.left, content_w, it->style.font_size);
@@ -773,7 +827,8 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             bool stretch = st.align_items == AlignItems::Stretch && it->style.width.is_auto();
             float forced = -1;
             if (stretch) forced = std::max(0.0f, content_w - ml - mr - pad_h(it, content_w));
-            layout_node(it, content_w, hspec > 0 ? hspec : 0, !stretch, forced, -1);
+            layout_node(it, content_w, hspec, !stretch, forced, -1);
+            measured_heights[i]=it->layout.content_h;
             outer_heights[i] = it->layout.border.h + mt + mb;
             total += outer_heights[i];
             if (i + 1 < items.size()) total += st.row_gap;
@@ -805,6 +860,14 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
                 }
             }
         }
+        // A definite column container makes allocated main sizes definite.
+        // Reflow percentage descendants after flexing their parent's box.
+        if(hspec>=0)for(size_t i=0;i<items.size();++i){auto* it=items[i];
+            const float width=it->layout.content_w,height=clamp_height(it,it->layout.content_h,content_w,hspec);
+            if(std::abs(height-measured_heights[i])>.001f||has_height_percentages(it))stretches[it]={width,content_w,hspec,height};
+            else stretches.erase(it);
+            it->layout.content_h=height;it->layout.border.h=height+pad_v(it,content_w);
+        }
         float used_main = 0;
         for (size_t i = 0; i < items.size(); i++) used_main += items[i]->layout.border.h +
             resolve_l(items[i]->style.margin.top, content_w, items[i]->style.font_size) +
@@ -834,15 +897,21 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             n->layout.box_children.push_back(it);
             y += it->layout.border.h + mt + mb + st.row_gap + between;
         }
-        for (auto* a : absolutes) place_absolute(n, a, content_w, container_h, 0, container_h);
+        for (auto* a : absolutes) place_absolute(n, a, content_w, 0, container_h);
         return container_h;
     }
 
     // Row layout, optionally wrapped.
     float gap = st.column_gap;
+    auto width_limits=[&](Node* it){const auto& s=it->style;
+        const float padding=s.box_sizing_border?pad_h(it,content_w):0;
+        const float minimum=s.min_width.is_auto()?0:std::max(0.0f,resolve_l(s.min_width,content_w,s.font_size)-padding);
+        const float maximum=s.max_width.is_auto()?INFINITY:std::max(minimum,resolve_l(s.max_width,content_w,s.font_size)-padding);
+        return std::make_pair(minimum,maximum);
+    };
     auto base_content = [&](Node* it) -> float {
         auto& s = it->style;
-        if (!s.flex_basis.is_auto()) return std::max(0.0f, resolve_l(s.flex_basis, content_w, s.font_size));
+        if (!s.flex_basis.is_auto()) return std::max(0.0f, resolve_l(s.flex_basis, content_w, s.font_size)-(s.box_sizing_border?pad_h(it,content_w):0));
         if (!s.width.is_auto()) {
             float w = resolve_l(s.width, content_w, s.font_size);
             if (s.box_sizing_border) w -= pad_h(it, content_w);
@@ -866,12 +935,14 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
         std::vector<size_t> line;
         float w = 0;
         for (size_t i = 0; i < items.size(); i++) {
-            float add = base_outer[i] + (line.empty() ? 0 : gap);
+            const auto limits=width_limits(items[i]);
+            const float hypothetical_outer=outer_of(items[i],std::clamp(base[i],limits.first,limits.second));
+            float add = hypothetical_outer + (line.empty() ? 0 : gap);
             if (!line.empty() && w + add > content_w) {
                 lines.push_back(line);
                 line.clear();
                 w = 0;
-                add = base_outer[i];
+                add = hypothetical_outer;
             }
             line.push_back(i);
             w += add;
@@ -885,47 +956,83 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
 
     float line_top = 0;
     for (auto& line : lines) {
-        float sum_outer = 0, sum_grow = 0, sum_shrink = 0;
+        float sum_outer = 0;
         for (size_t i : line) {
             sum_outer += base_outer[i];
-            sum_grow += std::max(0.0f, items[i]->style.flex_grow);
-            sum_shrink += std::max(0.0f, items[i]->style.flex_shrink) * std::max(1.0f, base[i]);
         }
         sum_outer += (line.size() > 1 ? (line.size() - 1) * gap : 0);
-        float free = content_w - sum_outer;
-        std::vector<float> final_content(line.size(), 0);
+        const float raw_free = content_w - sum_outer;
+        std::vector<float> final_content(line.size(),0),minimum(line.size(),0),maximum(line.size(),INFINITY);
+        std::vector<bool> frozen(line.size(),false);
+        float hypothetical=0;
         for (size_t k = 0; k < line.size(); k++) {
-            size_t i = line[k];
-            float c = base[i];
-            if (free > 0 && sum_grow > 0) c += free * std::max(0.0f, items[i]->style.flex_grow) / sum_grow;
-            else if (free < 0 && sum_shrink > 0) {
-                float sh = std::max(0.0f, items[i]->style.flex_shrink) * std::max(1.0f, base[i]);
-                c = std::max(0.0f, c + free * sh / sum_shrink);
+            auto* it=items[line[k]];const auto limits=width_limits(it);
+            minimum[k]=limits.first;maximum[k]=limits.second;
+            final_content[k]=std::clamp(base[line[k]],minimum[k],maximum[k]);
+            hypothetical+=outer_of(it,final_content[k]);
+        }
+        hypothetical+=line.size()>1?(line.size()-1)*gap:0;
+        const bool growing=hypothetical<content_w;
+        for(size_t k=0;k<line.size();++k){const auto& s=items[line[k]]->style;
+            frozen[k]=(growing?s.flex_grow:s.flex_shrink)<=0||
+                (growing?base[line[k]]>final_content[k]:base[line[k]]<final_content[k]);
+        }
+        float initial_free=raw_free;
+        for(size_t k=0;k<line.size();++k)if(frozen[k])initial_free+=base[line[k]]-final_content[k];
+        // Freeze constrained items and redistribute their unused share, rather
+        // than clamping once and leaving gaps or overflowing the flex line.
+        for(size_t pass=0;pass<=line.size();++pass){
+            float free=raw_free,factors=0,weights=0;
+            for(size_t k=0;k<line.size();++k){const auto& s=items[line[k]]->style;
+                if(frozen[k])free+=base[line[k]]-final_content[k];
+                else {const float factor=std::max(0.0f,growing?s.flex_grow:s.flex_shrink);factors+=factor;weights+=growing?factor:factor*base[line[k]];}
             }
-            final_content[k] = c;
+            if(factors<1&&std::abs(initial_free*factors)<std::abs(free))free=initial_free*factors;
+            float violation=0;std::vector<float> violations(line.size(),0);
+            for(size_t k=0;k<line.size();++k)if(!frozen[k]){
+                const auto& s=items[line[k]]->style;
+                const float weight=growing?std::max(0.0f,s.flex_grow):std::max(0.0f,s.flex_shrink)*base[line[k]];
+                const float target=base[line[k]]+(weights>0?free*weight/weights:0);
+                final_content[k]=std::clamp(target,minimum[k],maximum[k]);
+                violations[k]=final_content[k]-target;violation+=violations[k];
+            }
+            if(std::abs(violation)<.0001f)break;
+            bool progress=false;
+            for(size_t k=0;k<line.size();++k)if(!frozen[k]&&(violation>0?violations[k]>0:violations[k]<0)){frozen[k]=true;progress=true;}
+            if(!progress)break;
         }
         std::vector<float> outer_h(line.size(), 0);
         for (size_t k = 0; k < line.size(); k++) {
             size_t i = line[k];
             Node* it = items[i];
-            layout_node(it, content_w, hspec > 0 ? hspec : 0, true, final_content[k], -1);
+            if(it->style.min_width.is_auto()&&it->style.overflow==Overflow::Visible&&final_content[k]+.01f<minimum_width(it,content_w,0))
+                diag::approximate("flex automatic minimum size",node_label(it));
+            const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size);
+            const bool definite_stretch=hspec>=0&&lines.size()==1&&st.align_items==AlignItems::Stretch&&it->style.height.is_auto();
+            const float stretched_height=definite_stretch?std::max(0.0f,hspec-mt-mb-pad_v(it,content_w)):-1;
+            layout_node(it, content_w, hspec, true, final_content[k], stretched_height);
             outer_h[k] = it->layout.border.h + resolve_l(it->style.margin.top, content_w, it->style.font_size) +
                          resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
         }
         float line_cross = 0;
         for (float h : outer_h) line_cross = std::max(line_cross, h);
         float cross_size = line_cross;
-        if (hspec >= 0 && lines.size() == 1) cross_size = std::max(cross_size, hspec);
+        if (hspec >= 0 && lines.size() == 1) cross_size = hspec;
         for (size_t k = 0; k < line.size(); k++) {
             Node* it = items[line[k]];
             if (st.align_items == AlignItems::Stretch && it->style.height.is_auto() &&
                 it->style.display != Display::Inline) {
                 float mt = resolve_l(it->style.margin.top, content_w, it->style.font_size);
                 float mb = resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
-                float target = cross_size - mt - mb - pad_v(it, content_w);
-                if (target > it->layout.content_h) {
-                    it->layout.content_h = target;
-                    it->layout.border.h = target + pad_v(it, content_w);
+                const float target=std::max(0.0f,cross_size-mt-mb-pad_v(it,content_w));
+                if (!(hspec>=0&&lines.size()==1)) {
+                    // Finalize size-dependent contents top-down after measuring
+                    // the whole tree, rather than recursively duplicating passes.
+                    const float height=clamp_height(it,target,content_w,hspec);
+                    if(std::abs(height-it->layout.content_h)>.001f||has_height_percentages(it))
+                        stretches[it]={final_content[k],content_w,hspec,height};
+                    else stretches.erase(it);
+                    it->layout.content_h=height;it->layout.border.h=height+pad_v(it,content_w);
                     outer_h[k] = it->layout.border.h + mt + mb;
                 }
             }
@@ -964,7 +1071,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
         if (&line != &lines.back()) line_top += st.row_gap;
     }
     float used_h = hspec >= 0 ? hspec : line_top;
-    for (auto* a : absolutes) place_absolute(n, a, content_w, used_h, 0, used_h);
+    for (auto* a : absolutes) place_absolute(n, a, content_w, 0, used_h);
     return used_h;
 }
 
@@ -1035,7 +1142,7 @@ std::vector<float> LayoutEngine::table_columns(const std::vector<TableRow>& rows
 }
 
 float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
-    const std::string label=table_label(table);
+    const std::string label=node_label(table);
     for(auto* child:table->children){
         if(!child||!child->is_element())continue;
         if(child->is_element("caption"))diag::structural("table caption is ignored",label);
@@ -1114,7 +1221,7 @@ float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
             // The column width already accounts for the cell's own preferred and
             // minimum widths; re-applying min/max here would detach the cell box
             // from its shared column.
-            layout_node(cell,width,hspec>0?hspec:0,false,std::max(0.0f,columns[j]-pad_h(cell,width)),-1,false);
+            layout_node(cell,width,hspec,false,std::max(0.0f,columns[j]-pad_h(cell,width)),-1,false);
             heights[i]=std::max(heights[i],cell->layout.border.h);
             if(cell->style.vertical_align==VerticalAlign::Baseline){
                 float b=cell->layout.content_y+(cell->layout.lines.empty()?cell->layout.content_h:cell->layout.lines.front().baseline);
@@ -1153,6 +1260,40 @@ float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
         y+=height+sy;
     }
     return total;
+}
+
+bool LayoutEngine::has_height_percentages(Node* node){
+    if(!node)return false;
+    const auto found=height_percentage_cache.find(node);if(found!=height_percentage_cache.end())return found->second;
+    const auto& s=node->style;
+    bool depends=percentage_dependent(s.height)||percentage_dependent(s.min_height)||percentage_dependent(s.max_height)||
+        percentage_dependent(s.top)||percentage_dependent(s.bottom);
+    for(const auto& row:s.grid_rows)depends=depends||row.kind==TrackKind::Percent;
+    for(auto* child:node->children)depends=has_height_percentages(child)||depends;
+    height_percentage_cache.emplace(node,depends);return depends;
+}
+
+float LayoutEngine::clamp_height(Node* node,float height,float basis_width,float basis_height){
+    const auto& s=node->style;
+    auto bound=[&](const Length& value){return std::max(0.0f,resolve_length(value,std::max(0.0f,basis_height),s.font_size,16,false)-
+        (s.box_sizing_border?pad_v(node,basis_width):0.0f));};
+    if(!s.max_height.is_auto()&&(basis_height>=0||!percentage_dependent(s.max_height)))height=std::min(height,bound(s.max_height));
+    if(!s.min_height.is_auto()&&(basis_height>=0||!percentage_dependent(s.min_height)))height=std::max(height,bound(s.min_height));
+    return std::max(0.0f,height);
+}
+
+void LayoutEngine::finish_stretches(Node* node){
+    if(!node||!node->layout.has_box)return;
+    const auto found=stretches.find(node);
+    if(found!=stretches.end()){
+        const auto request=found->second;stretches.erase(found);
+        const float x=node->layout.border.x,y=node->layout.border.y;
+        // Layout only once at this level. Nested containers record later work rather
+        // than recursively performing their own measurement/finalization twice.
+        layout_node(node,request.basis_width,request.basis_height,true,request.width,request.height);
+        node->layout.border.x=x;node->layout.border.y=y;
+    }
+    for(auto* child:node->layout.box_children)finish_stretches(child);
 }
 
 float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
@@ -1205,16 +1346,23 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
     const int rows=placed.empty()?0:placed.back().row+1;std::vector<float> row_h(rows,0);
     for(auto& p:placed){auto* it=p.node;const float ml=resolve_l(it->style.margin.left,content_w,it->style.font_size),mr=resolve_l(it->style.margin.right,content_w,it->style.font_size),mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size);
         float fw=it->style.width.is_auto()?std::max(0.0f,p.width-ml-mr-pad_h(it,content_w)):-1;
-        layout_node(it,p.width,hspec>0?hspec:0,true,fw,-1);row_h[p.row]=std::max(row_h[p.row],it->layout.border.h+mt+mb);
+        layout_node(it,p.width,hspec,true,fw,-1);row_h[p.row]=std::max(row_h[p.row],it->layout.border.h+mt+mb);
     }
     for(int r=0;r<rows&&r<(int)st.grid_rows.size();++r){const auto t=st.grid_rows[r];if(t.kind==TrackKind::Px)row_h[r]=std::max(row_h[r],t.value);else if(t.kind==TrackKind::Percent)row_h[r]=std::max(row_h[r],t.value*std::max(0.0f,hspec)/100);}
     float y=0;for(int r=0;r<rows;++r){for(auto& p:placed){if(p.row!=r)continue;auto* it=p.node;float x=0;for(int c=0;c<p.col;++c)x+=cols[c]+col_gap;
         const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size),ml=resolve_l(it->style.margin.left,content_w,it->style.font_size);
-        if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){const float target=row_h[r]-mt-mb-pad_v(it,content_w);if(target>it->layout.content_h){it->layout.content_h=target;it->layout.border.h=target+pad_v(it,content_w);}}
+        if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){
+            const float target=clamp_height(it,std::max(0.0f,row_h[r]-mt-mb-pad_v(it,content_w)),p.width,row_h[r]);
+            const float width=it->layout.content_w;
+            if(std::abs(target-it->layout.content_h)>.001f||has_height_percentages(it))
+                stretches[it]={width,p.width,row_h[r],target};
+            else stretches.erase(it);
+            it->layout.content_h=target;it->layout.border.h=target+pad_v(it,content_w);
+        }
         it->layout.border.x=x+ml;it->layout.border.y=y+mt;n->layout.box_children.push_back(it);
     }y+=row_h[r]+st.row_gap;}
     float used = hspec >= 0 ? hspec : std::max(0.0f, y - (rows ? st.row_gap : 0));
-    for (auto* a : absolutes) place_absolute(n, a, content_w, used, 0, used);
+    for (auto* a : absolutes) place_absolute(n, a, content_w, 0, used);
     return used;
 }
 
@@ -1314,6 +1462,7 @@ void LayoutEngine::run() {
     layout_node(root, vw, vh, false, -1, -1);
     root->layout.border.x = 0;
     root->layout.border.y = 0;
+    finish_stretches(root);
 }
 
 void layout_document(Document& doc, LayoutContext& ctx) {

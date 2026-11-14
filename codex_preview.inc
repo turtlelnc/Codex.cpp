@@ -1,5 +1,22 @@
 #include "miniweb/worker.h"
 static fs::path preview_self;
+static std::pair<std::string,std::string> preview_metadata(const fs::path& path){
+  std::error_code ec;
+  if(!fs::is_regular_file(fs::symlink_status(path,ec))||ec||fs::hard_link_count(path)!=1||fs::file_size(path)>256*1024)
+    throw std::runtime_error("Invalid preview capability artifact");
+  std::ifstream input(path,std::ios::binary);
+  const std::string bytes(std::istreambuf_iterator<char>(input),{});
+  auto doc=parse_json(bytes);
+  const auto version=doc?doc->get("version"):nullptr,summary=doc?doc->get("summary"):nullptr,report=doc?doc->get("report"):nullptr;
+  if(!input||!doc||doc->kind!=Json::Object||!version||version->kind!=Json::Other||version->value!="1"||
+     !summary||summary->kind!=Json::String||summary->value.rfind("Capability report: ",0)!=0||summary->value.size()>8192||
+     !report||report->kind!=Json::Object)throw std::runtime_error("Invalid preview capability metadata");
+  for(const auto* key:{"ignored_css","approximate","structural","missing_js"}){
+    const auto list=report->get(key);
+    if(!list||list->kind!=Json::Array)throw std::runtime_error("Incomplete preview capability report");
+  }
+  return {summary->value,json_dump(*report)};
+}
 static ToolResult preview_capture(const std::string& args,const fs::path& root,const std::function<void()>& tick={},bool watch=false,std::string* png=nullptr,std::string* report=nullptr){try{
   auto request=parse_json(args);if(!request||request->kind!=Json::Object)return {2,"Invalid preview arguments"};
   auto path=json_string_field(args,"path");if(!path||path->empty())return {2,"Preview requires a workspace HTML path"};
@@ -17,9 +34,7 @@ static ToolResult preview_capture(const std::string& args,const fs::path& root,c
   std::error_code ec;if(!fs::is_regular_file(fs::symlink_status(output,ec))||ec||fs::hard_link_count(output)!=1)return {2,"Invalid preview artifact"};
   std::string why;auto image=image_data_url(output,why);if(!image)return {2,"Preview: "+why};
   if(png){std::ifstream input(output,std::ios::binary);*png=std::string(std::istreambuf_iterator<char>(input),{});}
-  auto output_line=[&](const std::string& prefix){size_t pos=0;while(pos<result.output.size()){size_t end=result.output.find('\n',pos);if(end==std::string::npos)end=result.output.size();const std::string line=result.output.substr(pos,end-pos);if(line.rfind(prefix,0)==0)return line.substr(prefix.size());pos=end+1;}return std::string{};};
-  const std::string capability=output_line("[miniweb] capability: ");
-  const std::string capability_json=output_line("[miniweb] capability-json: ");
+  const auto [capability,capability_json]=preview_metadata(fs::u8path(output.u8string()+miniweb_report_suffix));
   if(report)*report=capability_json;
   const std::string diagnostics=result.output.find("[miniweb] error:")!=std::string::npos?"Renderer reported script/errors; this image may be incomplete. ":result.output.find("[miniweb] warning:")!=std::string::npos?"Renderer reported missing/unsupported resources; this image may be incomplete. ":"";
   return {0,(capability.empty()?std::string{}:capability+" ")+diagnostics+"Experimental MiniWeb screenshot; local files only, no network. Each call reloads the page and replays clicks. Limited CSS/DOM support: this is not Chrome or full-browser verification.",{*image}};

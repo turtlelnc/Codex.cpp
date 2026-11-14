@@ -7,6 +7,18 @@ static bool self_test(const fs::path& root){int failed = 0;std::error_code root_
 auto check =[&](bool ok,const char* what){std::cout <<(ok ? "PASS " : "FAIL ")<< what << '\n';if(!ok)++failed; };
 #include "settings_checks.inc"
 #include "compaction_history_checks.inc"
+{
+  const auto metadata=root/"preview-metadata.json";
+  const std::string valid=R"({"version":1,"summary":"Capability report: CSS filter.","report":{"ignored_css":[],"approximate":[],"structural":[],"missing_js":[],"truncated":0}})";
+  auto write=[&](const std::string& data){std::ofstream out(metadata,std::ios::binary|std::ios::trunc);out<<data;};
+  write(valid);check(preview_metadata(metadata).first=="Capability report: CSS filter.","Preview reads native metadata");
+  for(const auto& data:{std::string{},std::string("{broken"),std::string(R"({"version":2,"summary":"Capability report: unknown","report":{}})"),std::string(256*1024+1,'x')}){
+    write(data);bool rejected=false;try{preview_metadata(metadata);}catch(const std::exception&){rejected=true;}
+    check(rejected,"Preview rejects corrupt, unsupported or oversized metadata");
+  }
+  fs::remove(metadata);bool rejected=false;try{preview_metadata(metadata);}catch(const std::exception&){rejected=true;}
+  check(rejected,"Missing preview metadata cannot become clean report");
+}
 check(native_web::visible_user_message("# Available skills\nexample\n\n<environment_context>\nmetadata\n</environment_context>\n\n你好")=="你好","WebUI hides injected context");
 check(native_web::visible_user_message("<environment_context>\nmetadata\n</environment_context>\n\n<current_goal>goal</current_goal>\n\nhello")=="hello","WebUI hides injected goal");
 check(native_web::visible_user_message("Workspace root: /tmp\nSandbox policy: read-only\nUser task:\nhello")=="hello","WebUI legacy user text");

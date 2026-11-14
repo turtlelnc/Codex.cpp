@@ -44,6 +44,11 @@ This is not the complete CSS table algorithm. Captions, col/colgroup sizing, inl
 
 ## Capability report
 
+The host reads versioned native metadata from a private scratch artifact, separate
+from page console output. Missing, malformed or oversized metadata fails the
+preview; page log lines cannot certify compatibility. The public `--report`
+JSON shape remains unchanged.
+
 `preview_screenshot` and `preview shot --report FILE` report the features the renderer ignored or approximated while rendering the page. The Agent tool appends a one-line summary to the image result; the CLI writes the full JSON report with details and counts. Categories:
 
 - `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
@@ -54,6 +59,16 @@ This is not the complete CSS table algorithm. Captions, col/colgroup sizing, inl
 Counts are encounter counts from rendering (including replayed clicks), not precise usage counts. The report is best-effort: it cannot enumerate every gap, and absence of an entry is not proof of support. Treat layout and rendering near reported features as unreliable, and do not rewrite valid page code to accommodate them.
 
 ## Compatibility limitations
+
+The [stability baseline](MINIWEB_STABILITY.md) records the repaired foundational
+paths, repeatable comparisons and known gaps. Current reports also flag likely
+parent/child margin-collapse, absolute containing blocks through static
+ancestors, and flex automatic-minimum-size mismatches. Sibling margins, normal
+flow percentage heights and bounded row flexing have dedicated regressions;
+this does not imply the full CSS algorithms are implemented.
+
+For new pages explicitly targeting this renderer, see the bounded
+[design profile and actual-page assessment](MINIWEB_DESIGN_PROFILE.md).
 
 A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
 
