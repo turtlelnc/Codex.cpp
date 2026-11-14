@@ -74,6 +74,7 @@ struct BoxShadow {
 struct ComputedStyle {
     Display display = Display::Inline;
     Position position = Position::Static;
+    bool has_transform = false;
 
     Length width, height;
     Length min_width, min_height;
@@ -124,6 +125,7 @@ struct ComputedStyle {
 
     Length top, right, bottom, left;
     int z_index = 0;
+    bool z_auto = true;
     bool box_sizing_border = false;
     bool display_none = false;
     bool is_root = false;

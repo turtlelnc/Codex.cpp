@@ -290,8 +290,8 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
     else if (p == "column-gap") st.column_gap = 0;
     else if (p == "order") st.order = 0;
     else if (p == "grid-column") st.grid_column_span=1;
-    else if(p=="transform") {st.translate_x=Length::px(0);st.translate_y=Length::px(0);}
-    else if (p == "z-index") st.z_index = 0;
+    else if(p=="transform") {st.translate_x=Length::px(0);st.translate_y=Length::px(0);st.has_transform=false;}
+    else if (p == "z-index") {st.z_index=0;st.z_auto=true;}
     else if (p == "top") st.top = Length{};
     else if (p == "right") st.right = Length{};
     else if (p == "bottom") st.bottom = Length{};
@@ -321,6 +321,8 @@ bool inherit_prop(ComputedStyle& st, const std::string& p, const ComputedStyle* 
     else if (p == "visibility") st.visibility = parent->visibility;
     else if (p == "letter-spacing") st.letter_spacing = parent->letter_spacing;
     else if (p == "text-transform") st.text_transform = parent->text_transform;
+    else if (p == "transform") {st.translate_x=parent->translate_x;st.translate_y=parent->translate_y;st.has_transform=parent->has_transform;}
+    else if (p == "z-index") {st.z_index=parent->z_index;st.z_auto=parent->z_auto;}
     else if (p == "display") st.display = parent->display;
     else if (p == "vertical-align") st.vertical_align=parent->vertical_align;
     else if (p == "border-spacing") {st.border_spacing_x=parent->border_spacing_x;st.border_spacing_y=parent->border_spacing_y;}
@@ -802,7 +804,7 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         if (vl == "relative") st.position = Position::Relative;
         else if (vl == "sticky") { st.position = Position::Relative; diag::approximate("position:sticky laid out as relative", vl); }
         else if (vl == "absolute") st.position = Position::Absolute;
-        else if (vl == "fixed") { st.position = Position::Fixed; diag::approximate("position:fixed laid out as absolute", vl); }
+        else if (vl == "fixed") { st.position = Position::Fixed; diag::approximate("position:fixed scrolling is not implemented", vl); }
         else st.position = Position::Static;
     } else if (p == "table-layout") { if(vl=="fixed"||vl=="auto")st.table_fixed=vl=="fixed";
     } else if (p == "vertical-align") {
@@ -1115,6 +1117,7 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
     else if (p == "grid-column") {auto value=util::split_ws(vl);if(value.size()==2&&value[0]=="span")st.grid_column_span=std::clamp((int)parse_float_value(value[1],1),1,32);}
     else if(p=="transform") {
         st.translate_x=Length::px(0);st.translate_y=Length::px(0);
+        st.has_transform=vl!="none";
         bool supported=vl=="none";
         auto open=vl.find('('),close=vl.rfind(')');if(open!=std::string::npos&&close==vl.size()-1&&vl.find(')',open)==close){
             const auto name=vl.substr(0,open);auto values=util::split(vl.substr(open+1,close-open-1),',');if(values.size()==1)values=util::split_ws(values[0]);
@@ -1124,7 +1127,7 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         }
         if(!supported)diag::approximate("transform only supports translate/translateX/translateY",v);
     }
-    else if (p == "z-index") st.z_index = (int)parse_float_value(vl, 0);
+    else if (p == "z-index") {st.z_index=(int)parse_float_value(vl,0);st.z_auto=vl=="auto";}
     else if (p == "top") st.top = len(st.font_size, true);
     else if (p == "right") st.right = len(st.font_size, true);
     else if (p == "bottom") st.bottom = len(st.font_size, true);

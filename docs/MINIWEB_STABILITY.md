@@ -13,6 +13,8 @@ general development tools.
 | Height constraints | Border-box min/max heights added padding/borders twice; max could override min; percentages used the child's own height | Border/content-box bounds, contradictory bounds, percentage max against parent content height |
 | Row Flexbox | One-pass allocation left gaps or overflow after min/max clamping | Max-constrained growth, min-constrained shrink, fractional grow factor, fixed padded flex basis, constrained wrapping |
 | Absolute layout | Direct positioned parent's padding box was confused with its content box; auto-height parent was measured before later flow children | Padded containing block geometry and clipped positioned child; existing absolute/translated hit tests |
+| Containing blocks | Static DOM parents were incorrectly used as coordinate parents | Positioned/transformed ancestors, identity transform versus none, viewport fallback, nested absolutes, opposing insets, auto margins and dynamic transforms |
+| Parent/child margins | Child margins stayed inside auto blocks; positive minima incorrectly blocked all bottom collapse | Border/padding/overflow boundaries, definite heights, binding/nonbinding minima, positive/negative nested struts and empty border edges |
 | Overflow | Children painted over the clipping parent's border; pointer and collected link regions included invisible content | Exact pixels, border/outside/visible clicks, clipped link rectangles |
 | Fonts | Font lists were cut at the first comma; filename-derived family names failed for weight suffixes and platform filenames | Longhand/shorthand fallback to monospace; real report checked with shared Linux Arial substitute |
 
@@ -49,6 +51,25 @@ CSS. Regression cases exercise cache pressure, long uncached lists and size chan
 - `miniweb/test/nested-layout.html`: 26-level pure Grid and mixed Flex/Grid
   trees, with fixed and percentage-height leaves. The Chromium probe has a
   10-second timeout, below the preview worker's 25-second wall-time budget.
+- `miniweb/test/positioning.html`: Chromium geometry at 640px and 390px, repeated
+  transform toggles, viewport fallback and nested positioning. Native pixel and
+  click assertions cover an absolute child escaping a static clipping ancestor,
+  preserved opacity and unchanged DOM event bubbling.
+- `miniweb/test/margins.html`: ordinary blocks, nested mixed margins, empty blocks,
+  border/padding/overflow boundaries, definite heights and minimum heights.
+  A fixed-seed browser suite also compares 35 small nested combinations.
+
+Absolute boxes are placed after normal flow and stretch finalization, in ancestor
+order. Their padding-box containing block is selected independently from their
+DOM parent. A layout-parent link is shared by geometry, painting and hit testing;
+DOM parents remain responsible for styles and events. Basic opacity and explicit
+flex/grid stacking groups are retained as paint parents. General CSS stacking
+contexts and clipping through such groups are not complete.
+
+Collapsed margins retain separate positive/negative components. Parent top and
+bottom boundaries propagate these struts instead of summing child margins into
+content height. A minimum height only blocks bottom escape when it actually binds;
+empty-block flow collapse is distinguished from its zero-height border position.
 
 Stretch finalization is separate from intrinsic measurement. Unchanged items
 without height-dependent percentages keep their measured subtree. Items that
@@ -74,11 +95,12 @@ the shipped executable still needs no Node.js or Chromium runtime.
 
 ## Remaining limits and next priorities
 
-1. Parent/child and deeply nested empty margin collapse are incomplete. The
-   sibling strut implementation does not claim the entire collapsing algorithm.
-2. Absolute positioning through static ancestors is still approximate. Full
-   containing-block selection and stacking contexts need their own acceptance
-   cases; direct padded positioned parents are the repaired path.
+1. Margin collapse is tested for ordinary block formatting. Floats/clearance,
+   anonymous block repair and unsupported formatting modes are not implemented.
+2. Inline containing blocks, general transforms and complete stacking contexts
+   remain approximate. Clipping across opacity/stacking groups and static-position
+   alignment of absolute items in Flex/Grid or inline content are explicitly
+   reported. Initial fixed-position geometry is supported; scrolling is unverified.
 3. Row Flexbox still lacks a complete automatic minimum-content algorithm.
    Column flex-basis/constraint distribution, reverse axes, auto margins,
    baseline and align-content need
