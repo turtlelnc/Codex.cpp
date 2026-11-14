@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <map>
 
 namespace {
 
@@ -92,6 +93,12 @@ private:
     ImageCache& images;
     float vw = 1280, vh = 800;
     std::unordered_map<Node*, std::vector<Node*>> flex_item_cache;
+    std::unordered_map<Node*,size_t> document_order,document_depth;
+    struct Absolute {Node* anchor;Node* node;float cursor;};
+    std::map<std::pair<size_t,size_t>,Absolute> absolutes;
+    void index_document(Node* node,size_t depth);
+    void attach(Node* parent,Node* child);
+    void finish_absolutes(Node* root);
     struct Stretch {float width,basis_width,basis_height,height;};
     std::unordered_map<Node*,Stretch> stretches;
     std::unordered_map<Node*,bool> height_percentage_cache;
@@ -104,7 +111,7 @@ private:
     void apply_auto_margins(Node* n, float cb_w);
     void layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w = -1, float forced_h = -1,
                      bool clamp_width = true, float avail_w = -1);
-    float layout_block_content(Node* n, float content_w, float hspec, float child_cb_h);
+    float layout_block_content(Node* n, float content_w, float hspec, float parent_cb_h);
     float layout_flex(Node* n, float content_w, float hspec);
     float layout_grid(Node* n, float content_w, float hspec);
     struct TableRow { Node* node; Node* group; std::vector<Node*> cells; };
@@ -122,8 +129,7 @@ private:
     void layout_svg(Node* n, float cb_w, float forced_w, float forced_h);
     float intrinsic_outer_width(Node* n, float basis, int depth);
     float intrinsic_content_width(Node* n, float basis, int depth);
-    void place_absolute(Node* parent, Node* child, float content_w, float cursor,
-                        float parent_height);
+    void place_absolute(Node* parent, Node* child, float cursor);
     float pad_h(Node* n, float basis);
     float pad_v(Node* n, float basis);
     float border_h(Node* n);
@@ -140,6 +146,8 @@ void LayoutEngine::resolve_edges(Node* n, float cb_w) {
     n->layout.margin_right = L(st.margin.right);
     n->layout.margin_top = L(st.margin.top);
     n->layout.margin_bottom = L(st.margin.bottom);
+    n->layout.before.add(n->layout.margin_top);n->layout.after.add(n->layout.margin_bottom);
+    n->layout.empty_edge=n->layout.before;
     n->layout.padding_left = L(st.padding.left);
     n->layout.padding_right = L(st.padding.right);
     n->layout.padding_top = L(st.padding.top);
@@ -385,11 +393,10 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     float used = 0;
     // Indefinite is different from a definite zero. An auto-height block must
     // not lend its ancestor's height to percentage-height descendants.
-    float child_cb_h = hspec;
     if (st.display == Display::Flex) used = layout_flex(n, cw, hspec);
     else if (st.display == Display::Grid) used = layout_grid(n, cw, hspec);
     else if (st.display == Display::Table) used = layout_table(n, cw, hspec);
-    else used = layout_block_content(n, cw, hspec, child_cb_h);
+    else used = layout_block_content(n, cw, hspec, cb_h);
     float ch = hspec >= 0 ? hspec : used;
     if (st.display == Display::Table) ch = std::max(ch, used);
     ch = clamp_height(n,ch,cb_w,cb_h);
@@ -404,56 +411,101 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     apply_auto_margins(n, cb_w);
 }
 
-void LayoutEngine::place_absolute(Node* parent, Node* child, float content_w, float cursor,
-                                  float parent_height) {
-    if(child->style.position==Position::Absolute&&parent->style.position==Position::Static&&parent!=doc.html)
-        diag::approximate("absolute containing block through static ancestors",node_label(parent));
-    // Positioned containing blocks use the padding box. Stored child positions
-    // are relative to the content origin, so explicit insets need that offset.
-    const float padding_x=parent->layout.padding_left+parent->layout.padding_right;
-    const float padding_y=parent->layout.padding_top+parent->layout.padding_bottom;
-    const float containing_w=content_w+padding_x;
-    const float containing_h=std::max(0.0f,parent_height)+padding_y;
-    const float left = child->style.left.is_auto()
-                           ? 0
-                           : resolve_l(child->style.left, containing_w, child->style.font_size);
-    const float right = child->style.right.is_auto()
-                            ? 0
-                            : resolve_l(child->style.right, containing_w, child->style.font_size);
-    // Shrink-to-fit into the space the inset properties leave, not the whole
-    // containing block.
-    layout_node(child, containing_w, containing_h, true, -1, -1, true,
-                std::max(0.0f, containing_w - left - right));
-    float x = 0, y = cursor;
-    if (!child->style.left.is_auto()) x = left-parent->layout.padding_left;
-    else if (!child->style.right.is_auto()) x = containing_w - child->layout.border.w - right-parent->layout.padding_left;
-    if (!child->style.top.is_auto()) y = resolve_l(child->style.top, containing_h, child->style.font_size)-parent->layout.padding_top;
-    else if (!child->style.bottom.is_auto()) {
-        y = containing_h - child->layout.border.h - resolve_l(child->style.bottom, containing_h, child->style.font_size)-parent->layout.padding_top;
-    }
-    child->layout.border.x = x;
-    child->layout.border.y = y;
-    parent->layout.box_children.push_back(child);
+void LayoutEngine::place_absolute(Node* parent, Node* child, float cursor) {
+    absolutes[{document_depth[child],document_order[child]}]={parent,child,cursor};
 }
 
-float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, float child_cb_h) {
+void LayoutEngine::index_document(Node* node,size_t depth){
+    if(!node)return;
+    document_order[node]=document_order.size();document_depth[node]=depth;
+    for(auto* child:node->children)index_document(child,depth+1);
+}
+
+void LayoutEngine::attach(Node* parent,Node* child){
+    child->layout.parent=parent;parent->layout.box_children.push_back(child);
+}
+
+void LayoutEngine::finish_absolutes(Node* root){
+    while(!absolutes.empty()){
+        const auto request=absolutes.begin()->second;absolutes.erase(absolutes.begin());
+        Node* child=request.node;Node* cb=nullptr;
+        const bool fixed=child->style.position==Position::Fixed;
+        for(auto* ancestor=child->parent;ancestor;ancestor=ancestor->parent){
+            if(ancestor->style.has_transform||(!fixed&&ancestor->style.position!=Position::Static)){
+                if(ancestor->layout.has_box&&ancestor->style.display!=Display::Inline){cb=ancestor;break;}
+                diag::approximate("inline containing block",node_label(ancestor));
+            }
+        }
+        Node* parent=cb?cb:root;
+        // Keep stacking groups in the paint tree even when they do not establish
+        // a containing block. Full cross-group stacking/clipping is still limited.
+        for(auto* ancestor=child->parent;ancestor&&ancestor!=cb;ancestor=ancestor->parent)
+            if(ancestor->layout.has_box&&(ancestor->style.opacity<1||(!ancestor->style.z_auto&&ancestor->parent&&
+               (ancestor->parent->style.display==Display::Flex||ancestor->parent->style.display==Display::Grid)))){parent=ancestor;break;}
+        if(parent!=cb&&parent!=root)for(auto* ancestor=parent;ancestor&&ancestor!=cb;ancestor=ancestor->parent)
+            if(ancestor->style.overflow==Overflow::Hidden)
+                diag::approximate("absolute clipping through stacking groups",node_label(ancestor));
+        const auto outer=cb?cb->absolute_rect():RectF{0,0,vw,vh};
+        const float width=cb?cb->layout.content_w+cb->layout.padding_left+cb->layout.padding_right:vw;
+        const float height=cb?cb->layout.content_h+cb->layout.padding_top+cb->layout.padding_bottom:vh;
+        const float origin_x=outer.x+(cb?cb->layout.border_left:0),origin_y=outer.y+(cb?cb->layout.border_top:0);
+        const auto& s=child->style;
+        auto inset=[&](const Length& value,float basis){return value.is_auto()?0:resolve_l(value,basis,s.font_size);};
+        const float left=inset(s.left,width),right=inset(s.right,width),top=inset(s.top,height),bottom=inset(s.bottom,height);
+        float ml=resolve_l(s.margin.left,width,s.font_size),mr=resolve_l(s.margin.right,width,s.font_size);
+        float mt=resolve_l(s.margin.top,width,s.font_size),mb=resolve_l(s.margin.bottom,width,s.font_size);
+        const bool replaced=child->is_element("img")||child->is_element("svg");
+        const float fw=!replaced&&s.width.is_auto()&&!s.left.is_auto()&&!s.right.is_auto()?std::max(0.0f,width-left-right-ml-mr-pad_h(child,width)):-1;
+        const float fh=!replaced&&s.height.is_auto()&&!s.top.is_auto()&&!s.bottom.is_auto()?std::max(0.0f,height-top-bottom-mt-mb-pad_v(child,width)):-1;
+        layout_node(child,width,height,true,fw,fh,true,std::max(0.0f,width-left-right));
+        if(!s.left.is_auto()&&!s.right.is_auto()){
+            const float free=width-left-right-child->layout.border.w-ml-mr;
+            if(s.margin.left.is_auto())ml=free<0&&s.margin.right.is_auto()?0:free/(s.margin.right.is_auto()?2:1);
+            if(s.margin.right.is_auto())mr=free<0&&s.margin.left.is_auto()?free:free/(s.margin.left.is_auto()?2:1);
+        }
+        if(!s.top.is_auto()&&!s.bottom.is_auto()){
+            const float free=height-top-bottom-child->layout.border.h-mt-mb;
+            if(s.margin.top.is_auto())mt=free/(s.margin.bottom.is_auto()?2:1);
+            if(s.margin.bottom.is_auto())mb=free/(s.margin.top.is_auto()?2:1);
+        }
+        const auto anchor=request.anchor->absolute_rect();
+        float x=anchor.x+request.anchor->layout.content_x+ml;
+        float y=anchor.y+request.anchor->layout.content_y+request.cursor+mt;
+        if(!s.left.is_auto())x=origin_x+left+ml;
+        else if(!s.right.is_auto())x=origin_x+width-right-mr-child->layout.border.w;
+        if(!s.top.is_auto())y=origin_y+top+mt;
+        else if(!s.bottom.is_auto())y=origin_y+height-bottom-mb-child->layout.border.h;
+        if((request.anchor->style.display==Display::Flex||request.anchor->style.display==Display::Grid)&&
+           ((s.left.is_auto()&&s.right.is_auto())||(s.top.is_auto()&&s.bottom.is_auto())))
+            diag::approximate("absolute static position in Flex/Grid",node_label(child));
+        const auto parent_box=parent->absolute_rect();
+        child->layout.border.x=x-parent_box.x-parent->layout.content_x;
+        child->layout.border.y=y-parent_box.y-parent->layout.content_y;
+        attach(parent,child);finish_stretches(child);
+    }
+}
+
+float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, float parent_cb_h) {
     float cursor = 0;
     bool flow_content=false;
     const bool escaping_margins=n!=doc.html&&n->style.display==Display::Block&&n->style.overflow==Overflow::Visible&&
         n->style.position!=Position::Absolute&&n->style.position!=Position::Fixed&&
         (!n->parent||(n->parent->style.display!=Display::Flex&&n->parent->style.display!=Display::Grid));
+    const float min_height=n->style.min_height.is_auto()||(parent_cb_h<0&&percentage_dependent(n->style.min_height))?0:
+        std::max(0.0f,resolve_l(n->style.min_height,std::max(0.0f,parent_cb_h),n->style.font_size));
+    bool top_open=escaping_margins&&n->layout.padding_top==0&&n->layout.border_top==0;
+    const bool bottom_open=escaping_margins&&hspec<0&&n->layout.padding_bottom==0&&n->layout.border_bottom==0;
     // Adjoining sibling margins form one strut: greatest positive + least
     // negative. Empty blocks can join the same strut; inline content breaks it.
-    float positive_margin=0,negative_margin=0;
-    auto add_margin=[&](float margin){positive_margin=std::max(positive_margin,margin);negative_margin=std::min(negative_margin,margin);};
-    auto margin=[&](){return positive_margin+negative_margin;};
-    auto clear_margin=[&](){positive_margin=negative_margin=0;};
+    MarginStrut pending;
+    auto margin=[&](){return pending.value();};
+    auto clear_margin=[&](){pending=MarginStrut{};};
     std::vector<Node*> group;
     std::vector<std::pair<Node*,float>> absolutes;
     auto flush = [&]() {
         if (group.empty()) return;
         float used = layout_inline_group(n, group, content_w, cursor+margin());
-        if(used>0){cursor+=margin()+used;clear_margin();flow_content=true;}
+        if(used>0){cursor+=margin()+used;clear_margin();flow_content=true;top_open=false;}
         group.clear();
     };
     for (auto* child : n->children) {
@@ -468,7 +520,6 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         if (child->style.position == Position::Absolute || child->style.position == Position::Fixed) {
             flush();
             absolutes.push_back({child,cursor+margin()});
-            n->layout.box_children.push_back(child); // Preserve DOM paint order.
             continue;
         }
         if (child->style.display == Display::Inline || child->style.display == Display::InlineBlock) {
@@ -476,34 +527,43 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
             continue;
         }
         flush();
-        layout_node(child, content_w, child_cb_h, false);
-        if(!flow_content&&escaping_margins&&n->layout.padding_top==0&&n->layout.border_top==0&&child->layout.margin_top!=0)
-            diag::approximate("parent-child margin collapse",node_label(n));
+        layout_node(child, content_w, hspec, false);
         float x = child->layout.margin_left;
-        add_margin(child->layout.margin_top);
-        float y = cursor + margin();
+        const bool empty=child->layout.margin_through;
+        float y;
+        if(top_open){n->layout.before.merge(child->layout.before);y=0;}
+        else {auto edge=pending;edge.merge(empty?child->layout.empty_edge:child->layout.before);y=cursor+edge.value();pending.merge(child->layout.before);}
+        const float flow_y=y;
         const bool relative = child->style.position == Position::Relative;
         if (relative) {
             x += flat_relative_x(child, content_w);
-            y += flat_relative_y(child, child_cb_h);
+            y += flat_relative_y(child, hspec);
         }
         child->layout.border.x = x;
         child->layout.border.y = y;
-        n->layout.box_children.push_back(child);
+        attach(n,child);
         // Flow advances by the un-offset box; top/left only move a relatively
         // positioned box visually. Static boxes ignore them entirely.
-        const bool empty=child->style.display==Display::Block&&child->style.overflow==Overflow::Visible&&
-            child->layout.border.h==0&&child->layout.box_children.empty()&&!child->layout.has_lines;
-        if(!empty){cursor+=margin()+child->layout.border.h;clear_margin();flow_content=true;}
-        add_margin(child->layout.margin_bottom);
+        if(!empty){cursor=flow_y+child->layout.border.h;clear_margin();flow_content=true;top_open=false;}
+        if(top_open)n->layout.before.merge(child->layout.after);
+        else pending.merge(child->layout.after);
     }
     flush();
-    if(escaping_margins&&hspec<0&&n->layout.padding_bottom==0&&n->layout.border_bottom==0&&margin()!=0&&
-       (n->style.min_height.is_auto()||n->style.min_height.is_zero()))
-        diag::approximate("parent-child margin collapse",node_label(n));
+    if(bottom_open){
+        const float vertical=n->layout.padding_top+n->layout.padding_bottom+n->layout.border_top+n->layout.border_bottom;
+        const float minimum=std::max(0.0f,min_height-(n->style.box_sizing_border?vertical:0));
+        // A binding min-height acts like a definite height for bottom collapse.
+        // A nonbinding minimum must not pull the child's trailing margin inside.
+        if(minimum<=std::max(0.0f,cursor))n->layout.after.merge(pending);
+        clear_margin();
+    }
+    n->layout.empty_edge=n->layout.before;
+    if(escaping_margins&&!flow_content&&min_height==0&&(hspec<0||hspec==0)&&
+       n->layout.padding_top==0&&n->layout.border_top==0&&n->layout.padding_bottom==0&&n->layout.border_bottom==0){
+        n->layout.margin_through=true;n->layout.before.merge(n->layout.after);n->layout.after=n->layout.before;
+    }
     for(const auto& entry:absolutes){
-        place_absolute(n,entry.first,content_w,entry.second,hspec>=0?hspec:cursor+margin());
-        n->layout.box_children.pop_back(); // Already inserted at its DOM position.
+        place_absolute(n,entry.first,entry.second);
     }
     return cursor+margin();
 }
@@ -593,6 +653,12 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
     }
     if (!g->is_element()) return;
     if (g->style.display == Display::None) return;
+    if(g->style.position==Position::Absolute||g->style.position==Position::Fixed){
+        if(box_parent)place_absolute(box_parent,g,0);
+        if((g->style.left.is_auto()&&g->style.right.is_auto())||(g->style.top.is_auto()&&g->style.bottom.is_auto()))
+            diag::approximate("absolute static position in inline content",node_label(g));
+        return;
+    }
     if (g->is_element("br")) {
         Token t;
         t.kind = Token::Break;
@@ -641,7 +707,7 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         t.wrap = true;
         if (box_parent && std::find(box_parent->layout.box_children.begin(), box_parent->layout.box_children.end(), g) ==
                                box_parent->layout.box_children.end())
-            box_parent->layout.box_children.push_back(g);
+            attach(box_parent,g);
         out.push_back(std::move(t));
         return;
     }
@@ -894,10 +960,10 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             else if (st.align_items == AlignItems::FlexEnd) x = content_w - outer_w + ml;
             it->layout.border.x = x;
             it->layout.border.y = y + mt;
-            n->layout.box_children.push_back(it);
+            attach(n,it);
             y += it->layout.border.h + mt + mb + st.row_gap + between;
         }
-        for (auto* a : absolutes) place_absolute(n, a, content_w, 0, container_h);
+        for (auto* a : absolutes) place_absolute(n, a, 0);
         return container_h;
     }
 
@@ -1063,7 +1129,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             else if (st.align_items == AlignItems::FlexEnd) yoff = cross_size - outer;
             it->layout.border.x = x + ml;
             it->layout.border.y = line_top + mt + yoff;
-            n->layout.box_children.push_back(it);
+            attach(n,it);
             x += it->layout.border.w + ml + resolve_l(it->style.margin.right, content_w, it->style.font_size) + gap +
                  between;
         }
@@ -1071,7 +1137,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
         if (&line != &lines.back()) line_top += st.row_gap;
     }
     float used_h = hspec >= 0 ? hspec : line_top;
-    for (auto* a : absolutes) place_absolute(n, a, content_w, 0, used_h);
+    for (auto* a : absolutes) place_absolute(n, a, 0);
     return used_h;
 }
 
@@ -1149,6 +1215,7 @@ float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
         else if(child->is_element("colgroup")||child->is_element("col"))diag::structural("table col/colgroup sizing is ignored",label);
     }
     auto rows=table_rows(table);if(rows.empty())return 0;
+    for(const auto& row:rows)if(row.group)row.group->layout=LayoutInfo{};
     bool percent_cells=false,max_width_cells=false;
     for(const auto& row:rows)for(auto* cell:row.cells){
         if(cell->has_attr("rowspan")||cell->has_attr("colspan")){
@@ -1237,10 +1304,10 @@ float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
     float y=sy;
     for(size_t i=0;i<rows.size();++i){auto& row=rows[i];const float height=heights[i];
         if(row.group){auto& group=row.group->layout;
-            if(!group.has_box){box(row.group,sx,y,row_width,0);table->layout.box_children.push_back(row.group);}
-            box(row.node,0,y-group.border.y,row_width,height);group.box_children.push_back(row.node);
+            if(!group.has_box){box(row.group,sx,y,row_width,0);attach(table,row.group);}
+            box(row.node,0,y-group.border.y,row_width,height);attach(row.group,row.node);
             group.border.h=y+height-group.border.y;group.content_h=group.border.h;
-        }else{box(row.node,sx,y,row_width,height);table->layout.box_children.push_back(row.node);}
+        }else{box(row.node,sx,y,row_width,height);attach(table,row.node);}
         float row_baseline=0;for(auto* cell:row.cells)if(cell->style.vertical_align==VerticalAlign::Baseline)
             row_baseline=std::max(row_baseline,cell->layout.content_y+(cell->layout.lines.empty()?cell->layout.content_h:cell->layout.lines.front().baseline));
         float x=0;
@@ -1255,7 +1322,7 @@ float LayoutEngine::layout_table(Node* table,float& width,float hspec) {
                 else child->layout.border.y+=shift;
             }
             l.border.x=x;l.border.y=0;l.content_h+=extra;l.border.h=height;
-            row.node->layout.box_children.push_back(cell);x+=columns[j]+sx;
+            attach(row.node,cell);x+=columns[j]+sx;
         }
         y+=height+sy;
     }
@@ -1287,11 +1354,12 @@ void LayoutEngine::finish_stretches(Node* node){
     const auto found=stretches.find(node);
     if(found!=stretches.end()){
         const auto request=found->second;stretches.erase(found);
-        const float x=node->layout.border.x,y=node->layout.border.y;
+        const float x=node->layout.border.x,y=node->layout.border.y;auto* parent=node->layout.parent;
         // Layout only once at this level. Nested containers record later work rather
         // than recursively performing their own measurement/finalization twice.
         layout_node(node,request.basis_width,request.basis_height,true,request.width,request.height);
         node->layout.border.x=x;node->layout.border.y=y;
+        node->layout.parent=parent;
     }
     for(auto* child:node->layout.box_children)finish_stretches(child);
 }
@@ -1359,10 +1427,10 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
             else stretches.erase(it);
             it->layout.content_h=target;it->layout.border.h=target+pad_v(it,content_w);
         }
-        it->layout.border.x=x+ml;it->layout.border.y=y+mt;n->layout.box_children.push_back(it);
+        it->layout.border.x=x+ml;it->layout.border.y=y+mt;attach(n,it);
     }y+=row_h[r]+st.row_gap;}
     float used = hspec >= 0 ? hspec : std::max(0.0f, y - (rows ? st.row_gap : 0));
-    for (auto* a : absolutes) place_absolute(n, a, content_w, 0, used);
+    for (auto* a : absolutes) place_absolute(n, a, 0);
     return used;
 }
 
@@ -1459,10 +1527,17 @@ void LayoutEngine::run() {
         for (auto* c : doc.root->children) if (c && c->is_element()) { root = c; break; }
     }
     if (!root) return;
+    index_document(doc.root,0);
     layout_node(root, vw, vh, false, -1, -1);
     root->layout.border.x = 0;
     root->layout.border.y = 0;
     finish_stretches(root);
+    finish_absolutes(root);
+    for(auto& node:doc.arena)if(node.layout.has_box){
+        auto found=document_order.find(&node);
+        node.layout.order=found!=document_order.end()?found->second:
+            (!node.children.empty()?document_order[node.children.front()]:0);
+    }
 }
 
 void layout_document(Document& doc, LayoutContext& ctx) {

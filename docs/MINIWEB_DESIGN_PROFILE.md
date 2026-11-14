@@ -28,8 +28,9 @@ The comparison does **not** establish pixel equivalence. In the initial 390px
 comparison the report was about 101px taller in MiniWeb. Subsequent fixes to
 sibling margin collapse, font fallback lists and installed family matching
 bring the measured boxes into agreement on the shared-font test environment.
-Other fonts and unsupported parent/child margin collapse can still change
-wrapping and vertical geometry. Even basic content needs inspection.
+Other fonts, unsupported formatting contexts and clearance can still change
+wrapping and vertical geometry. Normal block parent/child margin collapse now
+has dedicated Chromium comparisons. Even basic content needs inspection.
 The capability report flagged `cursor:pointer`, which has no screenshot impact,
 but did not detect these geometry differences. Absence of structural warnings
 is therefore insufficient for acceptance.

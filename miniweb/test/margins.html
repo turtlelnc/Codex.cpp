@@ -1,0 +1,26 @@
+<!doctype html><html><head><style>
+html,body{margin:0;font:16px/20px monospace}.case{width:300px;padding:8px;border:1px solid black;margin-bottom:24px}
+.parent{margin:12px 0 14px}.first{height:20px;margin:30px 0 40px;background:#086}
+#border{border:1px solid black}#padding{padding:1px}#hidden{overflow:hidden}#fixed{height:80px}#minimum{min-height:60px}
+#grand{margin:40px 0 10px}#mixed-parent{margin:-10px 0 25px}#mixed-first{margin:30px 0 -15px}
+.empty{margin:20px 0 30px}#before{height:20px;margin-bottom:10px}#after{height:20px;margin-top:15px}
+#leading{margin:10px 0 50px}#trailing{margin:50px 0 10px}
+#hidden-empty{overflow:hidden}
+#nonbinding{min-height:10px}#binding{min-height:21px}
+#percent-padding{width:100px;box-sizing:border-box;padding-top:10%;min-height:40px}
+</style></head><body>
+<section class="case" id="case-basic"><div class="parent" id="basic"><div class="first" id="basic-first"></div></div></section>
+<section class="case"><div class="parent" id="border"><div class="first" id="border-first"></div></div></section>
+<section class="case"><div class="parent" id="padding"><div class="first" id="padding-first"></div></div></section>
+<section class="case"><div class="parent" id="hidden"><div class="first" id="hidden-first"></div></div></section>
+<section class="case"><div class="parent" id="fixed"><div class="first" id="fixed-first"></div></div></section>
+<section class="case"><div class="parent" id="minimum"><div class="first" id="minimum-first"></div></div></section>
+<section class="case"><div id="grand"><div id="mixed-parent"><div class="first" id="mixed-first"></div></div></div></section>
+<section class="case"><div id="before"></div><div class="empty" id="empty"></div><div id="after"></div></section>
+<section class="case"><div class="parent" id="leading-parent"><div id="leading"></div><div class="first" id="leading-first"></div></div></section>
+<section class="case"><div class="parent" id="trailing-parent"><div class="first" id="trailing-first"></div><div id="trailing"></div></div></section>
+<section class="case"><div class="empty" id="hidden-empty"></div><div id="hidden-after" style="height:20px;margin-top:15px"></div></section>
+<section class="case"><div class="parent" id="nonbinding"><div class="first" id="nonbinding-first"></div></div></section>
+<section class="case"><div class="parent" id="binding"><div class="first" id="binding-first"></div></div></section>
+<section class="case"><div class="parent" id="percent-padding"><div class="first" id="percent-padding-first"></div></div></section>
+</body></html>
