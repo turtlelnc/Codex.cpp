@@ -123,5 +123,15 @@ inline RectF padding_box(const Node* n,const RectF& border){
 }
 inline std::vector<Node*> paint_order(const Node* n){auto children=n->layout.box_children;
     auto z=[&](const Node* c){return c->style.position!=Position::Static||n->style.display==Display::Flex||n->style.display==Display::Grid?c->style.z_index:0;};
-    std::stable_sort(children.begin(),children.end(),[&](const Node* a,const Node* b){return z(a)<z(b);});return children;
+    auto layer=[&](const Node* c){return c->style.position!=Position::Static||c->style.has_transform||c->style.opacity<1||
+        (!c->style.z_auto&&(n->style.display==Display::Flex||n->style.display==Display::Grid))?1:0;};
+    std::stable_sort(children.begin(),children.end(),[&](const Node* a,const Node* b){
+        if(z(a)!=z(b))return z(a)<z(b);
+        if(layer(a)!=layer(b))return layer(a)<layer(b);
+        if(n->style.display==Display::Flex){
+            auto order=[](const Node* c){return c->style.position==Position::Absolute||c->style.position==Position::Fixed?0:c->style.order;};
+            if(order(a)!=order(b))return order(a)<order(b);
+        }
+        return layer(a)?a->layout.order<b->layout.order:false;
+    });return children;
 }

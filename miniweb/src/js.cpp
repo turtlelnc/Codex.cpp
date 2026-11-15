@@ -256,7 +256,7 @@ std::string prop_css(const Node* n, const std::string& prop) {
     if (prop == "opacity") return util::format_float(st.opacity, 3);
     if (prop == "visibility") return st.visibility == Visibility::Visible ? "visible" : "hidden";
     if (prop == "overflow") return st.overflow == Overflow::Visible ? "visible" : "hidden";
-    if (prop == "z-index") return std::to_string(st.z_index);
+    if (prop == "z-index") return st.z_auto?"auto":std::to_string(st.z_index);
     if (prop == "flex-direction") {
         switch (st.flex_direction) {
             case FlexDirection::Row: return "row";
@@ -291,7 +291,9 @@ std::string prop_css(const Node* n, const std::string& prop) {
     if (prop == "border-right-width") return util::format_float(border_right(st), 2) + "px";
     if (prop == "border-bottom-width") return util::format_float(border_bottom(st), 2) + "px";
     if (prop == "border-left-width") return util::format_float(border_left(st), 2) + "px";
-    if (prop == "transform") return "none";
+    if (prop == "transform") return st.has_transform?
+        "matrix(1, 0, 0, 1, "+util::format_float(resolve_length(st.translate_x,n->layout.border.w,st.font_size),2)+", "+
+        util::format_float(resolve_length(st.translate_y,n->layout.border.h,st.font_size),2)+")":"none";
     if (prop == "box-sizing") return st.box_sizing_border ? "border-box" : "content-box";
     return {};
 }

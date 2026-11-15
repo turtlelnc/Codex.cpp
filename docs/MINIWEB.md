@@ -52,7 +52,7 @@ JSON shape remains unchanged.
 `preview_screenshot` and `preview shot --report FILE` report the features the renderer ignored or approximated while rendering the page. The Agent tool appends a one-line summary to the image result; the CLI writes the full JSON report with details and counts. Categories:
 
 - `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
-- `approximate`: features implemented only approximately, such as `position:sticky` as relative, `position:fixed` as absolute, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
+- `approximate`: features implemented only approximately, such as `position:sticky` as relative, unverified fixed-position scrolling, inline containing blocks, clipping across stacking groups, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
 - `structural`: constructs that affect layout but are dropped, such as table captions, `col`/`colgroup`, `rowspan`/`colspan`, collapsed borders and `inline-table`.
 - `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as scrolling, shadow DOM, observers and Web Animations.
 
@@ -61,11 +61,13 @@ Counts are encounter counts from rendering (including replayed clicks), not prec
 ## Compatibility limitations
 
 The [stability baseline](MINIWEB_STABILITY.md) records the repaired foundational
-paths, repeatable comparisons and known gaps. Current reports also flag likely
-parent/child margin-collapse, absolute containing blocks through static
-ancestors, and flex automatic-minimum-size mismatches. Sibling margins, normal
-flow percentage heights and bounded row flexing have dedicated regressions;
-this does not imply the full CSS algorithms are implemented.
+paths, repeatable comparisons and known gaps. Block containing blocks now follow
+positioned/transformed ancestors across static wrappers, with the initial viewport
+as fallback. Layout/paint ancestry is separate from DOM ancestry; event bubbling
+still follows the DOM. Normal block parent/child margins propagate positive and
+negative struts, including empty blocks and binding/nonbinding minimum heights.
+Reports retain inline-containing-block, cross-stacking-group clipping and flex
+automatic-minimum-size warnings. These repairs do not implement all CSS algorithms.
 
 For new pages explicitly targeting this renderer, see the bounded
 [design profile and actual-page assessment](MINIWEB_DESIGN_PROFILE.md).

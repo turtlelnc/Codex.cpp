@@ -63,7 +63,7 @@ void check_foundations(const std::filesystem::path& directory){
     if(!engine.click(35,35)||engine.document()->body->attr("data-clicks")!="1")throw std::runtime_error("Visible child click failed");
 
     if(!engine.load((directory/"foundation-limits.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);
-    for(const char* feature:{"parent-child margin collapse","absolute containing block through static ancestors","flex automatic minimum size"})
+    for(const char* feature:{"inline containing block","absolute clipping through stacking groups","flex automatic minimum size"})
         if(!diag::has(diag::Kind::Approximate,feature))throw std::runtime_error(std::string("Known limitation not reported: ")+feature);
 
     if(!engine.load((directory/"nested-layout.html").u8string(),&error)||!engine.render(false))throw std::runtime_error(error);

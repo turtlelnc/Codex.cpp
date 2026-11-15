@@ -390,6 +390,8 @@ const wait = async (fn) => {
       const narrowProbe=spawnSync(path.resolve(process.argv[3]),['--table-geometry-narrow',path.resolve('miniweb/test/tables.html')],{encoding:'utf8'});assert.equal(narrowProbe.status,0,narrowProbe.stderr);
       await require('./miniweb_tables_browser.cjs')(page,tableFixture,png('tables.png',640,800),JSON.parse(tableProbe.stdout),JSON.parse(narrowProbe.stdout));
       await require('./miniweb_design_browser.cjs')(page,path.resolve(process.argv[3]));
+      await require('./miniweb_position_browser.cjs')(page,path.resolve(process.argv[3]));
+      await require('./miniweb_margin_browser.cjs')(page,path.resolve(process.argv[3]));
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();

@@ -1,0 +1,9 @@
+<!doctype html><style>
+html,body{margin:0}.row{display:flex;width:200px;height:80px;align-items:flex-start}
+.item{width:100px;height:60px;flex:0 0 100px}.a{order:1;margin-left:-50px;background:red}.b{order:0;background:blue}
+#relative .item{position:relative}#transformed .item{transform:translate(0)}#translucent .item{opacity:.5}
+</style><body data-measure="none">
+<div class="row" id="relative"><div class="item a" id="relative-a"></div><div class="item b" id="relative-b"></div></div>
+<div class="row" id="transformed"><div class="item a" id="transformed-a"></div><div class="item b" id="transformed-b"></div></div>
+<div class="row" id="translucent"><div class="item a" id="translucent-a"></div><div class="item b" id="translucent-b"></div></div>
+<script>for(var id of ['relative-a','relative-b','transformed-a','transformed-b','translucent-a','translucent-b'])document.getElementById(id).addEventListener('click',function(){document.body.setAttribute('data-measure',this.id);});</script>

@@ -216,11 +216,11 @@ RectF Node::absolute_rect() const {
     RectF r;
     if (!layout.has_box) return r;
     r = visual_box(this,0,0);
-    const Node* p = parent;
+    const Node* p = layout.parent;
     while (p) {
         auto b=visual_box(p,0,0);r.x += p->layout.content_x + b.x;
         r.y += p->layout.content_y + b.y;
-        p = p->parent;
+        p = p->layout.parent;
     }
     return r;
 }

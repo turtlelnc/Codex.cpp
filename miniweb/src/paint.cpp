@@ -97,7 +97,10 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
     const bool visible = n->style.visibility == Visibility::Visible;
     const LayoutInfo& L = n->layout;
     if (!L.has_box) return;
-    float op = opacity * std::clamp(n->style.opacity, 0.0f, 1.0f);
+    float between=1;const Node* ancestor=n->parent;
+    while(ancestor&&ancestor!=L.parent){between*=std::clamp(ancestor->style.opacity,0.0f,1.0f);ancestor=ancestor->parent;}
+    if(!ancestor)between=1; // Anonymous layout wrappers are not DOM ancestors.
+    float op = opacity * between * std::clamp(n->style.opacity, 0.0f, 1.0f);
     if (op <= 0.001f) return;
     RectF box=visual_box(n,ox,oy);
     if (visible) {

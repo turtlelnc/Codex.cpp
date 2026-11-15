@@ -6,6 +6,13 @@
 struct Node;
 struct Image;
 
+struct MarginStrut {
+    float positive=0,negative=0;
+    void add(float value){positive=std::max(positive,value);negative=std::min(negative,value);}
+    void merge(const MarginStrut& other){positive=std::max(positive,other.positive);negative=std::min(negative,other.negative);}
+    float value()const{return positive+negative;}
+};
+
 struct LineItem {
     enum Kind { Text, ImageItem, BoxItem, BreakItem } kind = Text;
     Node* node = nullptr;       // text node for text items, element for box/image items
@@ -31,12 +38,16 @@ struct LineBox {
 };
 
 struct LayoutInfo {
+    Node* parent = nullptr;      // Coordinate/paint parent; DOM ancestry is unchanged.
+    size_t order = 0;            // DOM order within equal paint layers.
     bool has_box = false;
     bool none = false;
     RectF border;               // relative to parent content origin
     float content_x = 0, content_y = 0;
     float content_w = 0, content_h = 0;
     float margin_top = 0, margin_right = 0, margin_bottom = 0, margin_left = 0;
+    MarginStrut before,after,empty_edge;
+    bool margin_through = false;
     float padding_top = 0, padding_right = 0, padding_bottom = 0, padding_left = 0;
     float border_top = 0, border_right = 0, border_bottom = 0, border_left = 0;
 
