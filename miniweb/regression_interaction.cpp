@@ -35,6 +35,12 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(body->attr("data-committed")==name->control_value&&!engine.type("unfocused"),"Blur commits value and prevents further typing");
  check(click("actionButton")&&engine.key("Enter")&&body->attr("data-action")=="clicked"&&body->attr("data-action-count")=="2"&&!body->has_attr("data-wrong-submit"),"Input button Enter activates without implicit submit");
  check(click("actionSubmit")&&engine.key("Enter")&&body->attr("data-submit-click")=="canceled"&&body->attr("data-submit-count")=="2"&&!body->has_attr("data-wrong-submit"),"Input submit Enter preserves canceled click");
+ check(click("implicitText")&&engine.key("Enter")&&body->attr("data-default-clicks")=="1"&&!body->has_attr("data-implicit-wrong"),"Implicit submit activates cancelable default button");
+ check(click("disableDefault")&&click("implicitText")&&engine.key("Enter")&&body->attr("data-default-clicks")=="1"&&!body->has_attr("data-implicit-wrong"),"Disabled default prevents implicit submission");
+ check(click("checkLabel")&&engine.document()->get_element_by_id("labelCheck")->checked_value,"Label forwards checkbox activation");
+ check(click("cancelLabel")&&engine.document()->get_element_by_id("labelCheck")->checked_value,"Canceled label must not activate checkbox");
+ check(click("textLabel")&&engine.type("label focus")&&engine.document()->get_element_by_id("labelText")->control_value=="label focus","Label focuses associated input");
+ check(click("nestedLabel")&&engine.document()->get_element_by_id("nestedCheck")->checked_value,"Nested label activates non-focusable checkbox");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}

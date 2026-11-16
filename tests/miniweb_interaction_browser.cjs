@@ -118,6 +118,36 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-wrong-submit"),
       null,
     );
+    await page.locator("#implicitText").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-default-clicks"),
+      "1",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-implicit-wrong"),
+      null,
+    );
+    await page.locator("#disableDefault").click();
+    await page.locator("#implicitText").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-default-clicks"),
+      "1",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-implicit-wrong"),
+      null,
+    );
+    await page.locator("#checkLabel").click();
+    assert.equal(await page.locator("#labelCheck").isChecked(), true);
+    await page.locator("#cancelLabel").click();
+    assert.equal(await page.locator("#labelCheck").isChecked(), true);
+    await page.locator("#textLabel").click();
+    await page.keyboard.insertText("label focus");
+    assert.equal(await page.locator("#labelText").inputValue(), "label focus");
+    await page.locator("#nestedLabel").click();
+    assert.equal(await page.locator("#nestedCheck").isChecked(), true);
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",

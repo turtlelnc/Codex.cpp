@@ -27,3 +27,13 @@ var buttonClicks=0,submitClicks=0;document.getElementById('actionButton').addEve
 document.getElementById('actionSubmit').addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-submit-click','canceled');document.body.setAttribute('data-submit-count',String(++submitClicks))});
 document.getElementById('actions').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-wrong-submit','yes')});
 </script>
+<style>#implicit{position:absolute;left:0;top:250px;width:260px}#implicit input,#implicit button{height:24px;width:130px}#disableDefault{position:absolute;left:130px;top:0;width:120px}#labels{position:absolute;left:0;top:340px;width:260px}#labels label{display:block;width:110px;height:24px}#labelCheck{position:absolute;left:240px;top:0;width:18px;height:18px}#labelText{position:absolute;left:120px;top:24px;width:130px;height:24px}#nestedCheck{display:none}</style>
+<form id="implicit"><input id="implicitText"><button id="defaultSubmit">Default</button><button id="disableDefault" type="button">Disable</button></form>
+<div id="labels"><label id="checkLabel" for="labelCheck">Toggle checkbox</label><input id="labelCheck" type="checkbox"><label id="textLabel" for="labelText">Focus input</label><input id="labelText"><label id="nestedLabel">Nested hidden<input id="nestedCheck" type="checkbox"></label><label id="cancelLabel" for="labelCheck">Canceled label</label></div>
+<script>
+var defaultClicks=0,defaultSubmit=document.getElementById('defaultSubmit');
+defaultSubmit.addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-default-clicks',String(++defaultClicks))});
+document.getElementById('implicit').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-implicit-wrong','yes')});
+document.getElementById('disableDefault').addEventListener('click',function(){defaultSubmit.disabled=true});
+document.getElementById('cancelLabel').addEventListener('click',function(e){e.preventDefault()});
+</script>

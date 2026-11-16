@@ -91,7 +91,8 @@ Only `screenshot` returns an image, avoiding unnecessary image context costs.
 
 Supported user defaults are deliberately bounded: text-like inputs, textarea,
 checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur,
-checkbox changes, cancelable submit events, basic text-editing keys and Escape
+checkbox changes, associated/nested label activation, cancelable default submit
+button activation, basic text-editing keys and Escape
 handlers. Live values are distinct from default HTML attributes. Script-assigned
 values do not emit user-input events. Disabled/hidden controls cannot be edited;
 readonly controls can receive focus but cannot be edited. Focus/checked CSS states

@@ -1010,15 +1010,40 @@
       n.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: old }));
     }
   }
+  function formOf(n) {
+    if (!n) return null;
+    if (n.tagName === 'FORM') return n;
+    var id = n.getAttribute('form');
+    if (id !== null) { var owner = document.getElementById(id); return owner && owner.tagName === 'FORM' ? owner : null; }
+    return n.closest('form');
+  }
+  function implicitSubmit(n) {
+    var form = formOf(n); if (!form) return;
+    var controls = document.querySelectorAll('button,input');
+    for (var i=0;i<controls.length;i++) {
+      var c=controls[i];
+      if (formOf(c)===form && ((c.tagName==='BUTTON' && (!c.type || c.type==='submit')) || c.type==='submit')) {
+        // The first submit button remains the default even when disabled.
+        activate(c,0,0,false); return;
+      }
+    }
+    var blocking = controls.filter(function(c){return c.tagName==='INPUT' && formOf(c)===form && /^(|text|search|url|tel|email|password|date|month|week|time|datetime-local|number)$/.test(c.type);});
+    if(blocking.length<=1)submitForm(form,null);
+  }
   function submitForm(n, submitter) {
-    var form = n && (n.tagName === 'FORM' ? n : n.closest('form'));
+    var form = formOf(n);
     if (!form) return;
     var ev = new Event('submit', { bubbles: true, cancelable: true });
     ev.submitter = submitter || null;
     if (form.dispatchEvent(ev)) N.unsupported('form navigation', 'Form submitted; navigation/network submission is not supported');
   }
+  function activatable(n) {
+    if (!n || !n.isConnected) return false;
+    for(var p=n;p && p.nodeType===1;p=p.parentElement)if(p.hasAttribute('disabled'))return false;
+    return true;
+  }
   function activate(n, x, y, pointer) {
-    if (!enabled(n)) return false;
+    if (!activatable(n)) return false;
     if (pointer) {
       var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
       if (down) {
@@ -1039,6 +1064,13 @@
     if (check && control.checked !== previous) {
       control.dispatchEvent(new Event('input', { bubbles: true }));
       control.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    var label=n.closest('label');
+    if(label && !n.closest('button,input,textarea,select,a[href]')) {
+      var associated=label.hasAttribute('for') ? document.getElementById(label.getAttribute('for')) : label.querySelector('input:not([type=hidden]),textarea,select,button');
+      if(associated && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(associated.tagName) && associated.type!=='hidden' && !associated.contains(n) && activatable(associated)) {
+        focusControl(associated); activate(associated,x,y,false);
+      }
     }
     if (control && ((control.tagName === 'BUTTON' && (!control.type || control.type === 'submit')) || control.type === 'submit')) submitForm(control, control);
     return true;
@@ -1074,7 +1106,7 @@
       else if (key === 'Enter') {
         if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
         else if (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
-        else if (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)) submitForm(n, null);
+        else if (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)) implicitSubmit(n);
       } else if (key === ' ' && (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
       else if (key === ' ' && editable(n)) insertText(' ', 'insertText');
       else if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(key) && editable(n)) {
