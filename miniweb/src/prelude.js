@@ -463,7 +463,12 @@
     set selected(v) { if (v) this.setAttribute('selected', ''); else this.removeAttribute('selected'); }
     get placeholder() { return this.getAttribute('placeholder') || ''; }
     set placeholder(v) { this.setAttribute('placeholder', v); }
-    get type() { return this.getAttribute('type') || ''; }
+    get type() {
+      var raw=this.getAttribute('type') || '', type=raw.toLowerCase();
+      if(this.tagName==='BUTTON')return /^(submit|reset|button)$/.test(type)?type:'submit';
+      if(this.tagName==='INPUT')return /^(hidden|text|search|tel|url|email|password|date|month|week|time|datetime-local|number|range|color|checkbox|radio|file|submit|image|reset|button)$/.test(type)?type:'text';
+      return raw;
+    }
     set type(v) { this.setAttribute('type', v); }
     get href() { return this.getAttribute('href') || ''; }
     set href(v) { this.setAttribute('href', v); }
@@ -1053,7 +1058,9 @@
         focusControl(target);
         if (target && editable(target)) target.selectionStart = target.selectionEnd = target.value.length;
       }
+      if(!n.isConnected || !activatable(n))return true;
       n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+      if(!n.isConnected || !activatable(n))return true;
     }
     var control = n.closest('button,input');
     var check = control && control.tagName === 'INPUT' && /^(checkbox|radio)$/.test(control.type);
@@ -1073,7 +1080,7 @@
         focusControl(associated); activate(associated,x,y,false);
       }
     }
-    if (control && ((control.tagName === 'BUTTON' && (!control.type || control.type === 'submit')) || control.type === 'submit')) submitForm(control, control);
+    if (control && activatable(control) && ((control.tagName === 'BUTTON' && (!control.type || control.type === 'submit')) || control.type === 'submit')) submitForm(control, control);
     return true;
   }
   function editable(n) {

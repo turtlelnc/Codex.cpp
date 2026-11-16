@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8"><style>
 body{margin:0;font-family:sans-serif}input,textarea,button{display:block;box-sizing:border-box;width:220px;height:32px;margin:0}#result{white-space:pre-wrap}
-</style><form id="form"><input id="name" value="seed"><input id="disabled" disabled><textarea id="note">draft</textarea><input id="agree" type="checkbox"><button id="submit">Save</button></form><p id="result">initial</p>
+</style><form id="form"><input id="name" value="seed"><input id="disabled" disabled><textarea id="note">draft</textarea><input id="agree" type="checkbox"><button id="submit" type="SUBMIT">Save</button></form><p id="result">initial</p>
 <script>
 var events=[], submitted=0, visits=1;
 var nameInput=document.getElementById('name'),note=document.getElementById('note'),result=document.getElementById('result');
@@ -19,7 +19,7 @@ setting.addEventListener('beforeinput',function(e){if(e.data==='blocked')e.preve
 </script>
 <button id="clear" type="button" style="position:absolute;left:420px;top:0;width:100px">Clear</button><script>document.getElementById('clear').addEventListener('click',function(){note.value=''})</script>
 <style>#plain,#stayfocus{position:absolute;left:300px;top:210px;width:220px;height:32px;background:#eee}#stayfocus{top:445px}#actions{position:absolute;left:300px;top:250px;width:240px}#actions input{display:block;width:220px;height:32px}</style>
-<div id="plain">Ordinary content</div><div id="stayfocus">Canceled pointer default</div><form id="actions"><input id="actionButton" type="button" value="Action"><input id="actionSubmit" type="submit" value="Canceled submit"></form>
+<div id="plain">Ordinary content</div><div id="stayfocus">Canceled pointer default</div><form id="actions"><input id="actionButton" type="button" value="Action"><input id="actionSubmit" type="submit" value="Canceled submit"><input id="selfDisable" type="SUBMIT" value="Disable on click"><input id="pressDisable" type="button" value="Disable on press"></form>
 <script>
 nameInput.addEventListener('change',function(){document.body.setAttribute('data-committed',nameInput.value)});
 document.getElementById('stayfocus').addEventListener('mousedown',function(e){e.preventDefault()});
@@ -29,7 +29,7 @@ document.getElementById('actions').addEventListener('submit',function(e){e.preve
 </script>
 <style>#implicit{position:absolute;left:0;top:250px;width:260px}#implicit input,#implicit button{height:24px;width:130px}#disableDefault{position:absolute;left:130px;top:0;width:120px}#labels{position:absolute;left:0;top:340px;width:260px}#labels label{display:block;width:110px;height:24px}#labelCheck{position:absolute;left:240px;top:0;width:18px;height:18px}#labelText{position:absolute;left:120px;top:24px;width:130px;height:24px}#nestedCheck{display:none}</style>
 <form id="implicit"><input id="implicitText"><button id="defaultSubmit">Default</button><button id="disableDefault" type="button">Disable</button></form>
-<div id="labels"><label id="checkLabel" for="labelCheck">Toggle checkbox</label><input id="labelCheck" type="checkbox"><label id="textLabel" for="labelText">Focus input</label><input id="labelText"><label id="nestedLabel">Nested hidden<input id="nestedCheck" type="checkbox"></label><label id="cancelLabel" for="labelCheck">Canceled label</label></div>
+<div id="labels"><label id="checkLabel" for="labelCheck">Toggle checkbox</label><input id="labelCheck" type="checkbox"><label id="textLabel" for="labelText">Focus input</label><input id="labelText" type="TEXT"><label id="nestedLabel">Nested hidden<input id="nestedCheck" type="checkbox"></label><label id="cancelLabel" for="labelCheck">Canceled label</label></div>
 <script>
 var defaultClicks=0,defaultSubmit=document.getElementById('defaultSubmit');
 defaultSubmit.addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-default-clicks',String(++defaultClicks))});
@@ -51,4 +51,13 @@ var detachedContainer=document.createElement('div');detachedContainer.style.disp
 var detachedCheck=document.createElement('input');detachedCheck.type='checkbox';detachedCheck.click();
 var detachedForm=document.createElement('form'),detachedSubmit=document.createElement('button'),detachedSubmits=0;detachedForm.appendChild(detachedSubmit);detachedForm.addEventListener('submit',function(e){e.preventDefault();detachedSubmits++});detachedSubmit.click();
 document.body.setAttribute('data-detached-defaults',[beforeAttach,afterAttach,detachedClicks,detachedCheck.checked?1:0,detachedSubmits].join(':'));
+</script>
+
+<script>
+document.getElementById('selfDisable').addEventListener('click',function(){this.disabled=true;document.body.setAttribute('data-self-disable-click','yes')});
+document.getElementById('pressDisable').addEventListener('mousedown',function(){this.disabled=true});
+document.getElementById('pressDisable').addEventListener('click',function(){document.body.setAttribute('data-disabled-press-click','yes')});
+var invalidInput=document.createElement('input');invalidInput.setAttribute('type','not-a-type');
+var invalidButton=document.createElement('button');invalidButton.setAttribute('type','not-a-type');
+document.body.setAttribute('data-reflected-types',[labelText.type,document.getElementById('submit').type,labelText.getAttribute('type'),document.getElementById('submit').getAttribute('type'),invalidInput.type,invalidButton.type].join(':'));
 </script>

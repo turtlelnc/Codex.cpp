@@ -23,6 +23,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-detached-defaults"),
       "1:2:2:1:0",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-reflected-types"),
+      "text:submit:TEXT:SUBMIT:text:submit",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
@@ -179,6 +183,20 @@ module.exports = async function interactionBrowser(browser, probe) {
     assert.equal(
       await page.locator("body").getAttribute("data-program-changes"),
       "0",
+    );
+    await page.locator("#selfDisable").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-self-disable-click"),
+      "yes",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-wrong-submit"),
+      null,
+    );
+    await page.locator("#pressDisable").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-disabled-press-click"),
+      null,
     );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(

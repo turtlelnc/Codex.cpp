@@ -8,6 +8,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.load((directory/"interaction.html").u8string(),&error)&&engine.render(false),"Interaction fixture load");
  for(const char* id:{"open","clear"}){auto r=engine.document()->get_element_by_id(id)->absolute_rect();auto i=(static_cast<int>(r.y+5)*640+static_cast<int>(r.x+5))*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==240&&pixels[i+1]==240&&pixels[i+2]==240,"Positioned dialog controls must be painted");}
  check(engine.document()->body->attr("data-detached-defaults")=="1:2:2:1:0","Detached/hidden script clicks, disabled controls and disconnected form defaults");
+ check(engine.document()->body->attr("data-reflected-types")=="text:submit:TEXT:SUBMIT:text:submit","Reflected control types normalize casing/defaults without rewriting attributes");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -48,6 +49,8 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.key("Home")&&engine.key("ArrowRight")&&engine.key("ArrowRight")&&engine.type("Y")&&engine.document()->get_element_by_id("labelText")->control_value==u8"X\U0001f600Y","Right arrow must preserve surrogate pair");
  check(engine.key("Escape")&&click("plain")&&body->attr("data-program-changes")=="1","Script assignment after user edit preserves pending change");
  check(click("unicode")&&engine.type("X")&&engine.key("Backspace")&&click("plain")&&body->attr("data-program-changes")=="0","Reverted user edit uses current script-assigned baseline");
+ check(click("selfDisable")&&body->attr("data-self-disable-click")=="yes"&&!body->has_attr("data-wrong-submit"),"Disabling submit button during click suppresses default submission");
+ check(click("pressDisable")&&!body->has_attr("data-disabled-press-click"),"Disabling during pointer press suppresses click");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}
