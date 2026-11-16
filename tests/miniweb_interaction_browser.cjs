@@ -19,6 +19,10 @@ module.exports = async function interactionBrowser(browser, probe) {
     await page.setContent(
       fs.readFileSync("miniweb/test/interaction.html", "utf8"),
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-detached-defaults"),
+      "1:2:2:1:0",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],

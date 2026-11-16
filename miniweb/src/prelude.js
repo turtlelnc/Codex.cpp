@@ -1033,18 +1033,18 @@
   }
   function submitForm(n, submitter) {
     var form = formOf(n);
-    if (!form) return;
+    if (!n || !n.isConnected || !form || !form.isConnected) return;
     var ev = new Event('submit', { bubbles: true, cancelable: true });
     ev.submitter = submitter || null;
     if (form.dispatchEvent(ev)) N.unsupported('form navigation', 'Form submitted; navigation/network submission is not supported');
   }
   function activatable(n) {
-    if (!n || !n.isConnected) return false;
+    if (!n) return false;
     for(var p=n;p && p.nodeType===1;p=p.parentElement)if(p.hasAttribute('disabled'))return false;
     return true;
   }
   function activate(n, x, y, pointer) {
-    if (!activatable(n)) return false;
+    if (!activatable(n) || (pointer && !n.isConnected)) return false;
     if (pointer) {
       var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
       if (down) {
@@ -1068,7 +1068,7 @@
     }
     var label=n.closest('label');
     if(label && !n.closest('button,input,textarea,select,a[href]')) {
-      var associated=label.hasAttribute('for') ? document.getElementById(label.getAttribute('for')) : label.querySelector('input:not([type=hidden]),textarea,select,button');
+      var associated=label.hasAttribute('for') ? (label.isConnected ? document.getElementById(label.getAttribute('for')) : null) : label.querySelector('input:not([type=hidden]),textarea,select,button');
       if(associated && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(associated.tagName) && associated.type!=='hidden' && !associated.contains(n) && activatable(associated)) {
         focusControl(associated); activate(associated,x,y,false);
       }

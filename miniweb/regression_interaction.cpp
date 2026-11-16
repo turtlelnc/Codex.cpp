@@ -7,6 +7,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  auto check=[&](bool ok,const char* message){if(!ok)throw std::runtime_error(message);};
  check(engine.load((directory/"interaction.html").u8string(),&error)&&engine.render(false),"Interaction fixture load");
  for(const char* id:{"open","clear"}){auto r=engine.document()->get_element_by_id(id)->absolute_rect();auto i=(static_cast<int>(r.y+5)*640+static_cast<int>(r.x+5))*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==240&&pixels[i+1]==240&&pixels[i+2]==240,"Positioned dialog controls must be painted");}
+ check(engine.document()->body->attr("data-detached-defaults")=="1:2:2:1:0","Detached/hidden script clicks, disabled controls and disconnected form defaults");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");

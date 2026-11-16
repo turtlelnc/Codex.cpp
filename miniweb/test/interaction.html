@@ -45,3 +45,10 @@ labelText.addEventListener('keydown',function(e){if(e.key==='Escape')labelText.v
 document.getElementById('programmatic').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='script assigned';nameInput.focus();document.body.setAttribute('data-program-changes',String(programChanges))});
 document.getElementById('unicode').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='😀';document.body.setAttribute('data-program-changes','0')});
 </script>
+<script>
+var detached=document.createElement('button'),detachedClicks=0;detached.addEventListener('click',function(){detachedClicks++});detached.click();var beforeAttach=detachedClicks;
+var detachedContainer=document.createElement('div');detachedContainer.style.display='none';document.body.appendChild(detachedContainer);detachedContainer.appendChild(detached);detached.click();var afterAttach=detachedClicks;detached.disabled=true;detached.click();
+var detachedCheck=document.createElement('input');detachedCheck.type='checkbox';detachedCheck.click();
+var detachedForm=document.createElement('form'),detachedSubmit=document.createElement('button'),detachedSubmits=0;detachedForm.appendChild(detachedSubmit);detachedForm.addEventListener('submit',function(e){e.preventDefault();detachedSubmits++});detachedSubmit.click();
+document.body.setAttribute('data-detached-defaults',[beforeAttach,afterAttach,detachedClicks,detachedCheck.checked?1:0,detachedSubmits].join(':'));
+</script>
