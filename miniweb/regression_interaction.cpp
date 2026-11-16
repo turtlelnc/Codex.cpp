@@ -8,11 +8,11 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.load((directory/"interaction.html").u8string(),&error)&&engine.render(false),"Interaction fixture load");
  for(const char* id:{"open","clear"}){auto r=engine.document()->get_element_by_id(id)->absolute_rect();auto i=(static_cast<int>(r.y+5)*640+static_cast<int>(r.x+5))*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==240&&pixels[i+1]==240&&pixels[i+2]==240,"Positioned dialog controls must be painted");}
  check(!engine.type("unfocused"),"Unfocused typing must fail");
- check(engine.key("Tab")&&engine.type("你好")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
+ check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
  check(engine.key("Tab")&&engine.key(" ")&&engine.key("Tab")&&engine.key("Enter")&&engine.render(false),"Keyboard form submit");
  auto* body=engine.document()->body;auto result=body->attr("data-result");if(report)std::cout<<"INTERACTION_RESULT "<<result<<"\n";
- check(result.find("\"name\":\"A你\"")!=std::string::npos,"Live input value");
+ check(result.find(u8"\"name\":\"A\u4f60\"")!=std::string::npos,"Live input value");
  check(result.find("\"attr\":\"seed\"")!=std::string::npos,"Input default attribute unchanged");
  check(result.find("\"note\":\"!\\nline2draft\"")!=std::string::npos,"Textarea live value");
  check(result.find("\"checked\":true")!=std::string::npos&&result.find("\"submitted\":1")!=std::string::npos,"Checkbox and submit");
@@ -41,6 +41,12 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(click("cancelLabel")&&engine.document()->get_element_by_id("labelCheck")->checked_value,"Canceled label must not activate checkbox");
  check(click("textLabel")&&engine.type("label focus")&&engine.document()->get_element_by_id("labelText")->control_value=="label focus","Label focuses associated input");
  check(click("nestedLabel")&&engine.document()->get_element_by_id("nestedCheck")->checked_value,"Nested label activates non-focusable checkbox");
+ check(click("programmatic")&&body->attr("data-program-changes")=="0","Script-only focused assignment must not emit change on blur");
+ check(click("unicode")&&engine.key("ArrowLeft")&&engine.type("X"),"Unicode left movement");
+ check(engine.document()->get_element_by_id("labelText")->control_value==u8"X\U0001f600","Left arrow must preserve surrogate pair");
+ check(engine.key("Home")&&engine.key("ArrowRight")&&engine.key("ArrowRight")&&engine.type("Y")&&engine.document()->get_element_by_id("labelText")->control_value==u8"X\U0001f600Y","Right arrow must preserve surrogate pair");
+ check(engine.key("Escape")&&click("plain")&&body->attr("data-program-changes")=="1","Script assignment after user edit preserves pending change");
+ check(click("unicode")&&engine.type("X")&&engine.key("Backspace")&&click("plain")&&body->attr("data-program-changes")=="0","Reverted user edit uses current script-assigned baseline");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}

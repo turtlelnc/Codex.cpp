@@ -452,7 +452,7 @@
     get innerText() { return this.textContent; }
     set innerText(v) { this.textContent = v; }
     get value() { return N.controlValue(this.__id); }
-    set value(v) { N.controlValue(this.__id, v == null ? '' : String(v)); }
+    set value(v) { var before=this.value; N.controlValue(this.__id, v == null ? '' : String(v)); if(this.value!==before)this.selectionStart=this.selectionEnd=this.value.length; }
     get defaultValue() { return this.tagName === 'TEXTAREA' ? this.textContent : this.getAttribute('value') || ''; }
     set defaultValue(v) { if (this.tagName === 'TEXTAREA') this.textContent = v; else this.setAttribute('value', String(v)); }
     get checked() { return N.controlChecked(this.__id); }
@@ -996,15 +996,16 @@
     var old = activeControl;
     activeControl = null;
     if (old) {
-      if (old.__focusValue !== old.value && /^(INPUT|TEXTAREA)$/.test(old.tagName) && !/^(checkbox|radio)$/.test(old.type))
-        old.dispatchEvent(new Event('change', { bubbles: true }));
+      var changed=old.__userEdited && old.__focusValue !== old.value && /^(INPUT|TEXTAREA)$/.test(old.tagName) && !/^(checkbox|radio)$/.test(old.type);
+      old.__userEdited=false;
+      if(changed) old.dispatchEvent(new Event('change', { bubbles: true }));
       old.dispatchEvent(new FocusEvent('blur', { relatedTarget: n }));
       old.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: n }));
     }
     activeControl = n;
     N.focusControl(n ? n.__id : 0);
     if (n) {
-      n.__focusValue = n.value;
+      n.__focusValue = n.value; n.__userEdited=false;
       if (typeof n.selectionStart !== 'number') n.selectionStart = n.selectionEnd = 0;
       n.dispatchEvent(new FocusEvent('focus', { relatedTarget: old }));
       n.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: old }));
@@ -1081,14 +1082,19 @@
   function insertText(text, inputType) {
     var n = document.activeElement;
     if (!editable(n)) return false;
-    var ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: text, inputType: inputType });
+    var eventData=inputType==='insertText'?text:null;
+    var ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: eventData, inputType: inputType });
     if (!n.dispatchEvent(ev)) return true;
     var value = n.value, start = Math.max(0, Math.min(value.length, Number(n.selectionStart) || 0)), end = Math.max(start, Math.min(value.length, Number(n.selectionEnd) || 0));
     if (inputType === 'deleteContentBackward' && start === end && start) start -= value.charCodeAt(start - 1) >= 0xdc00 && value.charCodeAt(start - 1) <= 0xdfff ? 2 : 1;
     if (inputType === 'deleteContentForward' && start === end && end < value.length) end += value.charCodeAt(end) >= 0xd800 && value.charCodeAt(end) <= 0xdbff ? 2 : 1;
-    n.value = value.slice(0, start) + text + value.slice(end);
+    var next=value.slice(0, start) + text + value.slice(end);
+    if(next===value)return true;
+    if(!n.__userEdited)n.__focusValue=value;
+    n.__userEdited=true;
+    n.value = next;
     n.selectionStart = n.selectionEnd = start + text.length;
-    n.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: inputType }));
+    n.dispatchEvent(new InputEvent('input', { bubbles: true, data: eventData, inputType: inputType }));
     return true;
   }
   globalThis.__mwDispatchClick = function (id, x, y) { return activate(wrap(id | 0), x || 0, y || 0, true); };
@@ -1110,7 +1116,13 @@
       } else if (key === ' ' && (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
       else if (key === ' ' && editable(n)) insertText(' ', 'insertText');
       else if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(key) && editable(n)) {
-        var pos = key === 'Home' ? 0 : key === 'End' ? n.value.length : Math.max(0, Math.min(n.value.length, n.selectionStart + (key === 'ArrowLeft' ? -1 : 1)));
+        var value=n.value, start=Math.max(0,Math.min(value.length,Number(n.selectionStart)||0)), end=Math.max(start,Math.min(value.length,Number(n.selectionEnd)||0));
+        var pos=key==='Home'?0:key==='End'?value.length:key==='ArrowLeft'?start:end;
+        if(start===end && key==='ArrowLeft' && pos>0) {
+          --pos;if(pos>0 && value.charCodeAt(pos)>=0xdc00 && value.charCodeAt(pos)<=0xdfff && value.charCodeAt(pos-1)>=0xd800 && value.charCodeAt(pos-1)<=0xdbff)--pos;
+        } else if(start===end && key==='ArrowRight' && pos<value.length) {
+          ++pos;if(value.charCodeAt(pos-1)>=0xd800 && value.charCodeAt(pos-1)<=0xdbff && value.charCodeAt(pos)>=0xdc00 && value.charCodeAt(pos)<=0xdfff)++pos;
+        }
         n.selectionStart = n.selectionEnd = pos;
       }
     }

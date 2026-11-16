@@ -37,3 +37,11 @@ document.getElementById('implicit').addEventListener('submit',function(e){e.prev
 document.getElementById('disableDefault').addEventListener('click',function(){defaultSubmit.disabled=true});
 document.getElementById('cancelLabel').addEventListener('click',function(e){e.preventDefault()});
 </script>
+<button id="programmatic" type="button" style="position:absolute;left:150px;top:290px;width:110px;height:24px">Script value</button><button id="unicode" type="button" style="position:absolute;left:150px;top:315px;width:110px;height:24px">Unicode</button>
+<script>
+var programChanges=0,labelText=document.getElementById('labelText');
+labelText.addEventListener('change',function(){document.body.setAttribute('data-program-changes',String(++programChanges))});
+labelText.addEventListener('keydown',function(e){if(e.key==='Escape')labelText.value='script after user'});
+document.getElementById('programmatic').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='script assigned';nameInput.focus();document.body.setAttribute('data-program-changes',String(programChanges))});
+document.getElementById('unicode').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='😀';document.body.setAttribute('data-program-changes','0')});
+</script>

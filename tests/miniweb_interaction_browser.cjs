@@ -148,6 +148,34 @@ module.exports = async function interactionBrowser(browser, probe) {
     assert.equal(await page.locator("#labelText").inputValue(), "label focus");
     await page.locator("#nestedLabel").click();
     assert.equal(await page.locator("#nestedCheck").isChecked(), true);
+    await page.locator("#programmatic").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-program-changes"),
+      "0",
+    );
+    await page.locator("#unicode").click();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.insertText("X");
+    assert.equal(await page.locator("#labelText").inputValue(), "X😀");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.insertText("Y");
+    assert.equal(await page.locator("#labelText").inputValue(), "X😀Y");
+    await page.keyboard.press("Escape");
+    await page.locator("#plain").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-program-changes"),
+      "1",
+    );
+    await page.locator("#unicode").click();
+    await page.keyboard.insertText("X");
+    await page.keyboard.press("Backspace");
+    await page.locator("#plain").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-program-changes"),
+      "0",
+    );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",
