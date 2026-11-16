@@ -51,8 +51,8 @@ is therefore insufficient for acceptance.
 > supports vision, and check actual interactions. Read the capability report and
 > separate renderer limitations from defects in the page. Allow space for font
 > variation; do not force all content into one screenshot. Capture a larger
-> viewport where useful, within tool limits. Do not claim keyboard, scrolling,
-> full-page or Chrome verification from MiniWeb results. When the brief needs a
+> viewport where useful, within tool limits. Use preview_session for explicitly supported text/checkbox/button interactions.
+> Do not claim general keyboard, scrolling, full-page or Chrome verification. When the brief needs a
 > full browser, say so and use one if available.
 
 This brief deliberately makes no aesthetic blacklist: color, composition,
@@ -70,8 +70,9 @@ are changed by this document.
 | Complex dashboards, editors, virtual lists, charts | Not a reliable target without feature-specific work or another browser |
 | Full Codex.cpp WebUI | Not established: RPC/network and browser APIs exceed the file-only renderer |
 
-MiniWeb cannot currently verify keyboard focus, scroll behavior or content
-outside the captured viewport. A text-only provider cannot visually inspect
+Persistent sessions can verify the supported form/focus paths described in
+[MiniWeb](MINIWEB.md#persistent-interaction-sessions). MiniWeb cannot verify general
+browser keyboard behavior, scrolling or content outside the captured viewport. A text-only provider cannot visually inspect
 the image. These limits remain even when a page has no capability warnings.
 
 Run the existing integration suite with `--browser` to include these comparisons:

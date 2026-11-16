@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;font-family:sans-serif}input,textarea,button{display:block;box-sizing:border-box;width:220px;height:32px;margin:0}#result{white-space:pre-wrap}
+</style><form id="form"><input id="name" value="seed"><input id="disabled" disabled><textarea id="note">draft</textarea><input id="agree" type="checkbox"><button id="submit">Save</button></form><p id="result">initial</p>
+<script>
+var events=[], submitted=0, visits=1;
+var nameInput=document.getElementById('name'),note=document.getElementById('note'),result=document.getElementById('result');
+['focus','blur','focusin','focusout','beforeinput','input','change','keydown','keyup'].forEach(function(t){document.addEventListener(t,function(e){events.push(t+':'+e.target.id);if(t==='keydown'&&e.key==='Escape')e.preventDefault();},true)});
+document.getElementById('form').addEventListener('submit',function(e){e.preventDefault();submitted++;result.textContent=JSON.stringify({name:nameInput.value,attr:nameInput.getAttribute('value'),note:note.value,checked:document.getElementById('agree').checked,submitted:submitted,visits:visits,active:document.activeElement.id,events:events});document.body.setAttribute('data-result',result.textContent)});
+</script>
+<style>[hidden]{display:none}#open{position:absolute;left:300px;top:0;width:100px}#panel{position:absolute;left:280px;top:50px;width:250px;background:#eee;padding:10px}#panel input{width:210px}</style>
+<button id="open" type="button">Settings</button><div id="panel" role="dialog" aria-label="Settings" hidden><input id="setting" value="warm"><input id="readonly" readonly value="locked"><button id="cancel" type="button">Close</button></div>
+<script>
+var panel=document.getElementById('panel'), opener=document.getElementById('open'),setting=document.getElementById('setting');
+opener.addEventListener('click',function(){panel.removeAttribute('hidden');setting.focus()});
+function closePanel(){panel.setAttribute('hidden','');opener.focus();document.body.setAttribute('data-setting',setting.value)}
+panel.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();closePanel()}});
+document.getElementById('cancel').addEventListener('click',closePanel);
+setting.addEventListener('beforeinput',function(e){if(e.data==='blocked')e.preventDefault()});
+</script>
+<button id="clear" type="button" style="position:absolute;left:420px;top:0;width:100px">Clear</button><script>document.getElementById('clear').addEventListener('click',function(){note.value=''})</script>

@@ -86,7 +86,7 @@
     constructor(type, init) { super(type, init || {}); this.relatedTarget = (init || {}).relatedTarget || null; }
   }
   class InputEvent extends Event {
-    constructor(type, init) { super(type, init || {}); this.data = (init || {}).data || null; }
+    constructor(type, init) { super(type, init || {}); this.data = (init || {}).data == null ? null : (init || {}).data; this.inputType = (init || {}).inputType || ''; }
   }
 
   function addEvt(target, type, fn, opts) {
@@ -130,12 +130,9 @@
     if (!ev.target) ev.target = target;
     var path = [];
     for (var n = target; n; n = n.parentNode) path.push(n);
-    if (ev.bubbles) {
-      for (var i = path.length - 1; i >= 0 && !ev._stop; i--) invoke(path[i], ev, true);
-      for (var j = 0; j < path.length && !ev._stop; j++) invoke(path[j], ev, false);
-    } else {
-      invoke(target, ev, false);
-    }
+    for (var i = path.length - 1; i > 0 && !ev._stop; i--) invoke(path[i], ev, true);
+    if (!ev._stop) { invoke(target, ev, true); if (!ev._immediate) invoke(target, ev, false); }
+    if (ev.bubbles) for (var j = 1; j < path.length && !ev._stop; j++) invoke(path[j], ev, false);
     ev.currentTarget = null;
     return !ev.defaultPrevented;
   }
@@ -346,7 +343,7 @@
       return N.hasAttr(this.__id, n) ? N.attr(this.__id, n) : null;
     }
     getAttributeNS(ns, n) { return this.getAttribute(n); }
-    hasAttribute(n) { return N.hasAttr(this.__id, String(n)) === 1; }
+    hasAttribute(n) { return !!N.hasAttr(this.__id, String(n)); }
     setAttribute(n, v) { N.setAttr(this.__id, String(n), String(v)); }
     setAttributeNS(ns, n, v) { this.setAttribute(n, v); }
     removeAttribute(n) { N.removeAttr(this.__id, String(n)); }
@@ -454,16 +451,12 @@
     set textContent(v) { N.setTextContent(this.__id, v === null || v === undefined ? '' : String(v)); }
     get innerText() { return this.textContent; }
     set innerText(v) { this.textContent = v; }
-    get value() {
-      if (this.tagName === 'TEXTAREA') return this.textContent;
-      return this.getAttribute('value') || '';
-    }
-    set value(v) {
-      if (this.tagName === 'TEXTAREA') this.textContent = v;
-      else this.setAttribute('value', v === null || v === undefined ? '' : String(v));
-    }
-    get checked() { return this.hasAttribute('checked'); }
-    set checked(v) { if (v) this.setAttribute('checked', ''); else this.removeAttribute('checked'); }
+    get value() { return N.controlValue(this.__id); }
+    set value(v) { N.controlValue(this.__id, v == null ? '' : String(v)); }
+    get defaultValue() { return this.tagName === 'TEXTAREA' ? this.textContent : this.getAttribute('value') || ''; }
+    set defaultValue(v) { if (this.tagName === 'TEXTAREA') this.textContent = v; else this.setAttribute('value', String(v)); }
+    get checked() { return N.controlChecked(this.__id); }
+    set checked(v) { N.controlChecked(this.__id, !!v); }
     get disabled() { return this.hasAttribute('disabled'); }
     set disabled(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); }
     get selected() { return this.hasAttribute('selected'); }
@@ -492,9 +485,9 @@
       return { x: x, y: y, left: x, top: y, width: w, height: h, right: x + w, bottom: y + h };
     }
     getClientRects() { return [this.getBoundingClientRect()]; }
-    focus() { this.__focused = true; }
-    blur() { this.__focused = false; }
-    click() { dispatch(this, new MouseEvent('click', { bubbles: true, cancelable: true })); }
+    focus() { focusControl(this); }
+    blur() { if (activeControl === this) focusControl(null); }
+    click() { activate(this, 0, 0, false); }
     scrollIntoView() { N.unsupported('Element.scrollIntoView', 'scrolling is not supported'); }
     attachShadow() { N.unsupported('Element.attachShadow', 'shadow DOM is not supported'); return null; }
     getRootNode() { var n = this; while (n.parentNode) n = n.parentNode; return n; }
@@ -535,7 +528,7 @@
     get baseURI() { return N.baseUrl() || this.URL; }
     get location() { return globalThis.location; }
     get defaultView() { return globalThis; }
-    get activeElement() { return this.body; }
+    get activeElement() { return activeControl && activeControl.isConnected ? activeControl : this.body; }
     get cookie() { return ''; }
     set cookie(v) {}
     get hidden() { return false; }
@@ -987,11 +980,103 @@
   }
   globalThis.__mwFire = fireDocumentEvent;
   globalThis.__mwSetTitle = function (t) { document.title = t; };
-  globalThis.__mwDispatchClick = function (id, x, y) {
-    var n = wrap(id | 0);
-    if (!n) return false;
-    var ev = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x || 0, clientY: y || 0 });
-    n.dispatchEvent(ev);
+  // User interaction defaults live here, separate from synthetic dispatchEvent.
+  var activeControl = null;
+  function enabled(n) {
+    for (var p = n; p && p.nodeType === 1; p = p.parentElement)
+      if (p.hasAttribute('disabled') || p.hasAttribute('hidden') || getComputedStyle(p).display === 'none') return false;
+    return !!(n && n.isConnected && getComputedStyle(n).visibility !== 'hidden');
+  }
+  function focusable(n) {
+    return enabled(n) && n.type !== 'hidden' && (/^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
+  }
+  function focusControl(n) {
+    if (n && !focusable(n)) return;
+    if (n === activeControl) return;
+    var old = activeControl;
+    activeControl = null;
+    if (old) {
+      if (old.__focusValue !== old.value && /^(INPUT|TEXTAREA)$/.test(old.tagName) && !/^(checkbox|radio)$/.test(old.type))
+        old.dispatchEvent(new Event('change', { bubbles: true }));
+      old.dispatchEvent(new FocusEvent('blur', { relatedTarget: n }));
+      old.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: n }));
+    }
+    activeControl = n;
+    N.focusControl(n ? n.__id : 0);
+    if (n) {
+      n.__focusValue = n.value;
+      if (typeof n.selectionStart !== 'number') n.selectionStart = n.selectionEnd = 0;
+      n.dispatchEvent(new FocusEvent('focus', { relatedTarget: old }));
+      n.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: old }));
+    }
+  }
+  function submitForm(n, submitter) {
+    var form = n && (n.tagName === 'FORM' ? n : n.closest('form'));
+    if (!form) return;
+    var ev = new Event('submit', { bubbles: true, cancelable: true });
+    ev.submitter = submitter || null;
+    if (form.dispatchEvent(ev)) N.unsupported('form navigation', 'Form submitted; navigation/network submission is not supported');
+  }
+  function activate(n, x, y, pointer) {
+    if (!enabled(n)) return false;
+    if (pointer) {
+      var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      if (down) for (var f = n; f && f.nodeType === 1; f = f.parentElement) if (focusable(f)) { focusControl(f); if (editable(f)) f.selectionStart = f.selectionEnd = f.value.length; break; }
+      n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+    }
+    var control = n.closest('button,input');
+    var check = control && control.tagName === 'INPUT' && /^(checkbox|radio)$/.test(control.type);
+    var previous = check && control.checked;
+    if (check && control.type === 'radio') { N.unsupported('radio activation', 'Native radio-group defaults are not supported'); return false; }
+    if (check) control.checked = !previous;
+    var accepted = n.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    if (!accepted) { if (check) control.checked = previous; return true; }
+    if (check && control.checked !== previous) {
+      control.dispatchEvent(new Event('input', { bubbles: true }));
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (control && ((control.tagName === 'BUTTON' && (!control.type || control.type === 'submit')) || control.type === 'submit')) submitForm(control, control);
     return true;
+  }
+  function editable(n) {
+    return focusable(n) && !n.hasAttribute('readonly') && (n.tagName === 'TEXTAREA' || (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)));
+  }
+  function insertText(text, inputType) {
+    var n = document.activeElement;
+    if (!editable(n)) return false;
+    var ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: text, inputType: inputType });
+    if (!n.dispatchEvent(ev)) return true;
+    var value = n.value, start = Math.max(0, Math.min(value.length, Number(n.selectionStart) || 0)), end = Math.max(start, Math.min(value.length, Number(n.selectionEnd) || 0));
+    if (inputType === 'deleteContentBackward' && start === end && start) start -= value.charCodeAt(start - 1) >= 0xdc00 && value.charCodeAt(start - 1) <= 0xdfff ? 2 : 1;
+    if (inputType === 'deleteContentForward' && start === end && end < value.length) end += value.charCodeAt(end) >= 0xd800 && value.charCodeAt(end) <= 0xdbff ? 2 : 1;
+    n.value = value.slice(0, start) + text + value.slice(end);
+    n.selectionStart = n.selectionEnd = start + text.length;
+    n.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: inputType }));
+    return true;
+  }
+  globalThis.__mwDispatchClick = function (id, x, y) { return activate(wrap(id | 0), x || 0, y || 0, true); };
+  globalThis.__mwType = function (text) { if (!insertText(String(text), 'insertText')) throw new Error('No editable focused control'); };
+  globalThis.__mwKey = function (key) {
+    var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
+    var n = document.activeElement;
+    if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift }))) {
+      if (key === 'Tab') {
+        var list = document.querySelectorAll('input,textarea,button,select,a,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
+        list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });
+        if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
+      } else if (key === 'Backspace') insertText('', 'deleteContentBackward');
+      else if (key === 'Delete') insertText('', 'deleteContentForward');
+      else if (key === 'Enter') {
+        if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
+        else if (n.tagName === 'BUTTON') n.click();
+        else if (n.tagName === 'INPUT') submitForm(n, null);
+      } else if (key === ' ' && (n.tagName === 'BUTTON' || /^(checkbox|radio)$/.test(n.type))) n.click();
+      else if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(key) && editable(n)) {
+        var pos = key === 'Home' ? 0 : key === 'End' ? n.value.length : Math.max(0, Math.min(n.value.length, n.selectionStart + (key === 'ArrowLeft' ? -1 : 1)));
+        n.selectionStart = n.selectionEnd = pos;
+      }
+    }
+    document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: key, bubbles: true, shiftKey: shift }));
   };
+
 })();

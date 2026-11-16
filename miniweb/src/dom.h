@@ -22,6 +22,9 @@ struct Node {
     std::string data;                 // text / comment data
     std::vector<std::pair<std::string, std::string>> attrs;
     std::vector<Node*> children;
+    std::string control_value;
+    bool control_dirty = false;
+    bool checked_value = false, checked_dirty = false;
     Node* parent = nullptr;
     Document* doc = nullptr;
     int id = 0;
@@ -73,6 +76,7 @@ struct Node {
 
 struct Document {
     uint64_t revision = 0;
+    int focused_id = 0;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout
     std::vector<Node*> id_map; // index == node id

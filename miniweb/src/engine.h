@@ -26,6 +26,9 @@ public:
     bool load(const std::string& url_or_path, std::string* error = nullptr);
     bool render(bool full_page = true);
     bool click(float x, float y);
+    bool type(const std::string& text);
+    bool key(const std::string& key);
+    bool advance(int milliseconds);
     void set_wait_ms(int ms) { wait_ms_ = ms; }
     const std::string& url() const { return url_; }
     const std::string& title() const { return title_; }
@@ -52,6 +55,7 @@ private:
     std::unique_ptr<Canvas> canvas_;
     std::vector<LinkHit> links_;
 
+    bool interact(const std::string& code);
     void collect_stylesheets();
     void apply_styles();
     void do_layout();

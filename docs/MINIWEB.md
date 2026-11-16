@@ -12,7 +12,7 @@ codex-cpp preview shot index.html -o mobile.png --width 390 --height 844
 codex-cpp preview shot index.html -o clicked.png --click 100,150
 ```
 
-The Agent tool `preview_screenshot` returns a PNG observation for vision-capable models. Each call reloads the document, runs scripts and replays up to 16 clicks in order. Calls do not share a browser session, cookies or storage. There is no keyboard-input, scrolling or full-page capture tool in this version. TUI receives textual tool results; WebUI provides collapsed image results, retained after reload. The image uses ordinary provider context/input tokens; no independent model call is added.
+The Agent tool `preview_screenshot` returns a PNG observation for vision-capable models. Each call reloads the document, runs scripts and replays up to 16 clicks in order. Calls do not share a browser session, cookies or storage. The one-shot tool does not accept keyboard input or scrolling; use `preview_session` below for bounded persistent form interaction. Neither tool provides full-page capture. TUI receives textual tool results; WebUI provides collapsed image results, retained after reload. The image uses ordinary provider context/input tokens; no independent model call is added.
 
 Image observations are stored as `codex_tool_image` records, separate from human messages. Recent images survive context compaction. In a multi-tool round, every tool result is recorded before images are sent to the provider, preserving Chat/Responses continuation ordering. Older executables cannot continue journals containing these new records; keep an updated runtime when moving or resuming these sessions.
 
@@ -79,3 +79,82 @@ This integration does not claim the whole Codex.cpp WebUI works inside MiniWeb. 
 ## Dependencies and provenance
 
 Core source lives in `miniweb/src/`. QuickJS-ng, stb and NanoSVG retain their bundled licenses under `miniweb/third_party/`; notices are embedded in `--licenses`. React/Vue bundles are compatibility fixtures only and are not shipped as runtime resources.
+
+## Persistent interaction sessions
+
+`preview_session` adds a real, process-local page session alongside the unchanged
+`preview_screenshot`. Call `open` with a workspace HTML path, retain the returned
+opaque token, then use `click`, `type`, `key`, `wait`, `screenshot` and `close`.
+Opening loads the page once. Later screenshots keep the same DOM, QuickJS heap,
+listeners, form values and in-memory storage. They do not replay earlier actions.
+Only `screenshot` returns an image, avoiding unnecessary image context costs.
+
+Supported user defaults are deliberately bounded: text-like inputs, textarea,
+checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur,
+checkbox changes, cancelable submit events, basic text-editing keys and Escape
+handlers. Live values are distinct from default HTML attributes. Script-assigned
+values do not emit user-input events. Disabled/hidden controls cannot be edited;
+readonly controls can receive focus but cannot be edited. Focus/checked CSS states
+and a basic focus border are drawn. Native select menus, radio-group navigation,
+validation, form serialization, IME/composition, rich-text editing, exact pointer
+caret placement, caret/selection painting and multiline textarea typography are
+not implemented. Pointer text clicks currently place the insertion point at the
+end. A submitted form never navigates or sends network requests; it records a
+capability warning unless the page handles and cancels submission.
+
+There is **no background wall-clock browser event loop** yet. Timers keep their
+virtual clock across operations; actions advance it as before, and explicit
+`wait` advances it by 0–3000 ms. Scrolling, navigation, persistence across Agent
+process/task restarts and running the complete Codex.cpp WebUI remain future work.
+In particular a WebUI task restart creates a new Agent process: open a new preview
+session in that task rather than reusing a journal's old token.
+
+For command-line automation, `codex-cpp preview session` accepts one JSON request
+per stdin line and emits one JSON response with `exit_code`, `output` and `images`.
+It uses exactly the same session tool, ownership and sandbox as Agent calls:
+
+```json
+{"operation":"open","path":"index.html","width":640,"height":480,"wait_ms":0}
+```
+
+Read its token from `output`, then send, for example:
+
+```json
+{"operation":"key","session":"TOKEN","value":"Tab"}
+{"operation":"type","session":"TOKEN","value":"Hello"}
+{"operation":"screenshot","session":"TOKEN"}
+{"operation":"close","session":"TOKEN"}
+```
+
+All lines must belong to the same running process; separate CLI invocations cannot
+share tokens. CLI fields not used by an operation may be omitted. The strict Agent
+schema requires every field: use empty unused strings, zero unused coordinates,
+1280×800 dimensions and zero wait when irrelevant.
+
+Limits are enforced by native host and worker code, not instructions to the model:
+
+- At most two sessions per tool instance; tokens bind to the canonical workspace.
+- 60 seconds idle, 300 seconds absolute lifetime, at most 128 operations and
+  128 KiB cumulative framed input, at most 8192 bytes per text operation.
+- Existing 20-second cumulative worker CPU, memory and PNG/file limits remain;
+  individual host actions time out after 25 seconds; console output is capped at
+  200 KB over the whole session. Script execution retains its interrupt budget.
+- Normal close, stdin EOF, cancellation or owner destruction stops the worker
+  process tree before removing its private files. A worker watchdog enforces idle
+  and lifetime limits even if the owner disappears. Forced host termination on
+  macOS may leave a worker until its watchdog exits; no immediate parent-death
+  facility is claimed there. Forced termination can leave private temporary
+  directories on any platform until external cleanup.
+- Crashes, failed dispatched operations, cancellation and quota errors invalidate
+  the token. There is no silent reload or resurrection. Idle expiration is
+  independent of when the next host request arrives.
+- Acknowledgements use sequenced native-written private files, never page console
+  text. Screenshots retain the validated private capability metadata envelope.
+  No sandbox, credential inheritance, network or workspace-write grants were added.
+  Windows still fails closed without an AppContainer backend.
+
+`miniweb-regression` checks form and settings behavior. `miniweb_test.cjs` runs the
+real isolated session lifecycle/negative suite on Linux/macOS and verifies Windows
+rejection. Its browser mode compares actual Chromium form results and event
+presence with MiniWeb on the same fixture. This is a bounded compatibility test,
+not evidence that arbitrary pages behave like Chromium.

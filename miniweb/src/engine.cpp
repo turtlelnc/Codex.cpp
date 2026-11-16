@@ -122,6 +122,7 @@ bool Engine::render(bool full_page) {
         }
         js_ran_ = true;
     }
+    ensure_layout();
     content_height_ = (int)std::ceil(document_content_height(*doc_));
     if (content_height_ <= 0) content_height_ = 1;
     content_height_ = std::min(content_height_, 20000);
@@ -141,12 +142,30 @@ bool Engine::click(float x, float y) {
     if (!target) return false;
     std::string code = "__mwDispatchClick(" + std::to_string(target->id) + "," +
                        util::format_float(x, 2) + "," + util::format_float(y, 2) + ");";
-    if (!js_runtime_->eval(code, "<viewer-click>", false)) return false;
+    return interact(code);
+}
+
+bool Engine::interact(const std::string& code) {
+    if (!js_runtime_ || !js_runtime_->eval(code, "<viewer-interaction>", false)) return false;
     js_runtime_->drain_timers(500);
     collect_stylesheets();
     apply_styles();
     do_layout();
     return true;
+}
+
+bool Engine::type(const std::string& text) {
+    if (text.size() > 8192) return false;
+    return interact("__mwType(\"" + diag::detail::json_escape(text) + "\");");
+}
+bool Engine::key(const std::string& key) {
+    static const std::vector<std::string> keys={"Tab","Shift+Tab","Enter"," ","Backspace","Delete","ArrowLeft","ArrowRight","Home","End","Escape"};
+    if (std::find(keys.begin(),keys.end(),key)==keys.end()) return false;
+    return interact("__mwKey(\"" + diag::detail::json_escape(key) + "\");");
+}
+bool Engine::advance(int milliseconds) {
+    if (!js_runtime_ || milliseconds<0 || milliseconds>3000) return false;
+    js_runtime_->drain_timers(milliseconds); ensure_layout(); return true;
 }
 
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {

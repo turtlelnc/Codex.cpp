@@ -119,3 +119,25 @@ Their transport is separate from untrusted page logs, but a trustworthy report
 is not proof of complete compatibility. Keep a real browser as the reference,
 retain a case for every confirmed repair, and expand supported claims only
 after geometry, painting and interaction evidence agree.
+
+## Bounded persistent interaction baseline
+
+`interaction.html` now exercises a fillable form and a settings dialog in one
+persistent Engine: Tab/Shift+Tab, input/default value separation, Unicode editing,
+change on blur, checkbox/submit, cancelable beforeinput, readonly controls and
+Escape/restore focus. Native pixels check positioned controls and clearing edited
+textarea text. Chromium executes the same primary form/settings transitions and
+compares resulting state and required event presence, not identical key event timing.
+
+`miniweb_session_test.cjs` exercises real sandbox workers, independent session
+ownership, image continuity, close/EOF, invalid paths/keys, spoofed console output,
+infinite event handlers, console/input/action budgets and Windows fail-closed
+behavior. Browser-mode tests also wait the actual 60-second idle timeout and
+cancel an active callback with SIGINT, checking the worker processes disappear.
+The 300-second lifetime and OS memory/CPU ceilings remain native bounds; this
+suite does not deliberately exhaust each one.
+
+These are bounded form/runtime checks. Native select/radio groups, full text
+selection/caret painting, IME, form validation/navigation, scrolling, a wall-clock
+event loop and compatibility with the complete Codex.cpp WebUI remain unverified
+or unsupported; see [session limits](MINIWEB.md#persistent-interaction-sessions).

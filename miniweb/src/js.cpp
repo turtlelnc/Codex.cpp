@@ -304,6 +304,8 @@ Node* clone_node(Document& doc, Node* n, bool deep) {
     c->tag = n->tag;
     c->data = n->data;
     c->attrs = n->attrs;
+    c->control_value = n->control_value; c->control_dirty = n->control_dirty;
+    c->checked_value = n->checked_value; c->checked_dirty = n->checked_dirty;
     if (deep) {
         for (auto* ch : n->children) {
             Node* cc = clone_node(doc, ch, true);
@@ -462,6 +464,24 @@ JSValue js_attr(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return str_val(ctx, n ? n->attr(arg_str(ctx, argv[1])) : "");
 }
 
+JSValue js_control_value(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (argc < 1) return JS_UNDEFINED;
+    Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
+    if (!n) return JS_UNDEFINED;
+    if (argc > 1) { n->control_value = arg_str(ctx, argv[1]); n->control_dirty = true; ++n->doc->revision; }
+    return str_val(ctx, n->control_dirty ? n->control_value : n->is_element("textarea") ? n->text_content() : n->attr("value"));
+}
+
+JSValue js_focus_control(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    auto* b = bridge(ctx); if (!b || !argc) return JS_UNDEFINED;
+    b->doc->focused_id = arg_i32(ctx, argv[0]); ++b->doc->revision; return JS_UNDEFINED;
+}
+JSValue js_control_checked(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    Node* n = argc ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
+    if (!n) return JS_FALSE;
+    if (argc > 1) { n->checked_value = JS_ToBool(ctx, argv[1]) > 0; n->checked_dirty = true; ++n->doc->revision; }
+    return JS_NewBool(ctx, n->checked_dirty ? n->checked_value : n->has_attr("checked"));
+}
 JSValue js_has_attr(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 2) return JS_FALSE;
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
@@ -731,6 +751,9 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("queryAll", 2, js_query_all),
     bridge_function("matches", 2, js_matches),
     bridge_function("attr", 2, js_attr),
+    bridge_function("controlValue", 2, js_control_value),
+    bridge_function("controlChecked", 2, js_control_checked),
+    bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),
     bridge_function("removeAttr", 2, js_remove_attr),
