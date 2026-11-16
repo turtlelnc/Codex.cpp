@@ -78,6 +78,46 @@ module.exports = async function interactionBrowser(browser, probe) {
     assert.equal(await page.locator("#readonly").inputValue(), "locked");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
+    await page.locator("#name").click();
+    await page.keyboard.insertText("tail");
+    await page.locator("#stayfocus").click();
+    await page.keyboard.insertText("x");
+    const previous = await page.locator("#name").inputValue();
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator("#name").inputValue(), previous + " ");
+    await page.locator("#plain").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-committed"),
+      previous + " ",
+    );
+    assert.equal(
+      await page.evaluate(() => document.activeElement.tagName),
+      "BODY",
+    );
+    await page.locator("#actionButton").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-action"),
+      "clicked",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-action-count"),
+      "1",
+    );
+    await page.locator("#actionSubmit").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-submit-click"),
+      "canceled",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-submit-count"),
+      "1",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-wrong-submit"),
+      null,
+    );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",

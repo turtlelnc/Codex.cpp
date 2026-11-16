@@ -18,3 +18,12 @@ document.getElementById('cancel').addEventListener('click',closePanel);
 setting.addEventListener('beforeinput',function(e){if(e.data==='blocked')e.preventDefault()});
 </script>
 <button id="clear" type="button" style="position:absolute;left:420px;top:0;width:100px">Clear</button><script>document.getElementById('clear').addEventListener('click',function(){note.value=''})</script>
+<style>#plain,#stayfocus{position:absolute;left:300px;top:210px;width:220px;height:32px;background:#eee}#stayfocus{top:445px}#actions{position:absolute;left:300px;top:250px;width:240px}#actions input{display:block;width:220px;height:32px}</style>
+<div id="plain">Ordinary content</div><div id="stayfocus">Canceled pointer default</div><form id="actions"><input id="actionButton" type="button" value="Action"><input id="actionSubmit" type="submit" value="Canceled submit"></form>
+<script>
+nameInput.addEventListener('change',function(){document.body.setAttribute('data-committed',nameInput.value)});
+document.getElementById('stayfocus').addEventListener('mousedown',function(e){e.preventDefault()});
+var buttonClicks=0,submitClicks=0;document.getElementById('actionButton').addEventListener('click',function(){document.body.setAttribute('data-action','clicked');document.body.setAttribute('data-action-count',String(++buttonClicks))});
+document.getElementById('actionSubmit').addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-submit-click','canceled');document.body.setAttribute('data-submit-count',String(++submitClicks))});
+document.getElementById('actions').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-wrong-submit','yes')});
+</script>

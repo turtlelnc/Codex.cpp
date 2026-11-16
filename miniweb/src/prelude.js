@@ -1021,7 +1021,12 @@
     if (!enabled(n)) return false;
     if (pointer) {
       var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
-      if (down) for (var f = n; f && f.nodeType === 1; f = f.parentElement) if (focusable(f)) { focusControl(f); if (editable(f)) f.selectionStart = f.selectionEnd = f.value.length; break; }
+      if (down) {
+        var target = null;
+        for (var f = n; f && f.nodeType === 1; f = f.parentElement) if (focusable(f)) { target = f; break; }
+        focusControl(target);
+        if (target && editable(target)) target.selectionStart = target.selectionEnd = target.value.length;
+      }
       n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
     }
     var control = n.closest('button,input');
@@ -1068,9 +1073,10 @@
       else if (key === 'Delete') insertText('', 'deleteContentForward');
       else if (key === 'Enter') {
         if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
-        else if (n.tagName === 'BUTTON') n.click();
-        else if (n.tagName === 'INPUT') submitForm(n, null);
-      } else if (key === ' ' && (n.tagName === 'BUTTON' || /^(checkbox|radio)$/.test(n.type))) n.click();
+        else if (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
+        else if (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)) submitForm(n, null);
+      } else if (key === ' ' && (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
+      else if (key === ' ' && editable(n)) insertText(' ', 'insertText');
       else if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(key) && editable(n)) {
         var pos = key === 'Home' ? 0 : key === 'End' ? n.value.length : Math.max(0, Math.min(n.value.length, n.selectionStart + (key === 'ArrowLeft' ? -1 : 1)));
         n.selectionStart = n.selectionEnd = pos;
