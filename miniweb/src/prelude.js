@@ -318,6 +318,9 @@
     });
   }
 
+  function liveValueControl(n) {
+    return n.tagName==='TEXTAREA' || (n.tagName==='INPUT' && !/^(button|submit|reset|image|hidden|checkbox|radio|file)$/.test(n.type));
+  }
   class Element extends Node {
     get nodeType() { return 1; }
     get nodeName() { return this.tagName; }
@@ -451,8 +454,18 @@
     set textContent(v) { N.setTextContent(this.__id, v === null || v === undefined ? '' : String(v)); }
     get innerText() { return this.textContent; }
     set innerText(v) { this.textContent = v; }
-    get value() { return N.controlValue(this.__id); }
-    set value(v) { var before=this.value; N.controlValue(this.__id, v == null ? '' : String(v)); if(this.value!==before)this.selectionStart=this.selectionEnd=this.value.length; }
+    get value() {
+      if(liveValueControl(this))return N.controlValue(this.__id);
+      var value=this.getAttribute('value');
+      if(value===null && this.tagName==='INPUT' && /^(checkbox|radio)$/.test(this.type))return 'on';
+      return value===null?'':value;
+    }
+    set value(v) {
+      var value=v==null?'':String(v);
+      if(!liveValueControl(this)){this.setAttribute('value',value);return;}
+      var before=this.value;N.controlValue(this.__id,value);
+      if(this.value!==before)this.selectionStart=this.selectionEnd=this.value.length;
+    }
     get defaultValue() { return this.tagName === 'TEXTAREA' ? this.textContent : this.getAttribute('value') || ''; }
     set defaultValue(v) { if (this.tagName === 'TEXTAREA') this.textContent = v; else this.setAttribute('value', String(v)); }
     get checked() { return N.controlChecked(this.__id); }

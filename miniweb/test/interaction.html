@@ -61,3 +61,9 @@ var invalidInput=document.createElement('input');invalidInput.setAttribute('type
 var invalidButton=document.createElement('button');invalidButton.setAttribute('type','not-a-type');
 document.body.setAttribute('data-reflected-types',[labelText.type,document.getElementById('submit').type,labelText.getAttribute('type'),document.getElementById('submit').getAttribute('type'),invalidInput.type,invalidButton.type].join(':'));
 </script>
+<script>
+function valueProbe(tag,type){var n=document.createElement(tag);if(type)n.type=type;n.value='first';n.setAttribute('value','second');return n.value}
+var checkDefault=document.createElement('input');checkDefault.type='checkbox';
+var areaProbe=document.createElement('textarea');areaProbe.value='first';areaProbe.defaultValue='second';
+document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('input','checkbox'),valueProbe('button'),valueProbe('input','button'),valueProbe('input','text'),areaProbe.value,valueProbe('input','hidden')].join(':'));
+</script>

@@ -27,6 +27,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-reflected-types"),
       "text:submit:TEXT:SUBMIT:text:submit",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-value-modes"),
+      "on:second:second:second:first:first:second",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
