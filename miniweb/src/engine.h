@@ -29,6 +29,7 @@ public:
     bool type(const std::string& text);
     bool key(const std::string& key);
     bool advance(int milliseconds);
+    bool scroll(float x, float y, float dx, float dy);
     void set_wait_ms(int ms) { wait_ms_ = ms; }
     const std::string& url() const { return url_; }
     const std::string& title() const { return title_; }
@@ -56,6 +57,7 @@ private:
     std::vector<LinkHit> links_;
 
     bool interact(const std::string& code);
+    bool flush_scroll_events();
     void collect_stylesheets();
     void apply_styles();
     void do_layout();

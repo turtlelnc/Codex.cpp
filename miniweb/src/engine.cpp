@@ -100,6 +100,7 @@ void Engine::do_layout() {
     ctx.viewport_w = (float)viewport_w_;
     ctx.viewport_h = (float)viewport_h_;
     layout_document(*doc_, ctx);
+    update_scroll_layout(*doc_);
     layout_revision_=doc_->revision;
 }
 
@@ -124,6 +125,7 @@ bool Engine::render(bool full_page) {
     }
     if(js_runtime_ && !js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
     ensure_layout();
+    if(!flush_scroll_events())return false;
     content_height_ = (int)std::ceil(document_content_height(*doc_));
     if (content_height_ <= 0) content_height_ = 1;
     content_height_ = std::min(content_height_, 20000);
@@ -153,6 +155,16 @@ bool Engine::interact(const std::string& code) {
     collect_stylesheets();
     apply_styles();
     do_layout();
+    return flush_scroll_events();
+}
+
+bool Engine::flush_scroll_events(){
+    if(!js_runtime_)return true;
+    for(int pass=0;pass<8&&!doc_->pending_scroll_events.empty();++pass){
+        if(!js_runtime_->eval("__mwFlushScrollEvents();__mwReconcileFocus();","<scroll-events>",false))return false;
+        js_runtime_->drain_timers(0);ensure_layout();
+    }
+    if(!doc_->pending_scroll_events.empty())diag::approximate("scroll event feedback deferred","More than eight callback-induced scroll rounds; remaining events deferred to the next action/frame");
     return true;
 }
 
@@ -169,19 +181,25 @@ bool Engine::advance(int milliseconds) {
     if (!js_runtime_ || milliseconds<0 || milliseconds>3000) return false;
     js_runtime_->drain_timers(milliseconds);
     if(!js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
-    ensure_layout(); return true;
+    ensure_layout(); return flush_scroll_events();
+}
+
+bool Engine::scroll(float x,float y,float dx,float dy) {
+    if(!doc_||!js_runtime_||!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(dx)||!std::isfinite(dy)||x<0||y<0||x>=viewport_w_||y>=viewport_h_||std::abs(dx)>10000||std::abs(dy)>10000)return false;
+    ensure_layout();auto* target=hit_test(doc_->html,0,0,x,y);
+    return interact("__mwScroll("+std::to_string(target?target->id:0)+","+util::format_float(dx,2)+","+util::format_float(dy,2)+");");
 }
 
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None) return nullptr;
     const LayoutInfo& L = n->layout;
-    RectF box=visual_box(n,ox,oy);
+    RectF box=n->viewport_rect();
     // A clipped descendant cannot paint or receive clicks over the border.
     // The border itself still belongs to this element.
-    if(n->style.overflow==Overflow::Hidden&&!padding_box(n,box).contains(px,py))
+    if(n->style.overflow!=Overflow::Visible&&!overflow_clip(n,box).contains(px,py))
         return n->style.visibility==Visibility::Visible&&box.contains(px,py)?n:nullptr;
-    float cx = box.x + L.content_x;
-    float cy = box.y + L.content_y;
+    float cx = box.x + L.content_x - n->scroll_x;
+    float cy = box.y + L.content_y - n->scroll_y;
     const auto ordered=paint_order(n);
     for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
         if (Node* hit = hit_test(*it, cx, cy, px, py)) return hit;
@@ -204,9 +222,9 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
 void Engine::collect_links(Node* n, float ox, float oy, const RectF* clip) {
     if (!n || !n->is_element() || !n->layout.has_box) return;
     const LayoutInfo& L = n->layout;
-    RectF box=visual_box(n,ox,oy);
-    float cx = box.x + L.content_x;
-    float cy = box.y + L.content_y;
+    RectF box=n->viewport_rect();
+    float cx = box.x + L.content_x - n->scroll_x;
+    float cy = box.y + L.content_y - n->scroll_y;
     auto add_link = [&](RectF r, Node* a) {
         if(clip){const float right=std::min(r.right(),clip->right()),bottom=std::min(r.bottom(),clip->bottom());
             r.x=std::max(r.x,clip->x);r.y=std::max(r.y,clip->y);r.w=right-r.x;r.h=bottom-r.y;}
@@ -226,8 +244,8 @@ void Engine::collect_links(Node* n, float ox, float oy, const RectF* clip) {
         add_link(box, n);
     }
     RectF child_clip;
-    if(n->style.overflow==Overflow::Hidden){
-        child_clip=padding_box(n,box);
+    if(n->style.overflow!=Overflow::Visible){
+        child_clip=overflow_clip(n,box);
         if(clip){const float right=std::min(child_clip.right(),clip->right()),bottom=std::min(child_clip.bottom(),clip->bottom());
             child_clip.x=std::max(child_clip.x,clip->x);child_clip.y=std::max(child_clip.y,clip->y);
             child_clip.w=std::max(0.0f,right-child_clip.x);child_clip.h=std::max(0.0f,bottom-child_clip.y);}

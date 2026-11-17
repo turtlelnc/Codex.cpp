@@ -207,6 +207,7 @@ std::string position_css(Position p) {
         case Position::Relative: return "relative";
         case Position::Absolute: return "absolute";
         case Position::Fixed: return "fixed";
+        case Position::Sticky: return "sticky";
     }
     return "static";
 }
@@ -255,7 +256,9 @@ std::string prop_css(const Node* n, const std::string& prop) {
     if (prop == "height") return util::format_float(n->layout.has_box ? n->layout.content_h : 0, 2) + "px";
     if (prop == "opacity") return util::format_float(st.opacity, 3);
     if (prop == "visibility") return st.visibility == Visibility::Visible ? "visible" : "hidden";
-    if (prop == "overflow") return st.overflow == Overflow::Visible ? "visible" : "hidden";
+    if(prop=="overflow"||prop=="overflow-x"||prop=="overflow-y"){
+        auto o=overflow_axis(n,prop!="overflow-y");return o==Overflow::Visible?"visible":o==Overflow::Auto?"auto":o==Overflow::Scroll?"scroll":o==Overflow::Clip?"clip":"hidden";
+    }
     if (prop == "z-index") return st.z_auto?"auto":std::to_string(st.z_index);
     if (prop == "flex-direction") {
         switch (st.flex_direction) {
@@ -623,7 +626,7 @@ JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     RectF r;
     if (argc >= 1) {
         Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->absolute_rect();}
+        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->viewport_rect();}
     }
     JSValue arr = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, arr, 0, JS_NewFloat64(ctx, r.x));
@@ -631,6 +634,21 @@ JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     JS_SetPropertyUint32(ctx, arr, 2, JS_NewFloat64(ctx, r.w));
     JS_SetPropertyUint32(ctx, arr, 3, JS_NewFloat64(ctx, r.h));
     return arr;
+}
+
+JSValue js_scroll(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if(!refresh_geometry(ctx))return JS_EXCEPTION;
+    auto* b=bridge(ctx);Node* n=argc?node_of(ctx,arg_i32(ctx,argv[0])):nullptr;
+    if(!b||!n)return JS_UNDEFINED;
+    if(argc>=3){double x=0,y=0;JS_ToFloat64(ctx,&x,argv[1]);JS_ToFloat64(ctx,&y,argv[2]);return JS_NewBool(ctx,set_scroll(n,float(x),float(y)));}
+    bool root=n==b->doc->html;auto& d=*b->doc;const auto& l=n->layout;
+    double values[]={root?d.scroll_x:n->scroll_x,root?d.scroll_y:n->scroll_y,root?d.scroll_width:n->scroll_width,root?d.scroll_height:n->scroll_height,root?double(d.viewport_w):double(std::max(0.0f,l.border.w-l.border_left-l.border_right)),root?double(d.viewport_h):double(std::max(0.0f,l.border.h-l.border_top-l.border_bottom))};
+    auto arr=JS_NewArray(ctx);for(int i=0;i<6;++i)JS_SetPropertyUint32(ctx,arr,i,JS_NewFloat64(ctx,n->layout.has_box?values[i]:0));return arr;
+}
+
+JSValue js_scroll_events(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    auto* b=bridge(ctx);std::set<int> pending;if(b)pending.swap(b->doc->pending_scroll_events);
+    std::vector<int> ids;for(int id:pending){auto* n=id>0&&size_t(id)<b->doc->id_map.size()?b->doc->id_map[id]:nullptr;if(n&&n->layout.has_box)ids.push_back(id);}return array_of_ids(ctx,ids);
 }
 
 JSValue js_computed(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -763,6 +781,8 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("controlValue", 2, js_control_value),
     bridge_function("controlChecked", 2, js_control_checked),
     bridge_function("resetControl", 1, js_reset_control),
+    bridge_function("scroll", 3, js_scroll),
+    bridge_function("scrollEvents", 0, js_scroll_events),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),

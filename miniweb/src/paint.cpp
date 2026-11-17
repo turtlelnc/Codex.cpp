@@ -107,7 +107,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
     if(!ancestor)between=1; // Anonymous layout wrappers are not DOM ancestors.
     float op = opacity * between * std::clamp(n->style.opacity, 0.0f, 1.0f);
     if (op <= 0.001f) return;
-    RectF box=visual_box(n,ox,oy);
+    RectF box=n->viewport_rect();
     if (visible) {
         for (auto& sh : n->style.shadows) {
             if (sh.color.a == 0) continue;
@@ -149,11 +149,11 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         if (has_border&&!internal_table) canvas.draw_border(box, n->style, op);
     }
 
-    bool clip = n->style.overflow == Overflow::Hidden;
-    if (clip) canvas.push_clip(padding_box(n,box));
+    bool clip = n->style.overflow != Overflow::Visible;
+    if (clip) canvas.push_clip(overflow_clip(n,box));
 
-    float cx = box.x + L.content_x;
-    float cy = box.y + L.content_y;
+    float cx = box.x + L.content_x - n->scroll_x;
+    float cy = box.y + L.content_y - n->scroll_y;
     RectF content{cx, cy, L.content_w, L.content_h};
 
     if (visible && L.is_image) {

@@ -39,6 +39,10 @@ module.exports = async function sessionTests(binary) {
     path.join(root, "warning.html"),
     '<script>console.warn("Review this warning")</script>',
   );
+  fs.copyFileSync(
+    path.resolve("miniweb/test/scroll.html"),
+    path.join(root, "scroll.html"),
+  );
   const peers = [];
   function peer() {
     const child = spawn(binary, ["preview", "session"], {
@@ -175,6 +179,50 @@ module.exports = async function sessionTests(binary) {
     denied = await p.request({ operation: "screenshot", session: id });
     assert.notEqual(denied.exit_code, 0);
     await p.request({ operation: "close", session: second });
+    const scrolled = token(await p.request({ path: "scroll.html" }));
+    const beforeScroll = await p.request({
+      operation: "screenshot",
+      session: scrolled,
+    });
+    assert.equal(
+      (
+        await p.request({
+          operation: "scroll",
+          session: scrolled,
+          x: 50,
+          y: 150,
+          delta_x: 100,
+          delta_y: 260,
+        })
+      ).exit_code,
+      0,
+    );
+    const afterScroll = await p.request({
+      operation: "screenshot",
+      session: scrolled,
+    });
+    assert.equal(afterScroll.exit_code, 0);
+    assert.notEqual(beforeScroll.images[0], afterScroll.images[0]);
+    assert.equal(
+      (await p.request({ operation: "screenshot", session: scrolled }))
+        .images[0],
+      afterScroll.images[0],
+      "Scroll offset persists across screenshots",
+    );
+    assert.notEqual(
+      (
+        await p.request({
+          operation: "scroll",
+          session: scrolled,
+          x: 50,
+          y: 150,
+          delta_y: 10001,
+        })
+      ).exit_code,
+      0,
+      "Oversized scroll rejected",
+    );
+    await p.request({ operation: "close", session: scrolled });
     denied = await p.request({ path: "../outside.html" });
     assert.equal(denied.exit_code, 126);
     const background = token(await p.request({ path: "background.html" }));

@@ -33,7 +33,6 @@ void check_diagnostics(const std::filesystem::path& directory) {
         {Kind::Structural, "inline-table", "inline-table was not reported"},
         {Kind::MissingJs, "attachShadow", "attachShadow was not reported"},
         {Kind::MissingJs, "scrollIntoView", "scrollIntoView was not reported"},
-        {Kind::MissingJs, "window.scrollTo", "window.scrollTo was not reported"},
         {Kind::MissingJs, "IntersectionObserver", "IntersectionObserver was not reported"},
         {Kind::MissingJs, "ResizeObserver", "ResizeObserver was not reported"},
         {Kind::MissingJs, "undefinedGlobalApi", "undefined global was not reported"},
@@ -41,6 +40,7 @@ void check_diagnostics(const std::filesystem::path& directory) {
     };
     for (const auto& item : expected)
         if (!has(item.kind, item.feature)) throw std::runtime_error(item.message);
+    if(has(Kind::MissingJs,"window.scrollTo"))throw std::runtime_error("Implemented window.scrollTo was incorrectly reported missing");
     const std::string summary = diag::report().summary();
     if (summary.find("Capability report:") != 0 || summary.find("not Chromium verification") == std::string::npos)
         throw std::runtime_error("Capability summary is not actionable");

@@ -274,7 +274,9 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
             else if (util::ends_with(p,"-color")) b.current_color=true;
         }
     }
-    else if (p == "overflow") st.overflow = Overflow::Visible;
+    else if (p == "overflow") st.overflow = st.overflow_x = st.overflow_y = Overflow::Visible;
+    else if (p == "overflow-x") {st.overflow_x=Overflow::Visible;st.overflow=st.overflow_y==Overflow::Visible?Overflow::Visible:Overflow::Hidden;}
+    else if (p == "overflow-y") {st.overflow_y=Overflow::Visible;st.overflow=st.overflow_x==Overflow::Visible?Overflow::Visible:Overflow::Hidden;}
     else if (p == "box-sizing") st.box_sizing_border = false;
     else if (p == "flex-grow") st.flex_grow = 0;
     else if (p == "flex-shrink") st.flex_shrink = 1;
@@ -802,7 +804,7 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
     }
     else if (p == "position") {
         if (vl == "relative") st.position = Position::Relative;
-        else if (vl == "sticky") { st.position = Position::Relative; diag::approximate("position:sticky laid out as relative", vl); }
+        else if (vl == "sticky") {st.position = Position::Sticky;diag::approximate("position:sticky basic inset positioning", "Complex sticky sizing and writing modes are not supported");}
         else if (vl == "absolute") st.position = Position::Absolute;
         else if (vl == "fixed") { st.position = Position::Fixed; diag::approximate("position:fixed scrolling is not implemented", vl); }
         else st.position = Position::Static;
@@ -985,8 +987,13 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         float o = util::ends_with(vl, "%") ? parse_float_value(vl) / 100.0f : parse_float_value(vl, 1);
         st.opacity = std::clamp(o, 0.0f, 1.0f);
     } else if (p == "overflow" || p == "overflow-x" || p == "overflow-y") {
-        if (vl == "hidden" || vl == "auto" || vl == "scroll" || vl == "clip") st.overflow = Overflow::Hidden;
-        else if (vl == "visible") st.overflow = Overflow::Visible;
+        auto parse=[](const std::string& v){return v=="hidden"?Overflow::Hidden:v=="auto"?Overflow::Auto:v=="scroll"?Overflow::Scroll:v=="clip"?Overflow::Clip:Overflow::Visible;};
+        auto tokens=util::split_ws(vl);
+        if(!tokens.empty()&&tokens.size()<=(p=="overflow"?2u:1u)&&std::all_of(tokens.begin(),tokens.end(),[](const std::string& v){return v=="visible"||v=="hidden"||v=="auto"||v=="scroll"||v=="clip";})){
+            if(p!="overflow-y")st.overflow_x=parse(tokens[0]);
+            if(p!="overflow-x")st.overflow_y=parse(p=="overflow"&&tokens.size()>1?tokens[1]:tokens[0]);
+            st.overflow=st.overflow_x==Overflow::Visible&&st.overflow_y==Overflow::Visible?Overflow::Visible:Overflow::Hidden;
+        }
     } else if (p == "box-sizing") st.box_sizing_border = vl == "border-box";
     else if (p == "border-radius") {
         auto toks = split_ws_paren(v);
