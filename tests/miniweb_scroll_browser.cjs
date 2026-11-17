@@ -26,6 +26,25 @@ module.exports = async function (browser, probe) {
       await page.locator("body").getAttribute("data-click"),
       "target",
     );
+    await page.locator("#panel").evaluate((n) => {
+      n.style.overflowX = "hidden";
+      n.style.overflowY = "auto";
+      n.scrollTo(0, 0);
+    });
+    await page.mouse.move(50, 150);
+    await page.mouse.wheel(50, 50);
+    await page.waitForFunction(
+      () => document.getElementById("panel").scrollTop === 50,
+    );
+    assert.equal(
+      await page.locator("#panel").evaluate((n) => n.scrollLeft),
+      0,
+      "Diagonal wheel must not scroll hidden horizontal overflow",
+    );
+    await page.locator("#panel").evaluate((n) => {
+      n.removeAttribute("style");
+      n.scrollTo(100, 260);
+    });
     await page.evaluate(() => scrollTo(0, 400));
     await page.waitForFunction(() => scrollY === 400);
     assert.equal(

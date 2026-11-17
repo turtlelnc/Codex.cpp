@@ -822,8 +822,9 @@
     var wheel=new Event('wheel',{bubbles:true,cancelable:true});wheel.deltaX=dx;wheel.deltaY=dy;wheel.deltaMode=0;
     if(!n.dispatchEvent(wheel))return;
     while(n&&n!==document.documentElement){var style=getComputedStyle(n),state=N.scroll(n.__id);
-      if((dx&&/auto|scroll/.test(style.overflowX||style.overflow)&&state[2]>state[4])||(dy&&/auto|scroll/.test(style.overflowY||style.overflow)&&state[3]>state[5])){
-        var x=n.scrollLeft,y=n.scrollTop;n.scrollBy(dx,dy);if(x!==n.scrollLeft||y!==n.scrollTop)return;
+      var allowedX=/^(auto|scroll)$/.test(style.overflowX)?dx:0,allowedY=/^(auto|scroll)$/.test(style.overflowY)?dy:0;
+      if((allowedX&&state[2]>state[4])||(allowedY&&state[3]>state[5])){
+        var x=n.scrollLeft,y=n.scrollTop;n.scrollBy(allowedX,allowedY);if(x!==n.scrollLeft||y!==n.scrollTop)return;
       }n=n.parentElement;
     }
     var root=document.documentElement,style=getComputedStyle(root);

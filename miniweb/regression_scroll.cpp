@@ -15,6 +15,9 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  auto pixel=[&](int x,int y,int red,int green,int blue){auto i=(y*640+x)*4;const auto& p=e.canvas()->pixels();check(p[i]==red&&p[i+1]==green&&p[i+2]==blue,"Scroll pixels agree with geometry");};
  pixel(45,105,0,0,255);pixel(25,65,0,128,0);pixel(305,15,255,0,0);
  check(e.click(45,105)&&d->body->attr("data-click")=="target","Scrolled target receives click");
+ node("panel")->set_attr("style","overflow-x:hidden;overflow-y:auto");set_scroll(node("panel"),0,0);
+ check(e.render(false)&&e.scroll(50,150,50,50)&&node("panel")->scroll_x==0&&node("panel")->scroll_y==50,"Diagonal wheel respects each axis overflow policy");
+ node("panel")->remove_attr("style");check(e.render(false),"Restore auto overflow");set_scroll(node("panel"),100,260);
  check(e.scroll(600,400,0,400)&&e.render(false)&&d->scroll_y==400&&d->body->attr("data-window-scroll")=="400","Page scroll events and state");
  check(std::abs(node("target")->viewport_rect().y-(r.y-400))<.1,"Document contents move with viewport scroll");
  check(node("fixed")->viewport_rect().y==10&&e.click(305,15)&&d->body->attr("data-click")=="fixed","Fixed geometry and hit testing survive viewport scroll");
