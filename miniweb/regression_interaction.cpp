@@ -74,5 +74,12 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}
+ Engine background(640,480);background.set_wait_ms(0);
+ check(background.load((directory/"background.html").u8string(),&error)&&background.render(false)&&background.key("Tab")&&background.type("kept"),"Background-click fixture");
+ check(background.document()->html->absolute_rect().h<480,"Fixture must leave empty viewport space");
+ check(background.click(400,400)&&background.render(false)&&background.document()->body->attr("data-kept")=="kept"&&background.document()->focused_id==0,"Empty viewport click preserves state and commits blur");
+ check(background.click(400,400)&&!background.click(-1,400)&&!background.click(640,400),"Only in-viewport background clicks are accepted");
+ check(background.key("Tab")&&background.type("retained")&&background.click(500,400)&&background.type("X")&&background.document()->body->attr("data-kept")=="kept","Canceled background mousedown preserves focus and pending edit");
+ check(background.click(400,400)&&background.document()->body->attr("data-kept")=="retainedX","Subsequent ordinary background click commits retained value");
  std::cerr<<"MiniWeb interaction regressions passed\n";
 }

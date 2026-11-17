@@ -93,6 +93,8 @@ int codex_miniweb_session_worker(int argc,char** argv){try{
   if(!engine.load(argv[3],&error)||!engine.render(false))throw std::runtime_error("Session load failed: "+error);
   const auto output=std::filesystem::u8path(argv[4]);
   auto acknowledge=[&](int sequence,bool ok){
+    // Diagnostics precede the native acknowledgement, including buffered logs.
+    std::cout.flush();std::cerr.flush();std::fflush(stdout);std::fflush(stderr);
     std::ofstream reply(output/"reply.tmp",std::ios::binary|std::ios::trunc);reply<<sequence<<' '<<(ok?1:0);reply.close();if(!reply)throw std::runtime_error("Cannot save session reply");
     std::filesystem::rename(output/"reply.tmp",output/"reply");
   };

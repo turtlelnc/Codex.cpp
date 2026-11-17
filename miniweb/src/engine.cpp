@@ -138,9 +138,9 @@ bool Engine::render(bool full_page) {
 }
 
 bool Engine::click(float x, float y) {
-    if (!js_runtime_ || !doc_ || !doc_->html) return false;
+    if (!js_runtime_ || !doc_ || !doc_->html || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=viewport_w_ || y>=viewport_h_) return false;
     Node* target = hit_test(doc_->html, 0, 0, x, y);
-    if (!target) return false;
+    if (!target) return interact("__mwDispatchBackground("+util::format_float(x,2)+","+util::format_float(y,2)+");");
     std::string code = "__mwDispatchClick(" + std::to_string(target->id) + "," +
                        util::format_float(x, 2) + "," + util::format_float(y, 2) + ");";
     return interact(code);

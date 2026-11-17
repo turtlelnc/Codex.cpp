@@ -1150,6 +1150,7 @@
     n.dispatchEvent(new InputEvent('input', { bubbles: true, data: eventData, inputType: inputType }));
     return true;
   }
+  globalThis.__mwDispatchBackground = function(x,y) { return activate(document.documentElement,x,y,true); };
   globalThis.__mwDispatchClick = function (id, x, y) { return activate(wrap(id | 0), x || 0, y || 0, true); };
   globalThis.__mwType = function (text) { if (!insertText(String(text), 'insertText')) throw new Error('No editable focused control'); };
   globalThis.__mwKey = function (key) {

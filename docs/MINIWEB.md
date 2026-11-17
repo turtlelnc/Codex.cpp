@@ -88,6 +88,8 @@ opaque token, then use `click`, `type`, `key`, `wait`, `screenshot` and `close`.
 Opening loads the page once. Later screenshots keep the same DOM, QuickJS heap,
 listeners, form values and in-memory storage. They do not replay earlier actions.
 Only `screenshot` returns an image, avoiding unnecessary image context costs.
+Clicking empty space inside the viewport is a normal document interaction and
+keeps the session alive; ordinary pointer-default cancellation still applies.
 
 Supported user defaults are deliberately bounded: text-like inputs, textarea,
 checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur,
@@ -153,6 +155,11 @@ Limits are enforced by native host and worker code, not instructions to the mode
   independent of when the next host request arrives.
 - Acknowledgements use sequenced native-written private files, never page console
   text. Screenshots retain the validated private capability metadata envelope.
+  Renderer errors/warnings are surfaced on open, actions and snapshots, with a
+  UTF-8-safe diagnostic sample capped at 2 KiB and the existing 200 KB cumulative
+  worker-output limit. These samples are explicitly untrusted page/worker text,
+  never acknowledgements or proof that initialization succeeded. A completed
+  screenshot can therefore carry an incomplete-page warning.
   No sandbox, credential inheritance, network or workspace-write grants were added.
   Windows still fails closed without an AppContainer backend.
 

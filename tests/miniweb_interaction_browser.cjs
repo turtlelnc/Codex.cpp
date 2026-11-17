@@ -283,6 +283,26 @@ module.exports = async function interactionBrowser(browser, probe) {
       "alpha\nbeta\ngamma\nendZ:21",
     );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
+    await page.setContent(
+      fs.readFileSync("miniweb/test/background.html", "utf8"),
+    );
+    await page.keyboard.press("Tab");
+    await page.keyboard.insertText("kept");
+    await page.mouse.click(400, 400);
+    assert.equal(await page.locator("body").getAttribute("data-kept"), "kept");
+    assert.equal(
+      await page.evaluate(() => document.activeElement.tagName),
+      "BODY",
+    );
+    await page.locator("#field").fill("retained");
+    await page.mouse.click(500, 400);
+    await page.keyboard.insertText("X");
+    assert.equal(await page.locator("body").getAttribute("data-kept"), "kept");
+    await page.mouse.click(400, 400);
+    assert.equal(
+      await page.locator("body").getAttribute("data-kept"),
+      "retainedX",
+    );
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",
     );

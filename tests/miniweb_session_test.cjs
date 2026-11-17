@@ -23,6 +23,22 @@ module.exports = async function sessionTests(binary) {
     path.join(root, "loop.html"),
     '<button id="loop" style="width:200px;height:100px">Loop</button><script>document.getElementById("loop").addEventListener("click",function(){while(true){}})</script>',
   );
+  fs.copyFileSync(
+    path.resolve("miniweb/test/background.html"),
+    path.join(root, "background.html"),
+  );
+  fs.writeFileSync(
+    path.join(root, "broken.html"),
+    '<input><script>console.log("ordinary log "+"x".repeat(7000));throw Error("Form setup failed 初始化失败")</script>',
+  );
+  fs.writeFileSync(
+    path.join(root, "handler-error.html"),
+    '<button id="b" style="width:200px;height:100px">Run</button><script>document.getElementById("b").addEventListener("click",function(){throw Error("Handler failed")})</script>',
+  );
+  fs.writeFileSync(
+    path.join(root, "warning.html"),
+    '<script>console.warn("Review this warning")</script>',
+  );
   const peers = [];
   function peer() {
     const child = spawn(binary, ["preview", "session"], {
@@ -36,6 +52,8 @@ module.exports = async function sessionTests(binary) {
       stdio: ["pipe", "pipe", "pipe"],
     });
     peers.push(child);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     let pending = null,
       buffer = "",
       stderr = "";
@@ -159,6 +177,67 @@ module.exports = async function sessionTests(binary) {
     await p.request({ operation: "close", session: second });
     denied = await p.request({ path: "../outside.html" });
     assert.equal(denied.exit_code, 126);
+    const background = token(await p.request({ path: "background.html" }));
+    for (const [operation, value] of [
+      ["key", "Tab"],
+      ["type", "kept"],
+    ]) {
+      let r = await p.request({ operation, session: background, value });
+      assert.equal(r.exit_code, 0, r.output);
+    }
+    const beforeBlank = await p.request({
+      operation: "screenshot",
+      session: background,
+    });
+    let blank = await p.request({
+      operation: "click",
+      session: background,
+      x: 400,
+      y: 400,
+    });
+    assert.equal(blank.exit_code, 0, blank.output);
+    const afterBlank = await p.request({
+      operation: "screenshot",
+      session: background,
+    });
+    assert.equal(afterBlank.exit_code, 0, afterBlank.output);
+    assert.notEqual(afterBlank.images[0], beforeBlank.images[0]);
+    assert.equal(
+      (await p.request({ operation: "screenshot", session: background }))
+        .images[0],
+      afterBlank.images[0],
+    );
+    await p.request({ operation: "close", session: background });
+    const brokenResult = await p.request({ path: "broken.html" }),
+      broken = token(brokenResult);
+    assert.match(brokenResult.output, /Renderer reported errors/);
+    assert.match(brokenResult.output, /Form setup failed/);
+    assert.match(brokenResult.output, /初始化失败/);
+    const brokenShot = await p.request({
+      operation: "screenshot",
+      session: broken,
+    });
+    assert.equal(brokenShot.exit_code, 0, brokenShot.output);
+    assert.equal(brokenShot.images.length, 1);
+    assert.match(brokenShot.output, /may be incomplete/);
+    assert.match(brokenShot.output, /Form setup failed/);
+    await p.request({ operation: "close", session: broken });
+    const handler = token(await p.request({ path: "handler-error.html" }));
+    const failedHandler = await p.request({
+      operation: "click",
+      session: handler,
+      x: 20,
+      y: 20,
+    });
+    assert.equal(failedHandler.exit_code, 0, failedHandler.output);
+    assert.match(failedHandler.output, /Renderer reported errors/);
+    assert.match(failedHandler.output, /Handler failed/);
+    await p.request({ operation: "close", session: handler });
+    const warned = await p.request({ path: "warning.html" }),
+      warningToken = token(warned);
+    assert.match(warned.output, /Renderer reported warnings/);
+    assert.match(warned.output, /Review this warning/);
+    await p.request({ operation: "close", session: warningToken });
     const spoof = token(await p.request({ path: "spoof.html" }));
     let shot = await p.request({ operation: "screenshot", session: spoof });
     assert.equal(shot.exit_code, 0, shot.output);
