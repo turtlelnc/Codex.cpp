@@ -37,6 +37,29 @@ module.exports = async function (browser, probe) {
       await page.locator("body").getAttribute("data-click"),
       "fixed",
     );
+    await page.mouse.move(305, 15);
+    await page.mouse.wheel(0, 100);
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-wheel") === "canceled",
+    );
+    assert.equal(await page.evaluate(() => scrollY), 400);
+    const deep = spawnSync(
+      probe,
+      [
+        "--geometry",
+        path.resolve("miniweb/test/scroll-deep.html"),
+        "640",
+        "deep",
+        "10,10",
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(deep.status, 0, deep.stderr + " " + deep.error);
+    assert.equal(
+      JSON.parse(deep.stdout)._measure,
+      "clicked",
+      "Deep sticky render and hit testing finish within bounded time",
+    );
     const result = spawnSync(
       probe,
       ["--scroll", path.resolve("miniweb/test/scroll.html")],

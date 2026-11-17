@@ -12,7 +12,7 @@
 </style><div id="fixed">Fixed</div><div id="panel"><div id="content"><div id="sticky">Sticky</div><button id="target">Target</button></div></div><div id="clip"><div id="clip-content"></div></div><div id="hidden"><div id="hidden-content"></div></div>
 <script>
 var panel=document.getElementById('panel'),fixed=document.getElementById('fixed'),target=document.getElementById('target');
-fixed.addEventListener('wheel',function(e){e.preventDefault();document.body.setAttribute('data-wheel','canceled')});
+fixed.onwheel=function(e){e.preventDefault();document.body.setAttribute('data-wheel','canceled')};
 target.onclick=function(){document.body.setAttribute('data-click','target')};fixed.onclick=function(){document.body.setAttribute('data-click','fixed')};
 panel.addEventListener('scroll',function(){document.body.setAttribute('data-scroll',panel.scrollLeft+':'+panel.scrollTop)});
 document.addEventListener('scroll',function(){document.body.setAttribute('data-window-scroll',String(scrollY))});

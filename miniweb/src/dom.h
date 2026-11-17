@@ -33,6 +33,8 @@ struct Node {
     ComputedStyle style;
     LayoutInfo layout;
     float scroll_x = 0, scroll_y = 0, scroll_width = 0, scroll_height = 0;
+    mutable uint64_t visual_cache_revision = 0;
+    mutable RectF visual_cache;
 
     bool is_element() const { return type == NodeType::Element; }
     bool is_text() const { return type == NodeType::Text; }
@@ -78,6 +80,7 @@ struct Node {
 
 struct Document {
     uint64_t revision = 0;
+    uint64_t visual_revision = 1;
     int focused_id = 0;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout

@@ -662,7 +662,7 @@
   }
   var eventNames = ['click', 'dblclick', 'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout',
                     'input', 'change', 'submit', 'reset', 'keydown', 'keyup', 'keypress', 'focus', 'blur',
-                    'load', 'error', 'scroll', 'touchstart', 'touchend', 'touchmove', 'pointerdown',
+                    'load', 'error', 'scroll', 'wheel', 'touchstart', 'touchend', 'touchmove', 'pointerdown',
                     'pointerup', 'pointermove', 'animationend', 'transitionend'];
   for (var ei = 0; ei < eventNames.length; ei++) defineEventProp(Element.prototype, eventNames[ei]);
   defineEventProp(Node.prototype, 'click');
@@ -850,7 +850,7 @@
       configurable: true
     });
   }
-  ['load', 'DOMContentLoaded', 'resize', 'scroll', 'error', 'unload', 'beforeunload'].forEach(defineGlobalEvent);
+  ['load', 'DOMContentLoaded', 'resize', 'scroll', 'wheel', 'error', 'unload', 'beforeunload'].forEach(defineGlobalEvent);
 
   function makeStorage() {
     var data = Object.create(null);

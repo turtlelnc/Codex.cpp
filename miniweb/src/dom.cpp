@@ -467,25 +467,29 @@ bool scrollable(const Node* n,bool x){auto o=overflow_axis(n,x);return o==Overfl
 }
 RectF Node::viewport_rect() const {
     if(!layout.has_box)return {};
-    if(viewport_fixed(this))return absolute_rect();
+    if(doc&&visual_cache_revision==doc->visual_revision)return visual_cache;
+    auto cached=[&](RectF r){if(doc){visual_cache=r;visual_cache_revision=doc->visual_revision;}return r;};
+    if(viewport_fixed(this))return cached(absolute_rect());
     RectF r=visual_box(this,0,0);
-    if(auto* p=layout.parent){auto b=p->viewport_rect();r.x+=b.x+p->layout.content_x-p->scroll_x;r.y+=b.y+p->layout.content_y-p->scroll_y;}
+    RectF parent_box;
+    if(auto* p=layout.parent){parent_box=p->viewport_rect();r.x+=parent_box.x+p->layout.content_x-p->scroll_x;r.y+=parent_box.y+p->layout.content_y-p->scroll_y;}
     else if(doc){r.x-=doc->scroll_x;r.y-=doc->scroll_y;}
     if(style.position==Position::Sticky&&doc){
         const Node* container=parent;
         while(container&&container!=doc->html&&overflow_axis(container,false)==Overflow::Visible&&overflow_axis(container,true)==Overflow::Visible)container=container->parent;
         RectF port{0,0,float(doc->viewport_w),float(doc->viewport_h)};
-        if(container&&container!=doc->html)port=padding_box(container,container->viewport_rect());
-        auto parent_box=layout.parent?layout.parent->viewport_rect():RectF{0,0,float(doc->viewport_w),doc->scroll_height};
+        if(container&&container!=doc->html)port=padding_box(container,container==layout.parent?parent_box:container->viewport_rect());
+        if(!layout.parent)parent_box={0,0,float(doc->viewport_w),doc->scroll_height};
         const auto* p=layout.parent;
         if(!style.top.is_auto())r.y=std::min(std::max(r.y,port.y+resolve_length(style.top,port.h,style.font_size)),parent_box.y+(p?p->layout.content_y+p->layout.content_h:parent_box.h)-r.h);
         if(!style.left.is_auto())r.x=std::min(std::max(r.x,port.x+resolve_length(style.left,port.w,style.font_size)),parent_box.x+(p?p->layout.content_x+p->layout.content_w:parent_box.w)-r.w);
         if(!style.bottom.is_auto())r.y=std::max(std::min(r.y,port.bottom()-resolve_length(style.bottom,port.h,style.font_size)-r.h),parent_box.y+(p?p->layout.content_y:0));
         if(!style.right.is_auto())r.x=std::max(std::min(r.x,port.right()-resolve_length(style.right,port.w,style.font_size)-r.w),parent_box.x+(p?p->layout.content_x:0));
     }
-    return r;
+    return cached(r);
 }
 void update_scroll_layout(Document& doc){
+    ++doc.visual_revision;
     std::function<RectF(Node*)> measure=[&](Node* n){
         const auto& l=n->layout;float right=l.content_w,bottom=l.content_h;
         for(const auto& line:l.lines)for(const auto& item:line.items){right=std::max(right,item.x+item.w);bottom=std::max(bottom,item.y+item.h);}
@@ -503,9 +507,9 @@ void update_scroll_layout(Document& doc){
 }
 bool set_scroll(Node* n,float x,float y){
     if(!n||!n->doc||!std::isfinite(x)||!std::isfinite(y))return false;
-    if(n==n->doc->html){auto& d=*n->doc;auto ox=d.scroll_x,oy=d.scroll_y;d.scroll_x=overflow_axis(n,true)==Overflow::Clip?0:std::clamp(x,0.0f,std::max(0.0f,d.scroll_width-d.viewport_w));d.scroll_y=overflow_axis(n,false)==Overflow::Clip?0:std::clamp(y,0.0f,std::max(0.0f,d.scroll_height-d.viewport_h));return ox!=d.scroll_x||oy!=d.scroll_y;}
+    if(n==n->doc->html){auto& d=*n->doc;auto ox=d.scroll_x,oy=d.scroll_y;d.scroll_x=overflow_axis(n,true)==Overflow::Clip?0:std::clamp(x,0.0f,std::max(0.0f,d.scroll_width-d.viewport_w));d.scroll_y=overflow_axis(n,false)==Overflow::Clip?0:std::clamp(y,0.0f,std::max(0.0f,d.scroll_height-d.viewport_h));const bool changed=ox!=d.scroll_x||oy!=d.scroll_y;if(changed)++d.visual_revision;return changed;}
     const auto ox=n->scroll_x,oy=n->scroll_y;
     n->scroll_x=scrollable(n,true)?std::clamp(x,0.0f,std::max(0.0f,n->scroll_width-client_size(n,true))):0;
     n->scroll_y=scrollable(n,false)?std::clamp(y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
-    return ox!=n->scroll_x||oy!=n->scroll_y;
+    const bool changed=ox!=n->scroll_x||oy!=n->scroll_y;if(changed)++n->doc->visual_revision;return changed;
 }
