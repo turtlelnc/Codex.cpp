@@ -32,6 +32,7 @@ struct Node {
 
     ComputedStyle style;
     LayoutInfo layout;
+    float scroll_x = 0, scroll_y = 0, scroll_width = 0, scroll_height = 0;
 
     bool is_element() const { return type == NodeType::Element; }
     bool is_text() const { return type == NodeType::Text; }
@@ -72,6 +73,7 @@ struct Node {
     std::string href() const;
     std::string src() const;
     RectF absolute_rect() const;
+    RectF viewport_rect() const;
 };
 
 struct Document {
@@ -90,6 +92,7 @@ struct Document {
     std::string title;
     int viewport_w = 1280;
     int viewport_h = 800;
+    float scroll_x = 0, scroll_y = 0, scroll_width = 0, scroll_height = 0;
 
     std::vector<Node*> style_nodes;
     std::vector<Node*> script_nodes;
@@ -114,6 +117,10 @@ struct Document {
 };
 
 std::string serialize_html(const Node* node, bool outer = true);
+Overflow overflow_axis(const Node* node, bool horizontal);
+RectF overflow_clip(const Node* node, const RectF& box);
+void update_scroll_layout(Document& doc);
+bool set_scroll(Node* node, float x, float y);
 
 // Shared visual geometry/order keeps painting, links and hit-testing consistent.
 inline RectF visual_box(const Node* n,float ox,float oy){

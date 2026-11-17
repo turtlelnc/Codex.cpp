@@ -52,9 +52,9 @@ JSON shape remains unchanged.
 `preview_screenshot` and `preview shot --report FILE` report the features the renderer ignored or approximated while rendering the page. The Agent tool appends a one-line summary to the image result; the CLI writes the full JSON report with details and counts. Categories:
 
 - `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
-- `approximate`: features implemented only approximately, such as `position:sticky` as relative, unverified fixed-position scrolling, inline containing blocks, clipping across stacking groups, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
+- `approximate`: features implemented only approximately, such as basic inset-only `position:sticky`, complex fixed-position stacking, inline containing blocks, clipping across stacking groups, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
 - `structural`: constructs that affect layout but are dropped, such as table captions, `col`/`colgroup`, `rowspan`/`colspan`, collapsed borders and `inline-table`.
-- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as scrolling, shadow DOM, observers and Web Animations.
+- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as automatic scrollIntoView, shadow DOM, observers and Web Animations.
 
 Counts are encounter counts from rendering (including replayed clicks), not precise usage counts. The report is best-effort: it cannot enumerate every gap, and absence of an entry is not proof of support. Treat layout and rendering near reported features as unreliable, and do not rewrite valid page code to accommodate them.
 
@@ -72,7 +72,7 @@ automatic-minimum-size warnings. These repairs do not implement all CSS algorith
 For new pages explicitly targeting this renderer, see the bounded
 [design profile and actual-page assessment](MINIWEB_DESIGN_PROFILE.md).
 
-A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, fixed/sticky behavior, nested scrolling, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
+A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, complex fixed/sticky behavior, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
 
 This integration does not claim the whole Codex.cpp WebUI works inside MiniWeb. It requires server RPC and CSS/browser APIs beyond this file-only renderer. Tests use actual supported local pages, pixel probes and negative access-control cases. Remaining feature work is tracked separately from integration reliability.
 
@@ -111,7 +111,7 @@ capability warning unless the page handles and cancels submission.
 
 There is **no background wall-clock browser event loop** yet. Timers keep their
 virtual clock across operations; actions advance it as before, and explicit
-`wait` advances it by 0–3000 ms. Scrolling, navigation, persistence across Agent
+`wait` advances it by 0–3000 ms. Navigation, persistence across Agent
 process/task restarts and running the complete Codex.cpp WebUI remain future work.
 In particular a WebUI task restart creates a new Agent process: open a new preview
 session in that task rather than reusing a journal's old token.
@@ -170,3 +170,15 @@ real isolated session lifecycle/negative suite on Linux/macOS and verifies Windo
 rejection. Its browser mode compares actual Chromium form results and event
 presence with MiniWeb on the same fixture. This is a bounded compatibility test,
 not evidence that arbitrary pages behave like Chromium.
+
+## Scrolling in persistent sessions
+
+Use `scroll` with viewport `x`, `y` and signed pixel `delta_x`, `delta_y` (each at most 10000). It targets the nearest auto/scroll container under that point, chaining to ancestors when no movement is possible. A cancelable `wheel` event precedes the default action. Example CLI request:
+
+```json
+{"operation":"scroll","session":"TOKEN","x":100,"y":200,"delta_x":0,"delta_y":300}
+```
+
+Element scrollTop/scrollLeft, scrollWidth/scrollHeight, clientWidth/clientHeight and scrollTo/scrollBy are backed by native layout. Window scrollTo/scrollBy, scrollX/scrollY and document.scrollingElement address the viewport. Scroll offsets persist across actions/screenshots, clamp on content shrink, and feed painting, DOM viewport geometry, link rectangles and hit testing. Scroll events are queued and coalesced per target. overflow:hidden supports programmatic scrolling; overflow:clip does not. Basic top/left/bottom/right sticky insets and viewport-fixed elements use the same visual geometry.
+
+This is a bounded first implementation: no painted scrollbars, smooth scrolling, scroll snapping/anchoring, automatic focus reveal/scrollIntoView, overscroll-behavior, touch gestures or RTL/vertical writing modes. Combined diagonal gestures choose one container rather than distributing axes independently. Complex sticky sizing, transformed/stacked clipping and body-to-viewport overflow propagation remain approximate. No navigation or network permission was added. Native, sandbox-session and Chromium same-fixture regressions cover nested/page scrolling, fixed/sticky geometry, visible pixels and click coordinates.

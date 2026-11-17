@@ -103,15 +103,15 @@ the shipped executable still needs no Node.js or Chromium runtime.
 2. Inline containing blocks, general transforms and complete stacking contexts
    remain approximate. Clipping across opacity/stacking groups and static-position
    alignment of absolute items in Flex/Grid or inline content are explicitly
-   reported. Initial fixed-position geometry is supported; scrolling is unverified.
+   reported. Initial fixed-position geometry is supported; basic viewport scrolling is covered by scroll.html.
 3. Row Flexbox still lacks a complete automatic minimum-content algorithm.
    Column flex-basis/constraint distribution, reverse axes, auto margins,
    baseline and align-content need
    further work. The row freeze loop does not establish those capabilities.
-4. Grid intrinsic sizing and complex placement, nested scrolling, fixed/sticky,
+4. Grid intrinsic sizing and complex placement, complex scrolling and fixed/sticky,
    advanced tables, pseudo-elements, Canvas/WebGL and modern framework APIs
    remain outside this pass.
-5. Rounded clipping is still rectangular; keyboard, scrolling and full-page
+5. Rounded clipping is still rectangular; general keyboard, advanced scrolling and full-page
    capture are not verified by the preview tool.
 
 Capability diagnostics are best-effort and cannot enumerate all mismatches.
@@ -140,6 +140,10 @@ The 300-second lifetime and OS memory/CPU ceilings remain native bounds; this
 suite does not deliberately exhaust each one.
 
 These are bounded form/runtime checks. Native select/radio groups, full text
-selection/caret painting, IME, form validation/navigation, scrolling, a wall-clock
+selection/caret painting, IME, form validation/navigation, advanced scrolling, a wall-clock
 event loop and compatibility with the complete Codex.cpp WebUI remain unverified
 or unsupported; see [session limits](MINIWEB.md#persistent-interaction-sessions).
+
+### Native scroll state
+
+Scroll offsets now live with native nodes/document rather than JS expandos. Painting, hit testing and DOM viewport rectangles share that state. `scroll.html` covers nested horizontal/vertical offsets, sticky insets, fixed elements, clipping, clamping, event cancellation and ancestor chaining. Chromium compares the same geometry and click actions; isolated-session tests verify screenshots retain offsets. See MINIWEB.md for explicit unsupported behaviors.

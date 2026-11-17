@@ -9,12 +9,14 @@ void check_dynamic_tables(const std::filesystem::path& directory);
 void check_diagnostics(const std::filesystem::path& directory);
 void check_foundations(const std::filesystem::path& directory);
 void check_positioning(const std::filesystem::path& directory);
+void check_scroll(const std::filesystem::path& directory,bool report=false);
 void check_interaction(const std::filesystem::path& directory,bool report=false);
 void check_margins(const std::filesystem::path& directory);
 int table_geometry(const std::filesystem::path& path,int width);
 int geometry_probe(const std::filesystem::path& path,int width,const std::string& ids_csv,const std::string& clicks);
 void check_font_border(const std::filesystem::path& directory);
 int main(int argc,char** argv){try{
+ if(argc==3&&std::string(argv[1])=="--scroll"){check_scroll(std::filesystem::canonical(argv[2]).parent_path(),true);return 0;}
  if(argc==3&&std::string(argv[1])=="--interaction"){check_interaction(std::filesystem::canonical(argv[2]).parent_path(),true);return 0;}
  if(argc==3&&(std::string(argv[1])=="--table-geometry"||std::string(argv[1])=="--table-geometry-narrow"))return table_geometry(std::filesystem::u8path(argv[2]),std::string(argv[1])=="--table-geometry"?640:320);
  if((argc==5||argc==6)&&std::string(argv[1])=="--geometry"){
@@ -48,6 +50,6 @@ int main(int argc,char** argv){try{
  check_foundations(page.parent_path());
  check_positioning(page.parent_path());
  check_margins(page.parent_path());
- check_interaction(page.parent_path());
+ check_interaction(page.parent_path());check_scroll(page.parent_path());
  return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

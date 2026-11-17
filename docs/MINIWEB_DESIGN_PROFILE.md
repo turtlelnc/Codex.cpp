@@ -51,8 +51,8 @@ is therefore insufficient for acceptance.
 > supports vision, and check actual interactions. Read the capability report and
 > separate renderer limitations from defects in the page. Allow space for font
 > variation; do not force all content into one screenshot. Capture a larger
-> viewport where useful, within tool limits. Use preview_session for explicitly supported text/checkbox/button interactions.
-> Do not claim general keyboard, scrolling, full-page or Chrome verification. When the brief needs a
+> viewport where useful, within tool limits. Use preview_session for supported text/checkbox/button interactions and bounded scroll actions.
+> Do not claim general keyboard, arbitrary scrolling, full-page or Chrome verification. When the brief needs a
 > full browser, say so and use one if available.
 
 This brief deliberately makes no aesthetic blacklist: color, composition,

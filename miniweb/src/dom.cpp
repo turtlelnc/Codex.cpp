@@ -1,6 +1,7 @@
 #include "dom.h"
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <functional>
 
 namespace {
@@ -437,4 +438,74 @@ std::string serialize_html(const Node* node, bool outer) {
     }
     serialize_into(node, out);
     return out;
+}
+
+Overflow overflow_axis(const Node* n,bool horizontal) {
+    auto value=horizontal?n->style.overflow_x:n->style.overflow_y;
+    auto other=horizontal?n->style.overflow_y:n->style.overflow_x;
+    if(other!=Overflow::Visible&&other!=Overflow::Clip){
+        if(value==Overflow::Visible)value=Overflow::Auto;
+        if(value==Overflow::Clip)value=Overflow::Hidden;
+    }
+    return value;
+}
+RectF overflow_clip(const Node* n,const RectF& box) {
+    auto r=padding_box(n,box);
+    if(n->doc&&n==n->doc->html)r={0,0,float(n->doc->viewport_w),float(n->doc->viewport_h)};
+    if(overflow_axis(n,true)==Overflow::Visible){r.x=-10000000;r.w=20000000;}
+    if(overflow_axis(n,false)==Overflow::Visible){r.y=-10000000;r.h=20000000;}
+    return r;
+}
+namespace {
+bool viewport_fixed(const Node* n){
+    if(n->style.position!=Position::Fixed)return false;
+    for(auto* p=n->parent;p;p=p->parent)if(p->style.has_transform)return false;
+    return true;
+}
+float client_size(const Node* n,bool x){const auto& l=n->layout;return std::max(0.0f,x?l.border.w-l.border_left-l.border_right:l.border.h-l.border_top-l.border_bottom);}
+bool scrollable(const Node* n,bool x){auto o=overflow_axis(n,x);return o==Overflow::Auto||o==Overflow::Scroll||o==Overflow::Hidden;}
+}
+RectF Node::viewport_rect() const {
+    if(!layout.has_box)return {};
+    if(viewport_fixed(this))return absolute_rect();
+    RectF r=visual_box(this,0,0);
+    if(auto* p=layout.parent){auto b=p->viewport_rect();r.x+=b.x+p->layout.content_x-p->scroll_x;r.y+=b.y+p->layout.content_y-p->scroll_y;}
+    else if(doc){r.x-=doc->scroll_x;r.y-=doc->scroll_y;}
+    if(style.position==Position::Sticky&&doc){
+        const Node* container=parent;
+        while(container&&container!=doc->html&&overflow_axis(container,false)==Overflow::Visible&&overflow_axis(container,true)==Overflow::Visible)container=container->parent;
+        RectF port{0,0,float(doc->viewport_w),float(doc->viewport_h)};
+        if(container&&container!=doc->html)port=padding_box(container,container->viewport_rect());
+        auto parent_box=layout.parent?layout.parent->viewport_rect():RectF{0,0,float(doc->viewport_w),doc->scroll_height};
+        const auto* p=layout.parent;
+        if(!style.top.is_auto())r.y=std::min(std::max(r.y,port.y+resolve_length(style.top,port.h,style.font_size)),parent_box.y+(p?p->layout.content_y+p->layout.content_h:parent_box.h)-r.h);
+        if(!style.left.is_auto())r.x=std::min(std::max(r.x,port.x+resolve_length(style.left,port.w,style.font_size)),parent_box.x+(p?p->layout.content_x+p->layout.content_w:parent_box.w)-r.w);
+        if(!style.bottom.is_auto())r.y=std::max(std::min(r.y,port.bottom()-resolve_length(style.bottom,port.h,style.font_size)-r.h),parent_box.y+(p?p->layout.content_y:0));
+        if(!style.right.is_auto())r.x=std::max(std::min(r.x,port.right()-resolve_length(style.right,port.w,style.font_size)-r.w),parent_box.x+(p?p->layout.content_x:0));
+    }
+    return r;
+}
+void update_scroll_layout(Document& doc){
+    std::function<RectF(Node*)> measure=[&](Node* n){
+        const auto& l=n->layout;float right=l.content_w,bottom=l.content_h;
+        for(const auto& line:l.lines)for(const auto& item:line.items){right=std::max(right,item.x+item.w);bottom=std::max(bottom,item.y+item.h);}
+        for(auto* c:l.box_children){auto extent=measure(c);if(viewport_fixed(c))continue;auto b=visual_box(c,0,0);
+            right=std::max(right,b.x+extent.w);bottom=std::max(bottom,b.y+extent.h);}
+        n->scroll_width=std::max(client_size(n,true),l.padding_left+right+l.padding_right);
+        n->scroll_height=std::max(client_size(n,false),l.padding_top+bottom+l.padding_bottom);
+        n->scroll_x=scrollable(n,true)?std::clamp(n->scroll_x,0.0f,std::max(0.0f,n->scroll_width-client_size(n,true))):0;
+        n->scroll_y=scrollable(n,false)?std::clamp(n->scroll_y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
+        return RectF{0,0,overflow_axis(n,true)==Overflow::Visible?std::max(l.border.w,l.border_left+n->scroll_width):l.border.w,overflow_axis(n,false)==Overflow::Visible?std::max(l.border.h,l.border_top+n->scroll_height):l.border.h};
+    };
+    if(!doc.html)return;auto extent=measure(doc.html);
+    doc.scroll_width=std::max(float(doc.viewport_w),std::max(extent.w,doc.html->scroll_width));doc.scroll_height=std::max(float(doc.viewport_h),std::max(extent.h,doc.html->scroll_height));
+    doc.scroll_x=std::clamp(doc.scroll_x,0.0f,std::max(0.0f,doc.scroll_width-doc.viewport_w));doc.scroll_y=std::clamp(doc.scroll_y,0.0f,std::max(0.0f,doc.scroll_height-doc.viewport_h));
+}
+bool set_scroll(Node* n,float x,float y){
+    if(!n||!n->doc||!std::isfinite(x)||!std::isfinite(y))return false;
+    if(n==n->doc->html){auto& d=*n->doc;auto ox=d.scroll_x,oy=d.scroll_y;d.scroll_x=overflow_axis(n,true)==Overflow::Clip?0:std::clamp(x,0.0f,std::max(0.0f,d.scroll_width-d.viewport_w));d.scroll_y=overflow_axis(n,false)==Overflow::Clip?0:std::clamp(y,0.0f,std::max(0.0f,d.scroll_height-d.viewport_h));return ox!=d.scroll_x||oy!=d.scroll_y;}
+    const auto ox=n->scroll_x,oy=n->scroll_y;
+    n->scroll_x=scrollable(n,true)?std::clamp(x,0.0f,std::max(0.0f,n->scroll_width-client_size(n,true))):0;
+    n->scroll_y=scrollable(n,false)?std::clamp(y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
+    return ox!=n->scroll_x||oy!=n->scroll_y;
 }

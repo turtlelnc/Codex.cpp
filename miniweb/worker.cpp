@@ -113,6 +113,9 @@ int codex_miniweb_session_worker(int argc,char** argv){try{
       if(!(frame>>data)||frame>>extra||data.size()>16384||data.size()%2)throw std::runtime_error("Invalid text frame");
       std::string text;for(size_t i=0;i<data.size();i+=2){auto hex=[](char h)->int{if(h>='0'&&h<='9')return h-'0';if(h>='a'&&h<='f')return h-'a'+10;throw std::runtime_error("Invalid hex");};text+=static_cast<char>(hex(data[i])*16+hex(data[i+1]));}
       ok=op=="type"?engine.type(text):engine.key(text);
+    }else if(op=="scroll"){
+      std::string x,y,dx,dy;if(!(frame>>x>>y>>dx>>dy)||frame>>extra)throw std::runtime_error("Invalid scroll frame");
+      ok=engine.scroll(number(x.c_str(),0,width-1),number(y.c_str(),0,height-1),number(dx.c_str(),-10000,10000),number(dy.c_str(),-10000,10000));
     }else if(op=="screenshot"){
       if(frame>>extra)throw std::runtime_error("Invalid screenshot frame");
       ok=engine.advance(0)&&engine.render(false)&&engine.canvas()->save_png((output/"screenshot.png").u8string());

@@ -508,14 +508,14 @@
     get dataset() { if (!this.__dataset) this.__dataset = makeDataset(this); return this.__dataset; }
     get offsetWidth() { return N.rect(this.__id)[2]; }
     get offsetHeight() { return N.rect(this.__id)[3]; }
-    get clientWidth() { return N.rect(this.__id)[2]; }
-    get clientHeight() { return N.rect(this.__id)[3]; }
-    get scrollWidth() { return this.offsetWidth; }
-    get scrollHeight() { return this.offsetHeight; }
-    get scrollTop() { return this.__scrollTop || 0; }
-    set scrollTop(v) { this.__scrollTop = Number(v) || 0; }
-    get scrollLeft() { return this.__scrollLeft || 0; }
-    set scrollLeft(v) { this.__scrollLeft = Number(v) || 0; }
+    get clientWidth() { return N.scroll(this.__id)[4]; }
+    get clientHeight() { return N.scroll(this.__id)[5]; }
+    get scrollWidth() { return N.scroll(this.__id)[2]; }
+    get scrollHeight() { return N.scroll(this.__id)[3]; }
+    get scrollTop() { return N.scroll(this.__id)[1]; }
+    set scrollTop(v) { changeScroll(this,this.scrollLeft,Number(v)); }
+    get scrollLeft() { return N.scroll(this.__id)[0]; }
+    set scrollLeft(v) { changeScroll(this,Number(v),this.scrollTop); }
     getBoundingClientRect() {
       var r = N.rect(this.__id), x = r[0], y = r[1], w = r[2], h = r[3];
       return { x: x, y: y, left: x, top: y, width: w, height: h, right: x + w, bottom: y + h };
@@ -525,7 +525,9 @@
     blur() { if (activeControl === this) focusControl(null); }
     click() { activate(this, 0, 0, false); }
     reset() { if(this.tagName==='FORM')resetForm(this); }
-    scrollIntoView() { N.unsupported('Element.scrollIntoView', 'scrolling is not supported'); }
+    scrollTo(x,y) { var p=scrollArguments(x,y,this.scrollLeft,this.scrollTop,false);changeScroll(this,p[0],p[1]); }
+    scrollBy(x,y) { var p=scrollArguments(x,y,this.scrollLeft,this.scrollTop,true);changeScroll(this,p[0],p[1]); }
+    scrollIntoView() { N.unsupported('Element.scrollIntoView', 'automatic reveal is not supported; use scrollTo or scrollBy'); }
     attachShadow() { N.unsupported('Element.attachShadow', 'shadow DOM is not supported'); return null; }
     getRootNode() { var n = this; while (n.parentNode) n = n.parentNode; return n; }
     animate() { N.unsupported('Element.animate', 'Web Animations are not supported'); return { cancel: function () {}, finish: function () {}, play: function () {}, pause: function () {} }; }
@@ -797,9 +799,36 @@
   Object.defineProperty(globalThis, 'outerWidth', { get: function () { return N.viewport()[0]; }, configurable: true });
   Object.defineProperty(globalThis, 'outerHeight', { get: function () { return N.viewport()[1]; }, configurable: true });
   globalThis.devicePixelRatio = 1;
-  globalThis.scrollX = 0; globalThis.scrollY = 0;
-  globalThis.scrollTo = function () { N.unsupported('window.scrollTo', 'scrolling is not supported'); };
-  globalThis.scrollBy = function () { N.unsupported('window.scrollBy', 'scrolling is not supported'); };
+  function scrollArguments(x,y,oldX,oldY,relative) {
+    if(x&&typeof x==='object'){y=x.top===undefined?(relative?0:oldY):x.top;x=x.left===undefined?(relative?0:oldX):x.left;}
+    return [(Number.isFinite(Number(x))?Number(x):0)+(relative?oldX:0),(Number.isFinite(Number(y))?Number(y):0)+(relative?oldY:0)];
+  }
+  var pendingScroll=new Set();
+  function changeScroll(n,x,y){
+    if(!Number.isFinite(x))x=0;if(!Number.isFinite(y))y=0;
+    if(N.scroll(n.__id,x,y)&&!pendingScroll.has(n.__id)){
+      pendingScroll.add(n.__id);setTimeout(function(){pendingScroll.delete(n.__id);var target=n===document.documentElement?document:n;target.dispatchEvent(new Event('scroll',{bubbles:n===document.documentElement}));},0);
+    }
+  }
+  Object.defineProperty(globalThis,'scrollX',{get:function(){return document.documentElement.scrollLeft}});
+  Object.defineProperty(globalThis,'scrollY',{get:function(){return document.documentElement.scrollTop}});
+  Object.defineProperty(globalThis,'pageXOffset',{get:function(){return scrollX}});
+  Object.defineProperty(globalThis,'pageYOffset',{get:function(){return scrollY}});
+  Object.defineProperty(document,'scrollingElement',{get:function(){return document.documentElement}});
+  globalThis.scrollTo = function(x,y){document.documentElement.scrollTo(x,y)};
+  globalThis.scrollBy = function(x,y){document.documentElement.scrollBy(x,y)};
+  globalThis.__mwScroll=function(id,dx,dy){
+    var n=wrap(id)||document.documentElement;
+    var wheel=new Event('wheel',{bubbles:true,cancelable:true});wheel.deltaX=dx;wheel.deltaY=dy;wheel.deltaMode=0;
+    if(!n.dispatchEvent(wheel))return;
+    while(n&&n!==document.documentElement){var style=getComputedStyle(n),state=N.scroll(n.__id);
+      if((dx&&/auto|scroll/.test(style.overflowX||style.overflow)&&state[2]>state[4])||(dy&&/auto|scroll/.test(style.overflowY||style.overflow)&&state[3]>state[5])){
+        var x=n.scrollLeft,y=n.scrollTop;n.scrollBy(dx,dy);if(x!==n.scrollLeft||y!==n.scrollTop)return;
+      }n=n.parentElement;
+    }
+    var root=document.documentElement,style=getComputedStyle(root);
+    root.scrollBy(/^(visible|auto|scroll)$/.test(style.overflowX)?dx:0,/^(visible|auto|scroll)$/.test(style.overflowY)?dy:0);
+  };
   globalThis.alert = function (s) { N.log('log', String(s)); };
   globalThis.confirm = function (s) { N.log('log', String(s)); return false; };
   globalThis.prompt = function (s) { N.log('log', String(s)); return null; };

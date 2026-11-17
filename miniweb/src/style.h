@@ -34,10 +34,10 @@ struct GridTrack {
     TrackKind kind = TrackKind::Auto;
     float value = 0;
 };
-enum class Position { Static, Relative, Absolute, Fixed };
+enum class Position { Static, Relative, Absolute, Fixed, Sticky };
 enum class TextAlign { Left, Right, Center, Justify };
 enum class WhiteSpace { Normal, Pre, Nowrap, PreWrap };
-enum class Overflow { Visible, Hidden, Auto, Scroll };
+enum class Overflow { Visible, Hidden, Auto, Scroll, Clip };
 enum class FlexDirection { Row, RowReverse, Column, ColumnReverse };
 enum class FlexWrap { NoWrap, Wrap, WrapReverse };
 enum class Justify { FlexStart, FlexEnd, Center, SpaceBetween, SpaceAround, SpaceEvenly };
@@ -104,6 +104,7 @@ struct ComputedStyle {
     Visibility visibility = Visibility::Visible;
     float opacity = 1.0f;
     Overflow overflow = Overflow::Visible;
+    Overflow overflow_x = Overflow::Visible, overflow_y = Overflow::Visible;
     ObjectFit object_fit = ObjectFit::Fill;
 
     FlexDirection flex_direction = FlexDirection::Row;
