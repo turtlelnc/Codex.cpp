@@ -407,7 +407,7 @@ bool match_pseudo(const Node* n, const std::string& name, const std::string& arg
         return true;
     }
     if (name == "checked") {
-        if (n->has_attr("checked") || n->has_attr("selected")) return true;
+        if ((n->checked_dirty ? n->checked_value : n->has_attr("checked")) || n->has_attr("selected")) return true;
         return false;
     }
     if (name == "disabled") return n->has_attr("disabled");
@@ -440,7 +440,9 @@ bool match_pseudo(const Node* n, const std::string& name, const std::string& arg
         };
         return visit(n);
     }
-    // dynamic states are false at rest
+    if (name == "focus") return doc && doc->focused_id == n->id;
+    if (name == "focus-within" && doc) { if (doc->focused_id > 0 && doc->focused_id < static_cast<int>(doc->id_map.size())) for (auto* a=doc->id_map[doc->focused_id];a;a=a->parent) if (a==n) return true; return false; }
+    // Other dynamic states are false at rest
     if (name == "hover" || name == "active" || name == "focus" || name == "focus-within" ||
         name == "focus-visible" || name == "visited" || name == "target" || name == "placeholder-shown")
         return false;

@@ -91,10 +91,19 @@ Node* Node::insert_before(Node* child, Node* ref) {
     return child;
 }
 
+// Detaching a focused subtree loses focus even if it is reinserted before JS
+// next reads activeElement. Layout ancestry may differ; use DOM ancestry here.
+static void clear_detached_focus(Node* subtree) {
+    if (!subtree || !subtree->doc) return;
+    auto* doc=subtree->doc;const int id=doc->focused_id;
+    if(id<=0 || id>=static_cast<int>(doc->id_map.size()))return;
+    for(auto* n=doc->id_map[id];n;n=n->parent)if(n==subtree){doc->focused_id=0;return;}
+}
 Node* Node::remove_child(Node* child) {
     auto it = std::find(children.begin(), children.end(), child);
     if (it == children.end()) return nullptr;
     if(doc)++doc->revision;
+    clear_detached_focus(child);
     children.erase(it);
     if (child) child->parent = nullptr;
     return child;
@@ -113,12 +122,14 @@ Node* Node::replace_child(Node* new_child, Node* old_child) {
     new_child->parent = this;
     if (doc) new_child->doc = doc;
     *it = new_child;
+    clear_detached_focus(old_child);
     old_child->parent = nullptr;
     return old_child;
 }
 
 void Node::detach() {
     if (parent) {
+        clear_detached_focus(this);
         if(doc)++doc->revision;
         auto it = std::find(parent->children.begin(), parent->children.end(), this);
         if (it != parent->children.end()) parent->children.erase(it);
@@ -128,7 +139,7 @@ void Node::detach() {
 
 void Node::remove_all_children() {
     if(doc)++doc->revision;
-    for (auto* c : children) if (c) c->parent = nullptr;
+    for (auto* c : children) if (c) { clear_detached_focus(c); c->parent = nullptr; }
     children.clear();
 }
 

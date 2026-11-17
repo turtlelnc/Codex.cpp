@@ -1,0 +1,169 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;font-family:sans-serif}input,textarea,button{display:block;box-sizing:border-box;width:220px;height:32px;margin:0}#result{white-space:pre-wrap}
+</style><form id="form"><input id="name" value="seed"><input id="disabled" disabled><textarea id="note">draft</textarea><input id="agree" type="checkbox"><button id="submit" type="SUBMIT">Save</button></form><p id="result">initial</p>
+<script>
+var events=[], submitted=0, visits=1;
+var nameInput=document.getElementById('name'),note=document.getElementById('note'),result=document.getElementById('result');
+['focus','blur','focusin','focusout','beforeinput','input','change','keydown','keyup'].forEach(function(t){document.addEventListener(t,function(e){events.push(t+':'+e.target.id);if(t==='keydown'&&e.key==='Escape')e.preventDefault();},true)});
+document.getElementById('form').addEventListener('submit',function(e){e.preventDefault();submitted++;result.textContent=JSON.stringify({name:nameInput.value,attr:nameInput.getAttribute('value'),note:note.value,checked:document.getElementById('agree').checked,submitted:submitted,visits:visits,active:document.activeElement.id,events:events});document.body.setAttribute('data-result',result.textContent)});
+</script>
+<style>[hidden]{display:none}#open{position:absolute;left:300px;top:0;width:100px}#panel{position:absolute;left:280px;top:50px;width:250px;background:#eee;padding:10px}#panel input{width:210px}</style>
+<button id="open" type="button">Settings</button><div id="panel" role="dialog" aria-label="Settings" hidden><input id="setting" value="warm"><input id="readonly" readonly value="locked"><button id="cancel" type="button">Close</button></div>
+<script>
+var panel=document.getElementById('panel'), opener=document.getElementById('open'),setting=document.getElementById('setting');
+opener.addEventListener('click',function(){panel.removeAttribute('hidden');setting.focus()});
+function closePanel(){panel.setAttribute('hidden','');opener.focus();document.body.setAttribute('data-setting',setting.value)}
+panel.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();closePanel()}});
+document.getElementById('cancel').addEventListener('click',closePanel);
+setting.addEventListener('beforeinput',function(e){if(e.data==='blocked')e.preventDefault()});
+</script>
+<button id="clear" type="button" style="position:absolute;left:420px;top:0;width:100px">Clear</button><script>document.getElementById('clear').addEventListener('click',function(){note.value=''})</script>
+<style>#plain,#stayfocus{position:absolute;left:300px;top:210px;width:220px;height:32px;background:#eee}#stayfocus{top:445px}#actions{position:absolute;left:300px;top:250px;width:240px}#actions input{display:block;width:220px;height:32px}</style>
+<div id="plain">Ordinary content</div><div id="stayfocus">Canceled pointer default</div><form id="actions"><input id="actionButton" type="button" value="Action"><input id="actionSubmit" type="submit" value="Canceled submit"><input id="selfDisable" type="SUBMIT" value="Disable on click"><input id="pressDisable" type="button" value="Disable on press"></form>
+<script>
+nameInput.addEventListener('change',function(){document.body.setAttribute('data-committed',nameInput.value)});
+document.getElementById('stayfocus').addEventListener('mousedown',function(e){e.preventDefault()});
+var buttonClicks=0,submitClicks=0;document.getElementById('actionButton').addEventListener('click',function(){document.body.setAttribute('data-action','clicked');document.body.setAttribute('data-action-count',String(++buttonClicks))});
+document.getElementById('actionSubmit').addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-submit-click','canceled');document.body.setAttribute('data-submit-count',String(++submitClicks))});
+document.getElementById('actions').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-wrong-submit','yes')});
+</script>
+<style>#implicit{position:absolute;left:0;top:250px;width:260px}#implicit input,#implicit button{height:24px;width:130px}#disableDefault{position:absolute;left:130px;top:0;width:120px}#labels{position:absolute;left:0;top:340px;width:260px}#labels label{display:block;width:110px;height:24px}#labelCheck{position:absolute;left:240px;top:0;width:18px;height:18px}#labelText{position:absolute;left:120px;top:24px;width:130px;height:24px}#nestedCheck{display:none}</style>
+<form id="implicit"><input id="implicitText"><button id="defaultSubmit">Default</button><button id="disableDefault" type="button">Disable</button></form>
+<div id="labels"><label id="checkLabel" for="labelCheck">Toggle checkbox</label><input id="labelCheck" type="checkbox"><label id="textLabel" for="labelText">Focus input</label><input id="labelText" type="TEXT"><label id="nestedLabel">Nested hidden<input id="nestedCheck" type="checkbox"></label><label id="cancelLabel" for="labelCheck">Canceled label</label></div>
+<script>
+var defaultClicks=0,defaultSubmit=document.getElementById('defaultSubmit');
+defaultSubmit.addEventListener('click',function(e){e.preventDefault();document.body.setAttribute('data-default-clicks',String(++defaultClicks))});
+document.getElementById('implicit').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-implicit-wrong','yes')});
+document.getElementById('disableDefault').addEventListener('click',function(){defaultSubmit.disabled=true});
+document.getElementById('cancelLabel').addEventListener('click',function(e){e.preventDefault()});
+</script>
+<button id="programmatic" type="button" style="position:absolute;left:150px;top:290px;width:110px;height:24px">Script value</button><button id="unicode" type="button" style="position:absolute;left:150px;top:315px;width:110px;height:24px">Unicode</button>
+<script>
+var programChanges=0,labelText=document.getElementById('labelText');
+labelText.addEventListener('change',function(){document.body.setAttribute('data-program-changes',String(++programChanges))});
+labelText.addEventListener('keydown',function(e){if(e.key==='Escape')labelText.value='script after user'});
+document.getElementById('programmatic').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='script assigned';nameInput.focus();document.body.setAttribute('data-program-changes',String(programChanges))});
+document.getElementById('unicode').addEventListener('click',function(){programChanges=0;labelText.focus();labelText.value='😀';document.body.setAttribute('data-program-changes','0')});
+</script>
+<script>
+var detached=document.createElement('button'),detachedClicks=0;detached.addEventListener('click',function(){detachedClicks++});detached.click();var beforeAttach=detachedClicks;
+var detachedContainer=document.createElement('div');detachedContainer.style.display='none';document.body.appendChild(detachedContainer);detachedContainer.appendChild(detached);detached.click();var afterAttach=detachedClicks;detached.disabled=true;detached.click();
+var detachedCheck=document.createElement('input');detachedCheck.type='checkbox';detachedCheck.click();
+var detachedForm=document.createElement('form'),detachedSubmit=document.createElement('button'),detachedSubmits=0;detachedForm.appendChild(detachedSubmit);detachedForm.addEventListener('submit',function(e){e.preventDefault();detachedSubmits++});detachedSubmit.click();
+document.body.setAttribute('data-detached-defaults',[beforeAttach,afterAttach,detachedClicks,detachedCheck.checked?1:0,detachedSubmits].join(':'));
+</script>
+
+<script>
+document.getElementById('selfDisable').addEventListener('click',function(){this.disabled=true;document.body.setAttribute('data-self-disable-click','yes')});
+document.getElementById('pressDisable').addEventListener('mousedown',function(){this.disabled=true});
+document.getElementById('pressDisable').addEventListener('click',function(){document.body.setAttribute('data-disabled-press-click','yes')});
+var invalidInput=document.createElement('input');invalidInput.setAttribute('type','not-a-type');
+var invalidButton=document.createElement('button');invalidButton.setAttribute('type','not-a-type');
+document.body.setAttribute('data-reflected-types',[labelText.type,document.getElementById('submit').type,labelText.getAttribute('type'),document.getElementById('submit').getAttribute('type'),invalidInput.type,invalidButton.type].join(':'));
+</script>
+<script>
+function valueProbe(tag,type){var n=document.createElement(tag);if(type)n.type=type;n.value='first';n.setAttribute('value','second');return n.value}
+var checkDefault=document.createElement('input');checkDefault.type='checkbox';
+var areaProbe=document.createElement('textarea');areaProbe.value='first';areaProbe.defaultValue='second';
+document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('input','checkbox'),valueProbe('button'),valueProbe('input','button'),valueProbe('input','text'),areaProbe.value,valueProbe('input','hidden')].join(':'));
+</script>
+<script>
+(function(){
+ var box=document.createElement('div');box.style.cssText='position:absolute;left:0;top:0;opacity:0';
+ box.innerHTML='<fieldset id="probeFieldset" disabled><legend><input id="legend-switch" type="checkbox"><input id="legend-own" type="checkbox" disabled></legend><input id="legend-outside" type="checkbox"><legend><input id="legend-second" type="checkbox"></legend></fieldset><div disabled><button id="generic-disabled">Generic</button></div>';
+ document.body.appendChild(box);
+ var switcher=box.querySelector('#legend-switch'),own=box.querySelector('#legend-own'),outside=box.querySelector('#legend-outside'),second=box.querySelector('#legend-second'),generic=0;
+ box.querySelector('#generic-disabled').addEventListener('click',function(){generic++});
+ switcher.focus();switcher.click();outside.focus();outside.click();second.focus();second.click();own.focus();own.click();box.querySelector('#generic-disabled').click();
+ var result=[switcher.checked,document.activeElement.id,outside.checked,second.checked,own.checked,generic].join(':');
+ box.querySelector('#probeFieldset').disabled=false;outside.focus();outside.click();result+=':'+(document.activeElement===outside&&outside.checked);
+ outside.blur();box.remove();document.body.setAttribute('data-fieldset-probe',result);
+})();
+var focusProbeIndex=0;
+function startFocusProbe(){
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit','maxlength','reset'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(kind==='reset') {
+   box.innerHTML='<form id="probe-reset-form"><input id="probe-reset-text" value="seed"><textarea id="probe-reset-area">note</textarea><input id="probe-reset-check" type="checkbox" checked><button id="probe-reset-cancel" type="reset">Canceled reset</button><button id="probe-reset-button" type="reset">Reset</button><input id="probe-reset-input" type="reset" value="Reset input"></form><input id="probe-reset-external" form="probe-reset-form" value="external"><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var form=box.querySelector('form'),text=box.querySelector('#probe-reset-text'),area=box.querySelector('textarea'),check=box.querySelector('#probe-reset-check'),external=box.querySelector('#probe-reset-external'),resets=0,inputs=0,cancel=false;
+   function state(){document.body.setAttribute('data-reset-state',[text.value,area.value,check.checked,external.value,resets,inputs].join(':'))}
+   form.addEventListener('input',function(){++inputs});
+   form.addEventListener('reset',function(e){++resets;form.reset();if(cancel)e.preventDefault()});
+   box.querySelector('#probe-reset-cancel').addEventListener('click',function(){cancel=true});
+   box.querySelector('#probe-reset-button').addEventListener('click',function(){cancel=false});
+   document.body.setAttribute('data-reset-state','');
+   box.querySelector('#probe-done').addEventListener('click',function(){state();box.remove()});
+   external.value='changed';text.focus();text.selectionStart=text.selectionEnd=text.value.length;return;
+ }
+ if(kind==='maxlength') {
+   box.innerHTML='<input id="probe-limit" maxlength="3" value="abc"><textarea id="probe-limit-area" maxlength="3">abc</textarea><button id="probe-limits-reset" type="button">Reset limits</button><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var input=box.querySelector('#probe-limit'),area=box.querySelector('#probe-limit-area'),events=0;
+   document.body.setAttribute('data-max-events','0');
+   input.addEventListener('input',function(e){document.body.setAttribute('data-max-events',String(++events));document.body.setAttribute('data-max-input-data',e.data)});
+   input.addEventListener('change',function(){document.body.setAttribute('data-max-input',input.value+':'+input.selectionStart)});
+   box.querySelector('#probe-limits-reset').addEventListener('click',function(){input.maxLength=1;input.value='';area.maxLength=0;area.value='abc';area.selectionStart=0;area.selectionEnd=3;input.focus()});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});input.focus();return;
+ }
+ if(kind==='submit-commit') {
+   box.innerHTML='<form id="probe-form"><input id="probe-commit"><button id="probe-submit" type="submit">Submit</button></form><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var input=box.querySelector('#probe-commit'),state='old',changes=0,submits=0;
+   input.addEventListener('change',function(){state=input.value;document.body.setAttribute('data-enter-changes',String(++changes))});
+   box.querySelector('#probe-form').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-enter-submit',state+':'+changes+':'+(++submits)+':'+e.submitter.id)});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});input.focus();return;
+ }
+ if(kind==='linebreaks') {
+   box.innerHTML='<input id="probe-single"><textarea id="probe-multi"></textarea><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var single=box.querySelector('#probe-single'),multi=box.querySelector('#probe-multi');
+   single.addEventListener('beforeinput',function(e){if(!document.body.hasAttribute('data-line-before'))document.body.setAttribute('data-line-before',e.data)});
+   single.addEventListener('input',function(e){if(!document.body.hasAttribute('data-line-input-data'))document.body.setAttribute('data-line-input-data',e.data)});
+   single.addEventListener('change',function(){document.body.setAttribute('data-line-input',single.value+':'+single.selectionStart)});
+   multi.addEventListener('change',function(){document.body.setAttribute('data-line-area',multi.value+':'+multi.selectionStart)});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});single.focus();return;
+ }
+ if(focusProbeIndex>4) {
+   box.innerHTML='<div id="probe-panel"><button id="probe-close" type="button">Close</button></div><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var close=box.querySelector('#probe-close'),count=0;close.addEventListener('click',function(){
+     count++;document.body.setAttribute('data-close-probe',kind+':'+count);
+     if(kind==='hide')box.querySelector('#probe-panel').style.display='none';
+     else if(kind==='disable')close.disabled=true;
+     else {var parent=close.parentNode;close.remove();parent.appendChild(close);if(kind==='reattach-focus')close.focus();}
+   });
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});close.focus();return;
+ }
+ box.innerHTML='<input id="probe-a"><input id="probe-b"><input id="probe-c"><button id="probe-advance" type="button">Advance</button><button id="probe-done" type="button">Done</button>';
+ document.body.appendChild(box);var a=box.querySelector('#probe-a'),b=box.querySelector('#probe-b'),c=box.querySelector('#probe-c');
+ a.addEventListener(kind,function(){(focusProbeIndex===4?a:c).focus()});
+ box.querySelector('#probe-advance').addEventListener('mousedown',function(e){e.preventDefault()});
+ box.querySelector('#probe-advance').addEventListener('click',function(){b.focus();document.body.setAttribute('data-focus-probe',kind+':'+document.activeElement.id)});
+ box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});a.focus();
+}
+</script>
+<button id="focus-start" type="button" style="position:absolute;left:150px;top:445px;width:110px;height:24px">Focus probe</button><script>document.getElementById('focus-start').addEventListener('click',startFocusProbe)</script>
+<script>
+(function(){
+ var box=document.createElement('div');box.style.cssText='position:absolute;left:0;top:0;opacity:0';document.body.appendChild(box);
+ var a=document.createElement('input');box.appendChild(a);a.focus();box.removeChild(a);box.appendChild(a);var result=[document.activeElement===document.body];
+ a.focus();result.push(document.activeElement===a);var replacement=document.createElement('input');box.replaceChild(replacement,a);result.push(document.activeElement===document.body);
+ replacement.focus();box.innerHTML='<input id="detach-inner">';result.push(document.activeElement===document.body);box.querySelector('input').focus();box.textContent='';result.push(document.activeElement===document.body);
+ box.remove();document.body.setAttribute('data-focus-detach',result.join(':'));
+})();
+</script>
+<script>
+(function(){var input=document.createElement('input'),area=document.createElement('textarea');input.value='a\r\nb\rc\nd';area.value='a\r\nb\rc\nd';document.body.setAttribute('data-newline-values',input.value+'|'+area.value)})();
+</script>
+<script>
+(function(){var input=document.createElement('input'),area=document.createElement('textarea');input.maxLength=3;area.maxLength=3;input.value='abcdef';area.value='abcdef';document.body.setAttribute('data-script-maxlength',input.value+':'+area.value+':'+input.maxLength+':'+area.getAttribute('maxlength'))})();
+</script>
+<script>
+(function(){
+ var form=document.createElement('form');form.innerHTML='<input value="first"><textarea>initial</textarea><input type="checkbox" checked>';var text=form.querySelector('input'),area=form.querySelector('textarea'),check=form.querySelector('input[type=checkbox]'),events=0;
+ form.addEventListener('input',function(){++events});form.addEventListener('change',function(){++events});
+ text.value='edit';area.value='edit';check.checked=false;form.reset();
+ var result=[text.value,area.value,check.checked];text.defaultValue='later';area.defaultValue='later';check.defaultChecked=false;result.push(text.value,area.value,check.checked,events);
+ document.body.setAttribute('data-reset-defaults',result.join(':'));
+})();
+</script>
+<script>
+// Put sequential keyboard navigation at the document start after setup probes.
+// Chromium executes parser scripts before later markup, unlike MiniWeb's load pass.
+document.body.setAttribute('tabindex','-1');document.body.focus();document.body.blur();document.body.removeAttribute('tabindex');
+</script>

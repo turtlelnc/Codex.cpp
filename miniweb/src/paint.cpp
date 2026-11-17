@@ -50,7 +50,7 @@ void paint_input_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, fl
         canvas.fill_rect(RectF{box.x, box.y + box.h - 1, box.w, 1}, Color{120, 120, 120, 255}, opacity);
         canvas.fill_rect(RectF{box.x, box.y, 1, box.h}, Color{120, 120, 120, 255}, opacity);
         canvas.fill_rect(RectF{box.x + box.w - 1, box.y, 1, box.h}, Color{120, 120, 120, 255}, opacity);
-        if (n->has_attr("checked")) {
+        if (n->checked_dirty ? n->checked_value : n->has_attr("checked")) {
             if (type == "checkbox") {
                 canvas.fill_rect(RectF{box.x + 3, box.y + 6, 3, 2}, Color{30, 30, 30, 255}, opacity);
                 canvas.fill_rect(RectF{box.x + 5, box.y + 8, 3, 2}, Color{30, 30, 30, 255}, opacity);
@@ -61,15 +61,20 @@ void paint_input_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, fl
         }
         return;
     }
-    std::string value = n->attr("value");
+    const bool reflected=type=="button" || type=="submit" || type=="reset" || type=="image" || type=="hidden" || type=="file";
+    std::string value = n->control_dirty && !reflected ? n->control_value : n->attr("value");
+    if(type=="text" || type=="search" || type=="url" || type=="tel" || type=="email" || type=="password")
+        value.erase(std::remove_if(value.begin(),value.end(),[](char c){return c=='\r' || c=='\n';}),value.end());
     std::string placeholder = n->attr("placeholder");
     bool use_placeholder = value.empty() && !placeholder.empty();
-    std::string text = use_placeholder ? placeholder : value;
+    std::string text = use_placeholder ? placeholder : type == "password" ? std::string(value.size(), '*') : value;
     if (text.empty()) return;
     Color color = use_placeholder ? Color{150, 150, 150, 255} : st.color;
     float pad_top = resolve_length(st.padding.top, n->layout.content_w, st.font_size, 16.0f, true);
     float baseline = cy + pad_top + fonts.ascent(st) + 1;
+    canvas.push_clip(RectF{cx,cy,n->layout.content_w,n->layout.content_h});
     fonts.draw_text(canvas, text, cx + 4, baseline, st, with_opacity(color, opacity), 1.0f);
+    canvas.pop_clip();
 }
 
 void paint_select_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, float cy, float opacity) {
@@ -164,7 +169,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
     }
 
-    for (auto& line : L.lines) {
+    if (!n->is_element("textarea")) for (auto& line : L.lines) {
         for (auto& item : line.items) {
             if (item.kind == LineItem::Text) {
                 paint_text_item(canvas, fonts, item, cx, cy, op);
@@ -181,7 +186,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
     }
 
-    for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
+    if (!n->is_element("textarea")) for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
 
     if (visible && n->is_element("li")) {
         Node* p = n->parent;
@@ -199,15 +204,30 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         paint_input_value(canvas, n, fonts, cx, cy, op);
     } else if (visible && n->is_element("select")) {
         paint_select_value(canvas, n, fonts, cx, cy, op);
-    } else if (visible && n->is_element("textarea") && n->children.empty()) {
-        std::string value = n->attr("value");
+    } else if (visible && n->is_element("textarea")) {
+        std::string value = n->control_dirty ? n->control_value : n->text_content();
         if (!value.empty()) {
             float pad_top = resolve_length(n->style.padding.top, n->layout.content_w, n->style.font_size, 16.0f, true);
             float baseline = cy + pad_top + fonts.ascent(n->style);
-            fonts.draw_text(canvas, value, cx + 3, baseline, n->style, with_opacity(n->style.color, op), 1.0f);
+            canvas.push_clip(content);
+            size_t start=0;
+            while(start<=value.size() && baseline-fonts.ascent(n->style)<content.bottom()) {
+                auto end=value.find('\n',start);
+                fonts.draw_text(canvas,value.substr(start,end==std::string::npos?end:end-start),cx+3,baseline,n->style,with_opacity(n->style.color,op),1.0f);
+                if(end==std::string::npos)break;
+                start=end+1;baseline+=n->style.font_size*1.2f;
+            }
+            canvas.pop_clip();
         }
     }
 
+    if (visible && n->doc && n->doc->focused_id == n->id) {
+        Color focus{40,100,190,255};
+        canvas.fill_rect(RectF{box.x,box.y,box.w,1},focus,op);
+        canvas.fill_rect(RectF{box.x,box.y+box.h-1,box.w,1},focus,op);
+        canvas.fill_rect(RectF{box.x,box.y,1,box.h},focus,op);
+        canvas.fill_rect(RectF{box.x+box.w-1,box.y,1,box.h},focus,op);
+    }
     if (clip) canvas.pop_clip();
 }
 

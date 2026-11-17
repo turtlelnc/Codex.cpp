@@ -19,6 +19,7 @@ const env = {
 };
 let provider, app, browser, service;
 const requests = [];
+const sessionTests = require('./miniweb_session_test.cjs');
 function run(args) {
   const r = spawnSync(binary, args, {
     cwd: project,
@@ -49,6 +50,8 @@ const wait = async (fn) => {
 };
 (async () => {
   try {
+    await sessionTests(binary);
+    if(process.argv.includes('--browser')) await require('./miniweb_session_lifetime.cjs')(binary);
     fs.writeFileSync(
       path.join(project, 'index.html'),
       '<html><head><style>body{margin:0}#b{display:block;width:120px;height:90px;background:red}</style></head><body><div id="b"></div><script>document.getElementById("b").addEventListener("click",function(){this.style.background="blue"})</script></body></html>',
@@ -392,6 +395,7 @@ const wait = async (fn) => {
       await require('./miniweb_design_browser.cjs')(page,path.resolve(process.argv[3]));
       await require('./miniweb_position_browser.cjs')(page,path.resolve(process.argv[3]));
       await require('./miniweb_margin_browser.cjs')(page,path.resolve(process.argv[3]));
+      await require('./miniweb_interaction_browser.cjs')(browser,path.resolve(process.argv[3]));
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();

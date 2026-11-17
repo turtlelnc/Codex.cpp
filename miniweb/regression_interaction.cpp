@@ -1,0 +1,102 @@
+#include "src/engine.h"
+#include <filesystem>
+#include <stdexcept>
+#include <iostream>
+void check_interaction(const std::filesystem::path& directory,bool report){
+ Loader::set_access_root(directory.u8string());Engine engine(640,480);engine.set_wait_ms(0);std::string error;
+ auto check=[&](bool ok,const char* message){if(!ok)throw std::runtime_error(message);};
+ check(engine.load((directory/"interaction.html").u8string(),&error)&&engine.render(false),"Interaction fixture load");
+ for(const char* id:{"open","clear"}){auto r=engine.document()->get_element_by_id(id)->absolute_rect();auto i=(static_cast<int>(r.y+5)*640+static_cast<int>(r.x+5))*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==240&&pixels[i+1]==240&&pixels[i+2]==240,"Positioned dialog controls must be painted");}
+ check(engine.document()->body->attr("data-detached-defaults")=="1:2:2:1:0","Detached/hidden script clicks, disabled controls and disconnected form defaults");
+ check(engine.document()->body->attr("data-reflected-types")=="text:submit:TEXT:SUBMIT:text:submit","Reflected control types normalize casing/defaults without rewriting attributes");
+ check(engine.document()->body->attr("data-value-modes")=="on:second:second:second:first:first:second","Only text controls use dirty live values; other values reflect attributes");
+ check(engine.document()->body->attr("data-fieldset-probe")=="true:legend-switch:false:false:false:1:true","Disabled fieldsets exempt only the first legend and allow re-enabling");
+ check(engine.document()->body->attr("data-focus-detach")=="true:true:true:true:true","Detached/replaced focused subtrees lose focus and explicit refocus remains possible");
+ check(engine.document()->body->attr("data-newline-values")=="abcd|a\nb\nc\nd","Script value sanitation strips single-line CR/LF and normalizes textarea newlines");
+ check(engine.document()->body->attr("data-script-maxlength")=="abcdef:abcdef:3:3","maxlength reflects while script-assigned values remain unrestricted");
+ check(engine.document()->body->attr("data-reset-defaults")=="first:initial:true:later:later:false:0","Programmatic detached form reset clears dirty flags without input/change events");
+ check(!engine.type("unfocused"),"Unfocused typing must fail");
+ check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
+ check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
+ check(engine.key("Tab")&&engine.key(" ")&&engine.key("Tab")&&engine.key("Enter")&&engine.render(false),"Keyboard form submit");
+ auto* body=engine.document()->body;auto result=body->attr("data-result");if(report)std::cout<<"INTERACTION_RESULT "<<result<<"\n";
+ check(result.find(u8"\"name\":\"A\u4f60\"")!=std::string::npos,"Live input value");
+ check(result.find("\"attr\":\"seed\"")!=std::string::npos,"Input default attribute unchanged");
+ check(result.find("\"note\":\"!\\nline2draft\"")!=std::string::npos,"Textarea live value");
+ check(result.find("\"checked\":true")!=std::string::npos&&result.find("\"submitted\":1")!=std::string::npos,"Checkbox and submit");
+ check(result.find("change:name")!=std::string::npos&&result.find("input:note")!=std::string::npos,"Input/change events");
+ check(result.find("focus:disabled")==std::string::npos,"Disabled excluded from focus");
+ check(engine.key("Enter")&&engine.render(false)&&body->attr("data-result").find("\"submitted\":2")!=std::string::npos,"State survives repeated render");
+ check(engine.key("Shift+Tab")&&engine.key(" ")&&engine.key("Tab")&&engine.key("Enter"),"Reverse tab/check");
+ check(body->attr("data-result").find("\"checked\":false")!=std::string::npos,"Checkbox toggled twice");
+ check(!engine.key("Unimplemented")&&!engine.type(std::string(8193,'x')),"Bounded/unsupported input");
+ auto click=[&](const char* id){auto r=engine.document()->get_element_by_id(id)->absolute_rect();return engine.click(r.x+r.w/2,r.y+r.h/2);};
+ check(click("open")&&engine.type("!")&&engine.type("blocked")&&engine.key("Escape")&&engine.render(false),"Settings interaction");
+ check(body->attr("data-setting")=="!warm","Canceled beforeinput and Escape");
+ check(click("open")&&engine.key("Tab")&&!engine.type("mutate")&&engine.key("Tab")&&engine.key("Enter")&&engine.render(false),"Readonly control and dialog close");
+ check(body->attr("data-setting")=="!warm","Settings state survives close/reopen");
+ check(engine.document()->get_element_by_id("agree")->has_attr("checked")==false,"Live checkbox must not rewrite checked attribute");
+ check(click("name")&&engine.type("tail")&&click("stayfocus")&&engine.type("x"),"Canceled pointer default keeps focus");
+ auto* name=engine.document()->get_element_by_id("name");auto previous=name->control_value;
+ check(engine.key(" ")&&name->control_value==previous+" ","Space inserts into text controls");
+ check(click("plain")&&engine.document()->focused_id==0,"Plain-content pointer press blurs input");
+ check(body->attr("data-committed")==name->control_value&&!engine.type("unfocused"),"Blur commits value and prevents further typing");
+ check(click("actionButton")&&engine.key("Enter")&&body->attr("data-action")=="clicked"&&body->attr("data-action-count")=="2"&&!body->has_attr("data-wrong-submit"),"Input button Enter activates without implicit submit");
+ check(click("actionSubmit")&&engine.key("Enter")&&body->attr("data-submit-click")=="canceled"&&body->attr("data-submit-count")=="2"&&!body->has_attr("data-wrong-submit"),"Input submit Enter preserves canceled click");
+ check(click("implicitText")&&engine.key("Enter")&&body->attr("data-default-clicks")=="1"&&!body->has_attr("data-implicit-wrong"),"Implicit submit activates cancelable default button");
+ check(click("disableDefault")&&click("implicitText")&&engine.key("Enter")&&body->attr("data-default-clicks")=="1"&&!body->has_attr("data-implicit-wrong"),"Disabled default prevents implicit submission");
+ check(click("checkLabel")&&engine.document()->get_element_by_id("labelCheck")->checked_value,"Label forwards checkbox activation");
+ check(click("cancelLabel")&&engine.document()->get_element_by_id("labelCheck")->checked_value,"Canceled label must not activate checkbox");
+ check(click("textLabel")&&engine.type("label focus")&&engine.document()->get_element_by_id("labelText")->control_value=="label focus","Label focuses associated input");
+ check(click("nestedLabel")&&engine.document()->get_element_by_id("nestedCheck")->checked_value,"Nested label activates non-focusable checkbox");
+ check(click("programmatic")&&body->attr("data-program-changes")=="0","Script-only focused assignment must not emit change on blur");
+ check(click("unicode")&&engine.key("ArrowLeft")&&engine.type("X"),"Unicode left movement");
+ check(engine.document()->get_element_by_id("labelText")->control_value==u8"X\U0001f600","Left arrow must preserve surrogate pair");
+ check(engine.key("Home")&&engine.key("ArrowRight")&&engine.key("ArrowRight")&&engine.type("Y")&&engine.document()->get_element_by_id("labelText")->control_value==u8"X\U0001f600Y","Right arrow must preserve surrogate pair");
+ check(engine.key("Escape")&&click("plain")&&body->attr("data-program-changes")=="1","Script assignment after user edit preserves pending change");
+ check(click("unicode")&&engine.type("X")&&engine.key("Backspace")&&click("plain")&&body->attr("data-program-changes")=="0","Reverted user edit uses current script-assigned baseline");
+ check(click("selfDisable")&&body->attr("data-self-disable-click")=="yes"&&!body->has_attr("data-wrong-submit"),"Disabling submit button during click suppresses default submission");
+ check(click("pressDisable")&&!body->has_attr("data-disabled-press-click"),"Disabling during pointer press suppresses click");
+ for(const auto& expected:std::vector<std::string>{"blur:probe-c","change:probe-c","focusout:probe-c","change:probe-a"}){
+   check(click("focus-start")&&engine.type("edit")&&click("probe-advance")&&body->attr("data-focus-probe")==expected,"Focus callbacks must preserve nested focus transitions");
+   check(engine.type("X"),"Redirected focus accepts subsequent typing");
+   auto id=expected.substr(expected.find(':')+1);check(engine.document()->get_element_by_id(id)->control_value==(id=="probe-a"?"editX":"X"),"Typing targets callback-selected control");
+   check(click("probe-done"),"Close focus probe");
+ }
+ for(const auto& mode:std::vector<std::string>{"hide","disable","detach","reattach-focus"}){
+   check(click("focus-start")&&engine.key("Enter")&&engine.key("Enter"),"Close probe keyboard operations");
+   check(body->attr("data-close-probe")==mode+(mode=="reattach-focus"?":2":":1"),"Invisible or detached controls must not receive repeated keyboard activation");
+   check((engine.document()->focused_id!=0)==(mode=="reattach-focus"),"Native focus state reconciles with DOM and style changes");
+   check(click("probe-done"),"Close lifecycle probe");
+ }
+ const std::string multiline="alpha\r\nbeta\rgamma\nend";
+ check(click("focus-start")&&engine.type(multiline)&&engine.type("Z")&&engine.key("Tab"),"Paste multiline text into single-line control");
+ check(body->attr("data-line-input")=="alpha beta gamma endZ:21"&&body->attr("data-line-before")==multiline&&body->attr("data-line-input-data")=="alpha beta gamma end","Input pasted newlines become spaces and caret follows sanitized text");
+ check(engine.type(multiline)&&engine.type("Z")&&click("probe-done")&&body->attr("data-line-area")=="alpha\nbeta\ngamma\nendZ:21","Textarea preserves normalized line breaks and final caret");
+ check(click("focus-start")&&engine.type("new")&&engine.key("Enter")&&body->attr("data-enter-submit")=="new:1:1:probe-submit","Implicit submission commits change-driven application state first");
+ check(engine.key("Enter")&&body->attr("data-enter-submit")=="new:1:2:probe-submit","Repeated submit does not duplicate change");
+ check(engine.type("er")&&engine.key("Enter")&&body->attr("data-enter-submit")=="newer:2:3:probe-submit","Later edits establish a new committed baseline");
+ check(click("probe-done")&&body->attr("data-enter-changes")=="2","Blur after committed submission does not emit change again");
+ check(click("focus-start")&&engine.key("End")&&engine.type("XYZ")&&engine.document()->get_element_by_id("probe-limit")->attr("value")=="abc"&&body->attr("data-max-events")=="0","Full input maxlength rejects further user insertion without input event");
+ check(engine.key("Tab")&&engine.key("End")&&engine.type("XYZ")&&engine.document()->get_element_by_id("probe-limit-area")->text_content()=="abc","Textarea maxlength rejects additional user text");
+ check(engine.key("Shift+Tab")&&engine.type(u8"\U0001f600AB")&&engine.key("Tab")&&body->attr("data-max-input")==u8"\U0001f600A:3"&&body->attr("data-max-input-data")==u8"\U0001f600A","maxlength accounts for replaced selection and preserves Unicode pairs");
+ check(engine.key("Home")&&engine.key("Delete")&&engine.key("Delete")&&engine.key("Delete")&&engine.type("XYZW")&&engine.document()->get_element_by_id("probe-limit-area")->control_value=="XYZ","Deletion remains possible and textarea insertion truncates at maxlength");
+ check(click("probe-limits-reset")&&engine.type(u8"\U0001f600")&&engine.document()->get_element_by_id("probe-limit")->control_value.empty(),"maxlength cannot insert half of a supplementary character");
+ check(engine.type("Z")&&engine.type("Y")&&engine.document()->get_element_by_id("probe-limit")->control_value=="Z"&&engine.key("Tab")&&engine.type("X")&&engine.document()->get_element_by_id("probe-limit-area")->control_value.empty(),"Dynamic maxlength and zero limit respect selection replacement");
+ check(click("probe-done"),"Close maxlength probe");
+ check(click("focus-start")&&engine.type("edited")&&engine.key("Tab")&&engine.type("changed")&&click("probe-reset-check")&&click("probe-reset-cancel"),"Prepare and cancel reset");
+ check(engine.document()->get_element_by_id("probe-reset-text")->control_value=="seededited"&&!engine.document()->get_element_by_id("probe-reset-check")->checked_value,"Canceled reset preserves edited values and checkbox");
+ check(click("probe-reset-button")&&engine.key("Tab")&&engine.key("Enter")&&click("probe-done")&&body->attr("data-reset-state")=="seed:note:true:external:3:3","Pointer and keyboard reset restore owned controls without extra input/change events");
+ check(click("clear")&&engine.render(false),"Clear textarea live value");
+ auto area=engine.document()->get_element_by_id("note")->absolute_rect();
+ for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}
+ Engine background(640,480);background.set_wait_ms(0);
+ check(background.load((directory/"background.html").u8string(),&error)&&background.render(false)&&background.key("Tab")&&background.type("kept"),"Background-click fixture");
+ check(background.document()->html->absolute_rect().h<480,"Fixture must leave empty viewport space");
+ check(background.click(400,400)&&background.render(false)&&background.document()->body->attr("data-kept")=="kept"&&background.document()->focused_id==0,"Empty viewport click preserves state and commits blur");
+ check(background.click(400,400)&&!background.click(-1,400)&&!background.click(640,400),"Only in-viewport background clicks are accepted");
+ check(background.key("Tab")&&background.type("retained")&&background.click(500,400)&&background.type("X")&&background.document()->body->attr("data-kept")=="kept","Canceled background mousedown preserves focus and pending edit");
+ check(background.click(400,400)&&background.document()->body->attr("data-kept")=="retainedX","Subsequent ordinary background click commits retained value");
+ check(background.key("Tab")&&background.type("retainedX")&&background.type("Y")&&background.click(400,400)&&background.document()->body->attr("data-kept")=="retainedXY","Same-value replacement collapses selection before subsequent typing");
+ std::cerr<<"MiniWeb interaction regressions passed\n";
+}

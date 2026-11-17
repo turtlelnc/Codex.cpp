@@ -46,7 +46,23 @@ public:
   ToolResult run(const std::string& args,const fs::path& root)override{return preview_capture(args,root);}
   ToolResult run_with_ui(const std::string& args,const fs::path& root,const std::function<void()>& tick,bool watch)override{return preview_capture(args,root,tick,watch);}
 };
+#include "codex_preview_session.inc"
 static int preview_cli(int argc,char** argv){try{
+  if(argc==3&&std::string(argv[2])=="session"){
+#if !defined(_WIN32)
+    struct Signals { struct sigaction interrupt{},terminate{}; Signals(){struct sigaction action{};action.sa_handler=request_tui_interrupt;sigemptyset(&action.sa_mask);sigaction(SIGINT,&action,&interrupt);sigaction(SIGTERM,&action,&terminate);} ~Signals(){sigaction(SIGINT,&interrupt,nullptr);sigaction(SIGTERM,&terminate,nullptr);} } signals;
+#endif
+    PreviewSessionTool tool;std::string line;
+    char c;while(std::cin.get(c)){if(c!='\n'){if(line.size()>=20000)throw std::runtime_error("Preview request too large");line+=c;continue;}auto result=tool.run(line,fs::current_path());Json images;images.kind=Json::Array;for(const auto& image:result.images)images.items.push_back(plugin_string(image));std::cout<<json_dump(plugin_object({{"exit_code",*parse_json(std::to_string(result.exit_code))},{"output",plugin_string(result.output)},{"images",images}}))<<std::endl;line.clear();
+#if !defined(_WIN32)
+    if(tui_interrupt_requested)break;
+#endif
+    }if(!line.empty())throw std::runtime_error("Incomplete preview request");
+#if !defined(_WIN32)
+    if(tui_interrupt_requested)return 130;
+#endif
+    return 0;
+  }
   if(argc<4||std::string(argv[2])!="shot"){std::cerr<<"Usage: codex-cpp preview shot FILE [--width N] [--height N] [--wait N] [--click X,Y] [-o PNG] [--report JSON]\n";return 2;}
   Json request=plugin_object({{"path",plugin_string(argv[3])}});Json clicks;clicks.kind=Json::Array;std::string output="miniweb.png",report_path;
   for(int i=4;i<argc;++i){std::string flag=argv[i];if(i+1>=argc)throw std::runtime_error("Missing preview option value");std::string value=argv[++i];if(flag=="-o"||flag=="--out")output=value;else if(flag=="--report")report_path=value;else if(flag=="--width"||flag=="--height"||flag=="--wait"){auto n=parse_json(value);if(!n||n->kind!=Json::Other)throw std::runtime_error("Expected integer");request.fields[flag=="--wait"?"wait_ms":flag.substr(2)]=*n;}else if(flag=="--click"){const auto comma=value.find(',');if(comma==std::string::npos)throw std::runtime_error("Click requires X,Y");auto x=parse_json(value.substr(0,comma)),y=parse_json(value.substr(comma+1));if(!x||!y)throw std::runtime_error("Invalid click");clicks.items.push_back(plugin_object({{"x",*x},{"y",*y}}));}else throw std::runtime_error("Unsupported preview option");}
