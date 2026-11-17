@@ -81,7 +81,16 @@ document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('in
 })();
 var focusProbeIndex=0;
 function startFocusProbe(){
- var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit','maxlength'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(kind==='maxlength') {
+   box.innerHTML='<input id="probe-limit" maxlength="3" value="abc"><textarea id="probe-limit-area" maxlength="3">abc</textarea><button id="probe-limits-reset" type="button">Reset limits</button><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var input=box.querySelector('#probe-limit'),area=box.querySelector('#probe-limit-area'),events=0;
+   document.body.setAttribute('data-max-events','0');
+   input.addEventListener('input',function(e){document.body.setAttribute('data-max-events',String(++events));document.body.setAttribute('data-max-input-data',e.data)});
+   input.addEventListener('change',function(){document.body.setAttribute('data-max-input',input.value+':'+input.selectionStart)});
+   box.querySelector('#probe-limits-reset').addEventListener('click',function(){input.maxLength=1;input.value='';area.maxLength=0;area.value='abc';area.selectionStart=0;area.selectionEnd=3;input.focus()});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});input.focus();return;
+ }
  if(kind==='submit-commit') {
    box.innerHTML='<form id="probe-form"><input id="probe-commit"><button id="probe-submit" type="submit">Submit</button></form><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
    var input=box.querySelector('#probe-commit'),state='old',changes=0,submits=0;
@@ -128,6 +137,9 @@ function startFocusProbe(){
 </script>
 <script>
 (function(){var input=document.createElement('input'),area=document.createElement('textarea');input.value='a\r\nb\rc\nd';area.value='a\r\nb\rc\nd';document.body.setAttribute('data-newline-values',input.value+'|'+area.value)})();
+</script>
+<script>
+(function(){var input=document.createElement('input'),area=document.createElement('textarea');input.maxLength=3;area.maxLength=3;input.value='abcdef';area.value='abcdef';document.body.setAttribute('data-script-maxlength',input.value+':'+area.value+':'+input.maxLength+':'+area.getAttribute('maxlength'))})();
 </script>
 <script>
 // Put sequential keyboard navigation at the document start after setup probes.

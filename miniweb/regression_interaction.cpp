@@ -13,6 +13,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.document()->body->attr("data-fieldset-probe")=="true:legend-switch:false:false:false:1:true","Disabled fieldsets exempt only the first legend and allow re-enabling");
  check(engine.document()->body->attr("data-focus-detach")=="true:true:true:true:true","Detached/replaced focused subtrees lose focus and explicit refocus remains possible");
  check(engine.document()->body->attr("data-newline-values")=="abcd|a\nb\nc\nd","Script value sanitation strips single-line CR/LF and normalizes textarea newlines");
+ check(engine.document()->body->attr("data-script-maxlength")=="abcdef:abcdef:3:3","maxlength reflects while script-assigned values remain unrestricted");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -75,6 +76,13 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.key("Enter")&&body->attr("data-enter-submit")=="new:1:2:probe-submit","Repeated submit does not duplicate change");
  check(engine.type("er")&&engine.key("Enter")&&body->attr("data-enter-submit")=="newer:2:3:probe-submit","Later edits establish a new committed baseline");
  check(click("probe-done")&&body->attr("data-enter-changes")=="2","Blur after committed submission does not emit change again");
+ check(click("focus-start")&&engine.key("End")&&engine.type("XYZ")&&engine.document()->get_element_by_id("probe-limit")->attr("value")=="abc"&&body->attr("data-max-events")=="0","Full input maxlength rejects further user insertion without input event");
+ check(engine.key("Tab")&&engine.key("End")&&engine.type("XYZ")&&engine.document()->get_element_by_id("probe-limit-area")->text_content()=="abc","Textarea maxlength rejects additional user text");
+ check(engine.key("Shift+Tab")&&engine.type(u8"\U0001f600AB")&&engine.key("Tab")&&body->attr("data-max-input")==u8"\U0001f600A:3"&&body->attr("data-max-input-data")==u8"\U0001f600A","maxlength accounts for replaced selection and preserves Unicode pairs");
+ check(engine.key("Home")&&engine.key("Delete")&&engine.key("Delete")&&engine.key("Delete")&&engine.type("XYZW")&&engine.document()->get_element_by_id("probe-limit-area")->control_value=="XYZ","Deletion remains possible and textarea insertion truncates at maxlength");
+ check(click("probe-limits-reset")&&engine.type(u8"\U0001f600")&&engine.document()->get_element_by_id("probe-limit")->control_value.empty(),"maxlength cannot insert half of a supplementary character");
+ check(engine.type("Z")&&engine.type("Y")&&engine.document()->get_element_by_id("probe-limit")->control_value=="Z"&&engine.key("Tab")&&engine.type("X")&&engine.document()->get_element_by_id("probe-limit-area")->control_value.empty(),"Dynamic maxlength and zero limit respect selection replacement");
+ check(click("probe-done"),"Close maxlength probe");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}

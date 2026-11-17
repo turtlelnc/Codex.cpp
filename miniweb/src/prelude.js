@@ -323,6 +323,11 @@
     if(n.tagName==='INPUT' && /^(text|search|url|tel|email|password)$/.test(n.type))return value.replace(/[\r\n]/g,'');
     return value;
   }
+  function textLengthLimit(n) {
+    var match=/^[\t\n\f\r ]*([+-]?\d+)/.exec(n.getAttribute('maxlength') || '');
+    var limit=match?Number(match[1]):-1;
+    return limit>=0 && limit<=2147483647?(limit===0?0:limit):-1;
+  }
   function liveValueControl(n) {
     return n.tagName==='TEXTAREA' || (n.tagName==='INPUT' && !/^(button|submit|reset|image|hidden|checkbox|radio|file)$/.test(n.type));
   }
@@ -473,6 +478,12 @@
     }
     get defaultValue() { return this.tagName === 'TEXTAREA' ? this.textContent : this.getAttribute('value') || ''; }
     set defaultValue(v) { if (this.tagName === 'TEXTAREA') this.textContent = v; else this.setAttribute('value', String(v)); }
+    get maxLength() { return textLengthLimit(this); }
+    set maxLength(v) {
+      var limit=Number(v)|0;
+      if(limit<0){var error=new Error('maxLength must be nonnegative');error.name='IndexSizeError';throw error;}
+      this.setAttribute('maxlength',String(limit));
+    }
     get checked() { return N.controlChecked(this.__id); }
     set checked(v) { N.controlChecked(this.__id, !!v); }
     get disabled() { return this.hasAttribute('disabled'); }
@@ -1141,10 +1152,19 @@
     var ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: eventData, inputType: inputType });
     if (!n.dispatchEvent(ev)) return true;
     text=n.tagName==='INPUT'?text.replace(/\r\n|\r|\n/g,' '):text.replace(/\r\n?/g,'\n');
-    if(inputType==='insertText')eventData=text;
     var value = n.value, start = Math.max(0, Math.min(value.length, Number(n.selectionStart) || 0)), end = Math.max(start, Math.min(value.length, Number(n.selectionEnd) || 0));
     if (inputType === 'deleteContentBackward' && start === end && start) start -= value.charCodeAt(start - 1) >= 0xdc00 && value.charCodeAt(start - 1) <= 0xdfff ? 2 : 1;
     if (inputType === 'deleteContentForward' && start === end && end < value.length) end += value.charCodeAt(end) >= 0xd800 && value.charCodeAt(end) <= 0xdbff ? 2 : 1;
+    var limit=textLengthLimit(n);
+    if(limit>=0){
+      var available=Math.max(0,limit-(value.length-(end-start)));
+      if(text.length>available){
+        var cut=available;
+        if(cut>0 && text.charCodeAt(cut-1)>=0xd800 && text.charCodeAt(cut-1)<=0xdbff && text.charCodeAt(cut)>=0xdc00 && text.charCodeAt(cut)<=0xdfff)--cut;
+        text=text.slice(0,cut);
+      }
+    }
+    if(inputType==='insertText')eventData=text;
     var next=value.slice(0, start) + text + value.slice(end);
     if(text.length===0 && start===end)return true;
     if(!n.__userEdited)n.__focusValue=value;

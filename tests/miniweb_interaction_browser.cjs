@@ -43,6 +43,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-newline-values"),
       "abcd|a\nb\nc\nd",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-script-maxlength"),
+      "abcdef:abcdef:3:3",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
@@ -305,6 +309,45 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-enter-changes"),
       "2",
     );
+    await page.locator("#focus-start").click();
+    await page.keyboard.press("End");
+    await page.keyboard.insertText("XYZ");
+    assert.equal(await page.locator("#probe-limit").inputValue(), "abc");
+    assert.equal(
+      await page.locator("body").getAttribute("data-max-events"),
+      "0",
+    );
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("End");
+    await page.keyboard.insertText("XYZ");
+    assert.equal(await page.locator("#probe-limit-area").inputValue(), "abc");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.insertText("😀AB");
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.locator("body").getAttribute("data-max-input"),
+      "😀A:3",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-max-input-data"),
+      "😀A",
+    );
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Delete");
+    await page.keyboard.press("Delete");
+    await page.keyboard.press("Delete");
+    await page.keyboard.insertText("XYZW");
+    assert.equal(await page.locator("#probe-limit-area").inputValue(), "XYZ");
+    await page.locator("#probe-limits-reset").click();
+    await page.keyboard.insertText("😀");
+    assert.equal(await page.locator("#probe-limit").inputValue(), "");
+    await page.keyboard.insertText("Z");
+    await page.keyboard.insertText("Y");
+    assert.equal(await page.locator("#probe-limit").inputValue(), "Z");
+    await page.keyboard.press("Tab");
+    await page.keyboard.insertText("X");
+    assert.equal(await page.locator("#probe-limit-area").inputValue(), "");
+    await page.locator("#probe-done").click();
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     await page.setContent(
       fs.readFileSync("miniweb/test/background.html", "utf8"),
