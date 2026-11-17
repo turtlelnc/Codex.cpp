@@ -10,6 +10,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.document()->body->attr("data-detached-defaults")=="1:2:2:1:0","Detached/hidden script clicks, disabled controls and disconnected form defaults");
  check(engine.document()->body->attr("data-reflected-types")=="text:submit:TEXT:SUBMIT:text:submit","Reflected control types normalize casing/defaults without rewriting attributes");
  check(engine.document()->body->attr("data-value-modes")=="on:second:second:second:first:first:second","Only text controls use dirty live values; other values reflect attributes");
+ check(engine.document()->body->attr("data-fieldset-probe")=="true:legend-switch:false:false:false:1:true","Disabled fieldsets exempt only the first legend and allow re-enabling");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -52,6 +53,12 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(click("unicode")&&engine.type("X")&&engine.key("Backspace")&&click("plain")&&body->attr("data-program-changes")=="0","Reverted user edit uses current script-assigned baseline");
  check(click("selfDisable")&&body->attr("data-self-disable-click")=="yes"&&!body->has_attr("data-wrong-submit"),"Disabling submit button during click suppresses default submission");
  check(click("pressDisable")&&!body->has_attr("data-disabled-press-click"),"Disabling during pointer press suppresses click");
+ for(const auto& expected:std::vector<std::string>{"blur:probe-c","change:probe-c","focusout:probe-c","change:probe-a"}){
+   check(click("focus-start")&&engine.type("edit")&&click("probe-advance")&&body->attr("data-focus-probe")==expected,"Focus callbacks must preserve nested focus transitions");
+   check(engine.type("X"),"Redirected focus accepts subsequent typing");
+   auto id=expected.substr(expected.find(':')+1);check(engine.document()->get_element_by_id(id)->control_value==(id=="probe-a"?"editX":"X"),"Typing targets callback-selected control");
+   check(click("probe-done"),"Close focus probe");
+ }
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}

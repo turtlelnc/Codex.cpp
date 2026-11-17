@@ -31,6 +31,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-value-modes"),
       "on:second:second:second:first:first:second",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-fieldset-probe"),
+      "true:legend-switch:false:false:false:1:true",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
@@ -202,6 +206,27 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-disabled-press-click"),
       null,
     );
+    for (const expected of [
+      "blur:probe-c",
+      "change:probe-c",
+      "focusout:probe-c",
+      "change:probe-a",
+    ]) {
+      await page.locator("#focus-start").click();
+      await page.keyboard.insertText("edit");
+      await page.locator("#probe-advance").click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-focus-probe"),
+        expected,
+      );
+      await page.keyboard.insertText("X");
+      const id = expected.split(":")[1];
+      assert.equal(
+        await page.locator("#" + id).inputValue(),
+        id === "probe-a" ? "editX" : "X",
+      );
+      await page.locator("#probe-done").click();
+    }
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",

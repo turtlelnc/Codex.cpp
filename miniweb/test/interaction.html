@@ -67,3 +67,32 @@ var checkDefault=document.createElement('input');checkDefault.type='checkbox';
 var areaProbe=document.createElement('textarea');areaProbe.value='first';areaProbe.defaultValue='second';
 document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('input','checkbox'),valueProbe('button'),valueProbe('input','button'),valueProbe('input','text'),areaProbe.value,valueProbe('input','hidden')].join(':'));
 </script>
+<script>
+(function(){
+ var box=document.createElement('div');box.style.cssText='position:absolute;left:0;top:0;opacity:0';
+ box.innerHTML='<fieldset id="probeFieldset" disabled><legend><input id="legend-switch" type="checkbox"><input id="legend-own" type="checkbox" disabled></legend><input id="legend-outside" type="checkbox"><legend><input id="legend-second" type="checkbox"></legend></fieldset><div disabled><button id="generic-disabled">Generic</button></div>';
+ document.body.appendChild(box);
+ var switcher=box.querySelector('#legend-switch'),own=box.querySelector('#legend-own'),outside=box.querySelector('#legend-outside'),second=box.querySelector('#legend-second'),generic=0;
+ box.querySelector('#generic-disabled').addEventListener('click',function(){generic++});
+ switcher.focus();switcher.click();outside.focus();outside.click();second.focus();second.click();own.focus();own.click();box.querySelector('#generic-disabled').click();
+ var result=[switcher.checked,document.activeElement.id,outside.checked,second.checked,own.checked,generic].join(':');
+ box.querySelector('#probeFieldset').disabled=false;outside.focus();outside.click();result+=':'+(document.activeElement===outside&&outside.checked);
+ outside.blur();box.remove();document.body.setAttribute('data-fieldset-probe',result);
+})();
+var focusProbeIndex=0;
+function startFocusProbe(){
+ var kind=['blur','change','focusout','change'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ box.innerHTML='<input id="probe-a"><input id="probe-b"><input id="probe-c"><button id="probe-advance" type="button">Advance</button><button id="probe-done" type="button">Done</button>';
+ document.body.appendChild(box);var a=box.querySelector('#probe-a'),b=box.querySelector('#probe-b'),c=box.querySelector('#probe-c');
+ a.addEventListener(kind,function(){(focusProbeIndex===4?a:c).focus()});
+ box.querySelector('#probe-advance').addEventListener('mousedown',function(e){e.preventDefault()});
+ box.querySelector('#probe-advance').addEventListener('click',function(){b.focus();document.body.setAttribute('data-focus-probe',kind+':'+document.activeElement.id)});
+ box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});a.focus();
+}
+</script>
+<button id="focus-start" type="button" style="position:absolute;left:150px;top:445px;width:110px;height:24px">Focus probe</button><script>document.getElementById('focus-start').addEventListener('click',startFocusProbe)</script>
+<script>
+// Put sequential keyboard navigation at the document start after setup probes.
+// Chromium executes parser scripts before later markup, unlike MiniWeb's load pass.
+document.body.setAttribute('tabindex','-1');document.body.focus();document.body.blur();document.body.removeAttribute('tabindex');
+</script>

@@ -1000,9 +1000,23 @@
   globalThis.__mwSetTitle = function (t) { document.title = t; };
   // User interaction defaults live here, separate from synthetic dispatchEvent.
   var activeControl = null;
+  var focusRevision = 0;
+  function formDisabled(n) {
+    for(var p=n;p && p.nodeType===1;p=p.parentElement) {
+      if(!p.hasAttribute('disabled'))continue;
+      if(p.tagName==='FIELDSET') {
+        var legend=p.children.find(function(c){return c.tagName==='LEGEND';});
+        if(legend && legend.contains(n))continue;
+        return true;
+      }
+      if(/^(INPUT|BUTTON|SELECT|TEXTAREA|OPTION|OPTGROUP)$/.test(p.tagName))return true;
+    }
+    return false;
+  }
   function enabled(n) {
+    if(!n || formDisabled(n))return false;
     for (var p = n; p && p.nodeType === 1; p = p.parentElement)
-      if (p.hasAttribute('disabled') || p.hasAttribute('hidden') || getComputedStyle(p).display === 'none') return false;
+      if (p.hasAttribute('hidden') || getComputedStyle(p).display === 'none') return false;
     return !!(n && n.isConnected && getComputedStyle(n).visibility !== 'hidden');
   }
   function focusable(n) {
@@ -1011,8 +1025,9 @@
   function focusControl(n) {
     if (n && !focusable(n)) return;
     if (n === activeControl) return;
-    var old = activeControl;
+    var old = activeControl, revision=++focusRevision;
     activeControl = null;
+    N.focusControl(0);
     if (old) {
       var changed=old.__userEdited && old.__focusValue !== old.value && /^(INPUT|TEXTAREA)$/.test(old.tagName) && !/^(checkbox|radio)$/.test(old.type);
       old.__userEdited=false;
@@ -1020,12 +1035,14 @@
       old.dispatchEvent(new FocusEvent('blur', { relatedTarget: n }));
       old.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: n }));
     }
+    if(revision!==focusRevision || (n && !focusable(n)))return;
     activeControl = n;
     N.focusControl(n ? n.__id : 0);
     if (n) {
       n.__focusValue = n.value; n.__userEdited=false;
       if (typeof n.selectionStart !== 'number') n.selectionStart = n.selectionEnd = 0;
       n.dispatchEvent(new FocusEvent('focus', { relatedTarget: old }));
+      if(revision!==focusRevision)return;
       n.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: old }));
     }
   }
@@ -1057,9 +1074,7 @@
     if (form.dispatchEvent(ev)) N.unsupported('form navigation', 'Form submitted; navigation/network submission is not supported');
   }
   function activatable(n) {
-    if (!n) return false;
-    for(var p=n;p && p.nodeType===1;p=p.parentElement)if(p.hasAttribute('disabled'))return false;
-    return true;
+    return !!n && !formDisabled(n);
   }
   function activate(n, x, y, pointer) {
     if (!activatable(n) || (pointer && !n.isConnected)) return false;
@@ -1069,7 +1084,7 @@
         var target = null;
         for (var f = n; f && f.nodeType === 1; f = f.parentElement) if (focusable(f)) { target = f; break; }
         focusControl(target);
-        if (target && editable(target)) target.selectionStart = target.selectionEnd = target.value.length;
+        if (target && target===activeControl && editable(target)) target.selectionStart = target.selectionEnd = target.value.length;
       }
       if(!n.isConnected || !activatable(n))return true;
       n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
@@ -1126,7 +1141,7 @@
       if (key === 'Tab') {
         var list = document.querySelectorAll('input,textarea,button,select,a,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
         list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });
-        if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
+        if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next===activeControl && next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
       } else if (key === 'Backspace') insertText('', 'deleteContentBackward');
       else if (key === 'Delete') insertText('', 'deleteContentForward');
       else if (key === 'Enter') {
