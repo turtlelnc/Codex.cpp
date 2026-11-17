@@ -318,6 +318,11 @@
     });
   }
 
+  function normalizeControlValue(n,value) {
+    if(n.tagName==='TEXTAREA')return value.replace(/\r\n?/g,'\n');
+    if(n.tagName==='INPUT' && /^(text|search|url|tel|email|password)$/.test(n.type))return value.replace(/[\r\n]/g,'');
+    return value;
+  }
   function liveValueControl(n) {
     return n.tagName==='TEXTAREA' || (n.tagName==='INPUT' && !/^(button|submit|reset|image|hidden|checkbox|radio|file)$/.test(n.type));
   }
@@ -455,7 +460,7 @@
     get innerText() { return this.textContent; }
     set innerText(v) { this.textContent = v; }
     get value() {
-      if(liveValueControl(this))return N.controlValue(this.__id);
+      if(liveValueControl(this))return normalizeControlValue(this,N.controlValue(this.__id));
       var value=this.getAttribute('value');
       if(value===null && this.tagName==='INPUT' && /^(checkbox|radio)$/.test(this.type))return 'on';
       return value===null?'':value;
@@ -463,7 +468,7 @@
     set value(v) {
       var value=v==null?'':String(v);
       if(!liveValueControl(this)){this.setAttribute('value',value);return;}
-      var before=this.value;N.controlValue(this.__id,value);
+      var before=this.value;N.controlValue(this.__id,normalizeControlValue(this,value));
       if(this.value!==before)this.selectionStart=this.selectionEnd=this.value.length;
     }
     get defaultValue() { return this.tagName === 'TEXTAREA' ? this.textContent : this.getAttribute('value') || ''; }
@@ -1131,6 +1136,8 @@
     var eventData=inputType==='insertText'?text:null;
     var ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: eventData, inputType: inputType });
     if (!n.dispatchEvent(ev)) return true;
+    text=n.tagName==='INPUT'?text.replace(/\r\n|\r|\n/g,' '):text.replace(/\r\n?/g,'\n');
+    if(inputType==='insertText')eventData=text;
     var value = n.value, start = Math.max(0, Math.min(value.length, Number(n.selectionStart) || 0)), end = Math.max(start, Math.min(value.length, Number(n.selectionEnd) || 0));
     if (inputType === 'deleteContentBackward' && start === end && start) start -= value.charCodeAt(start - 1) >= 0xdc00 && value.charCodeAt(start - 1) <= 0xdfff ? 2 : 1;
     if (inputType === 'deleteContentForward' && start === end && end < value.length) end += value.charCodeAt(end) >= 0xd800 && value.charCodeAt(end) <= 0xdbff ? 2 : 1;
@@ -1139,7 +1146,7 @@
     if(!n.__userEdited)n.__focusValue=value;
     n.__userEdited=true;
     n.value = next;
-    n.selectionStart = n.selectionEnd = start + text.length;
+    n.selectionStart = n.selectionEnd = Math.min(n.value.length,start + text.length);
     n.dispatchEvent(new InputEvent('input', { bubbles: true, data: eventData, inputType: inputType }));
     return true;
   }

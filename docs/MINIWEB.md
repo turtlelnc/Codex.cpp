@@ -96,7 +96,9 @@ button activation, basic text-editing keys and Escape
 handlers. Live values are distinct from default HTML attributes. Script-assigned
 values do not emit user-input events. Disabled/hidden controls cannot be edited;
 readonly controls can receive focus but cannot be edited. Focus/checked CSS states
-and a basic focus border are drawn. Native select menus, radio-group navigation,
+and a basic focus border are drawn. Single-line pasted line breaks become spaces;
+script-assigned single-line values strip CR/LF. Textareas normalize CR/CRLF to LF
+while retaining multiple lines. Native select menus, radio-group navigation,
 validation, form serialization, IME/composition, rich-text editing, exact pointer
 caret placement, caret/selection painting and multiline textarea typography are
 not implemented. Pointer text clicks currently place the insertion point at the

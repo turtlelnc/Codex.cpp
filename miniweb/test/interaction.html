@@ -81,7 +81,16 @@ document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('in
 })();
 var focusProbeIndex=0;
 function startFocusProbe(){
- var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(kind==='linebreaks') {
+   box.innerHTML='<input id="probe-single"><textarea id="probe-multi"></textarea><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var single=box.querySelector('#probe-single'),multi=box.querySelector('#probe-multi');
+   single.addEventListener('beforeinput',function(e){if(!document.body.hasAttribute('data-line-before'))document.body.setAttribute('data-line-before',e.data)});
+   single.addEventListener('input',function(e){if(!document.body.hasAttribute('data-line-input-data'))document.body.setAttribute('data-line-input-data',e.data)});
+   single.addEventListener('change',function(){document.body.setAttribute('data-line-input',single.value+':'+single.selectionStart)});
+   multi.addEventListener('change',function(){document.body.setAttribute('data-line-area',multi.value+':'+multi.selectionStart)});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});single.focus();return;
+ }
  if(focusProbeIndex>4) {
    box.innerHTML='<div id="probe-panel"><button id="probe-close" type="button">Close</button></div><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
    var close=box.querySelector('#probe-close'),count=0;close.addEventListener('click',function(){
@@ -109,6 +118,9 @@ function startFocusProbe(){
  replacement.focus();box.innerHTML='<input id="detach-inner">';result.push(document.activeElement===document.body);box.querySelector('input').focus();box.textContent='';result.push(document.activeElement===document.body);
  box.remove();document.body.setAttribute('data-focus-detach',result.join(':'));
 })();
+</script>
+<script>
+(function(){var input=document.createElement('input'),area=document.createElement('textarea');input.value='a\r\nb\rc\nd';area.value='a\r\nb\rc\nd';document.body.setAttribute('data-newline-values',input.value+'|'+area.value)})();
 </script>
 <script>
 // Put sequential keyboard navigation at the document start after setup probes.

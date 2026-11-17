@@ -63,6 +63,8 @@ void paint_input_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, fl
     }
     const bool reflected=type=="button" || type=="submit" || type=="reset" || type=="image" || type=="hidden" || type=="file";
     std::string value = n->control_dirty && !reflected ? n->control_value : n->attr("value");
+    if(type=="text" || type=="search" || type=="url" || type=="tel" || type=="email" || type=="password")
+        value.erase(std::remove_if(value.begin(),value.end(),[](char c){return c=='\r' || c=='\n';}),value.end());
     std::string placeholder = n->attr("placeholder");
     bool use_placeholder = value.empty() && !placeholder.empty();
     std::string text = use_placeholder ? placeholder : type == "password" ? std::string(value.size(), '*') : value;

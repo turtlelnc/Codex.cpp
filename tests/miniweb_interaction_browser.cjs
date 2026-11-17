@@ -39,6 +39,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-focus-detach"),
       "true:true:true:true:true",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-newline-values"),
+      "abcd|a\nb\nc\nd",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
@@ -254,6 +258,30 @@ module.exports = async function interactionBrowser(browser, probe) {
       );
       await page.locator("#probe-done").click();
     }
+    const multiline = "alpha\r\nbeta\rgamma\nend";
+    await page.locator("#focus-start").click();
+    await page.keyboard.insertText(multiline);
+    await page.keyboard.insertText("Z");
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.locator("body").getAttribute("data-line-input"),
+      "alpha beta gamma endZ:21",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-line-before"),
+      multiline,
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-line-input-data"),
+      "alpha beta gamma end",
+    );
+    await page.keyboard.insertText(multiline);
+    await page.keyboard.insertText("Z");
+    await page.locator("#probe-done").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-line-area"),
+      "alpha\nbeta\ngamma\nendZ:21",
+    );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",

@@ -12,6 +12,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.document()->body->attr("data-value-modes")=="on:second:second:second:first:first:second","Only text controls use dirty live values; other values reflect attributes");
  check(engine.document()->body->attr("data-fieldset-probe")=="true:legend-switch:false:false:false:1:true","Disabled fieldsets exempt only the first legend and allow re-enabling");
  check(engine.document()->body->attr("data-focus-detach")=="true:true:true:true:true","Detached/replaced focused subtrees lose focus and explicit refocus remains possible");
+ check(engine.document()->body->attr("data-newline-values")=="abcd|a\nb\nc\nd","Script value sanitation strips single-line CR/LF and normalizes textarea newlines");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -66,6 +67,10 @@ void check_interaction(const std::filesystem::path& directory,bool report){
    check((engine.document()->focused_id!=0)==(mode=="reattach-focus"),"Native focus state reconciles with DOM and style changes");
    check(click("probe-done"),"Close lifecycle probe");
  }
+ const std::string multiline="alpha\r\nbeta\rgamma\nend";
+ check(click("focus-start")&&engine.type(multiline)&&engine.type("Z")&&engine.key("Tab"),"Paste multiline text into single-line control");
+ check(body->attr("data-line-input")=="alpha beta gamma endZ:21"&&body->attr("data-line-before")==multiline&&body->attr("data-line-input-data")=="alpha beta gamma end","Input pasted newlines become spaces and caret follows sanitized text");
+ check(engine.type(multiline)&&engine.type("Z")&&click("probe-done")&&body->attr("data-line-area")=="alpha\nbeta\ngamma\nendZ:21","Textarea preserves normalized line breaks and final caret");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}
