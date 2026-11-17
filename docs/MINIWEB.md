@@ -92,7 +92,7 @@ Clicking empty space inside the viewport is a normal document interaction and
 keeps the session alive; ordinary pointer-default cancellation still applies.
 
 Supported user defaults are deliberately bounded: text-like inputs, textarea,
-checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur,
+checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur or implicit submission,
 checkbox changes, associated/nested label activation, cancelable default submit
 button activation, basic text-editing keys and Escape
 handlers. Live values are distinct from default HTML attributes. Script-assigned

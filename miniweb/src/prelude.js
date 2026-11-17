@@ -1037,6 +1037,11 @@
     while(activeControl && !focusable(activeControl))focusControl(null);
   }
   globalThis.__mwReconcileFocus=reconcileFocus;
+  function commitControl(n) {
+    var changed=n.__userEdited && n.__focusValue!==n.value && /^(INPUT|TEXTAREA)$/.test(n.tagName) && !/^(checkbox|radio)$/.test(n.type);
+    n.__userEdited=false;n.__focusValue=n.value;
+    if(changed)n.dispatchEvent(new Event('change',{bubbles:true}));
+  }
   function focusControl(n) {
     forgetDetachedFocus();
     if (n && !focusable(n)) return;
@@ -1045,9 +1050,7 @@
     activeControl = null;
     N.focusControl(0);
     if (old) {
-      var changed=old.__userEdited && old.__focusValue !== old.value && /^(INPUT|TEXTAREA)$/.test(old.tagName) && !/^(checkbox|radio)$/.test(old.type);
-      old.__userEdited=false;
-      if(changed) old.dispatchEvent(new Event('change', { bubbles: true }));
+      commitControl(old);
       old.dispatchEvent(new FocusEvent('blur', { relatedTarget: n }));
       old.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: n }));
     }
@@ -1070,6 +1073,7 @@
     return n.closest('form');
   }
   function implicitSubmit(n) {
+    commitControl(n);
     var form = formOf(n); if (!form) return;
     var controls = document.querySelectorAll('button,input');
     for (var i=0;i<controls.length;i++) {
@@ -1142,7 +1146,7 @@
     if (inputType === 'deleteContentBackward' && start === end && start) start -= value.charCodeAt(start - 1) >= 0xdc00 && value.charCodeAt(start - 1) <= 0xdfff ? 2 : 1;
     if (inputType === 'deleteContentForward' && start === end && end < value.length) end += value.charCodeAt(end) >= 0xd800 && value.charCodeAt(end) <= 0xdbff ? 2 : 1;
     var next=value.slice(0, start) + text + value.slice(end);
-    if(next===value)return true;
+    if(text.length===0 && start===end)return true;
     if(!n.__userEdited)n.__focusValue=value;
     n.__userEdited=true;
     n.value = next;

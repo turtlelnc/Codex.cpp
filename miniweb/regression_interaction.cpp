@@ -71,6 +71,10 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(click("focus-start")&&engine.type(multiline)&&engine.type("Z")&&engine.key("Tab"),"Paste multiline text into single-line control");
  check(body->attr("data-line-input")=="alpha beta gamma endZ:21"&&body->attr("data-line-before")==multiline&&body->attr("data-line-input-data")=="alpha beta gamma end","Input pasted newlines become spaces and caret follows sanitized text");
  check(engine.type(multiline)&&engine.type("Z")&&click("probe-done")&&body->attr("data-line-area")=="alpha\nbeta\ngamma\nendZ:21","Textarea preserves normalized line breaks and final caret");
+ check(click("focus-start")&&engine.type("new")&&engine.key("Enter")&&body->attr("data-enter-submit")=="new:1:1:probe-submit","Implicit submission commits change-driven application state first");
+ check(engine.key("Enter")&&body->attr("data-enter-submit")=="new:1:2:probe-submit","Repeated submit does not duplicate change");
+ check(engine.type("er")&&engine.key("Enter")&&body->attr("data-enter-submit")=="newer:2:3:probe-submit","Later edits establish a new committed baseline");
+ check(click("probe-done")&&body->attr("data-enter-changes")=="2","Blur after committed submission does not emit change again");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}
@@ -81,5 +85,6 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(background.click(400,400)&&!background.click(-1,400)&&!background.click(640,400),"Only in-viewport background clicks are accepted");
  check(background.key("Tab")&&background.type("retained")&&background.click(500,400)&&background.type("X")&&background.document()->body->attr("data-kept")=="kept","Canceled background mousedown preserves focus and pending edit");
  check(background.click(400,400)&&background.document()->body->attr("data-kept")=="retainedX","Subsequent ordinary background click commits retained value");
+ check(background.key("Tab")&&background.type("retainedX")&&background.type("Y")&&background.click(400,400)&&background.document()->body->attr("data-kept")=="retainedXY","Same-value replacement collapses selection before subsequent typing");
  std::cerr<<"MiniWeb interaction regressions passed\n";
 }

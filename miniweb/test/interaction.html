@@ -81,7 +81,14 @@ document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('in
 })();
 var focusProbeIndex=0;
 function startFocusProbe(){
- var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(kind==='submit-commit') {
+   box.innerHTML='<form id="probe-form"><input id="probe-commit"><button id="probe-submit" type="submit">Submit</button></form><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var input=box.querySelector('#probe-commit'),state='old',changes=0,submits=0;
+   input.addEventListener('change',function(){state=input.value;document.body.setAttribute('data-enter-changes',String(++changes))});
+   box.querySelector('#probe-form').addEventListener('submit',function(e){e.preventDefault();document.body.setAttribute('data-enter-submit',state+':'+changes+':'+(++submits)+':'+e.submitter.id)});
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});input.focus();return;
+ }
  if(kind==='linebreaks') {
    box.innerHTML='<input id="probe-single"><textarea id="probe-multi"></textarea><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
    var single=box.querySelector('#probe-single'),multi=box.querySelector('#probe-multi');

@@ -282,6 +282,29 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-line-area"),
       "alpha\nbeta\ngamma\nendZ:21",
     );
+    await page.locator("#focus-start").click();
+    await page.keyboard.insertText("new");
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-enter-submit"),
+      "new:1:1:probe-submit",
+    );
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-enter-submit"),
+      "new:1:2:probe-submit",
+    );
+    await page.keyboard.insertText("er");
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator("body").getAttribute("data-enter-submit"),
+      "newer:2:3:probe-submit",
+    );
+    await page.locator("#probe-done").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-enter-changes"),
+      "2",
+    );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     await page.setContent(
       fs.readFileSync("miniweb/test/background.html", "utf8"),
@@ -302,6 +325,15 @@ module.exports = async function interactionBrowser(browser, probe) {
     assert.equal(
       await page.locator("body").getAttribute("data-kept"),
       "retainedX",
+    );
+    await page.locator("#field").focus();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.insertText("retainedX");
+    await page.keyboard.insertText("Y");
+    await page.mouse.click(400, 400);
+    assert.equal(
+      await page.locator("body").getAttribute("data-kept"),
+      "retainedXY",
     );
     console.log(
       "MiniWeb/Chromium form and settings interaction comparison passed",
