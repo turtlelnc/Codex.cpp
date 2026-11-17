@@ -480,11 +480,14 @@ RectF Node::viewport_rect() const {
         RectF port{0,0,float(doc->viewport_w),float(doc->viewport_h)};
         if(container&&container!=doc->html)port=padding_box(container,container==layout.parent?parent_box:container->viewport_rect());
         if(!layout.parent)parent_box={0,0,float(doc->viewport_w),doc->scroll_height};
-        const auto* p=layout.parent;
-        if(!style.top.is_auto())r.y=std::min(std::max(r.y,port.y+resolve_length(style.top,port.h,style.font_size)),parent_box.y+(p?p->layout.content_y+p->layout.content_h:parent_box.h)-r.h);
-        if(!style.left.is_auto())r.x=std::min(std::max(r.x,port.x+resolve_length(style.left,port.w,style.font_size)),parent_box.x+(p?p->layout.content_x+p->layout.content_w:parent_box.w)-r.w);
-        if(!style.bottom.is_auto())r.y=std::max(std::min(r.y,port.bottom()-resolve_length(style.bottom,port.h,style.font_size)-r.h),parent_box.y+(p?p->layout.content_y:0));
-        if(!style.right.is_auto())r.x=std::max(std::min(r.x,port.right()-resolve_length(style.right,port.w,style.font_size)-r.w),parent_box.x+(p?p->layout.content_x:0));
+        const auto* p=layout.parent;const float normal_x=r.x,normal_y=r.y;
+        const float begin_x=parent_box.x+(p?p->layout.content_x-p->scroll_x:0),begin_y=parent_box.y+(p?p->layout.content_y-p->scroll_y:0);
+        const float width=p?(scrollable(p,true)?std::max(p->layout.content_w,p->scroll_width-p->layout.padding_left-p->layout.padding_right):p->layout.content_w):parent_box.w;
+        const float height=p?(scrollable(p,false)?std::max(p->layout.content_h,p->scroll_height-p->layout.padding_top-p->layout.padding_bottom):p->layout.content_h):parent_box.h;
+        if(!style.top.is_auto())r.y=std::max(normal_y,std::min(std::max(normal_y,port.y+resolve_length(style.top,port.h,style.font_size)),begin_y+height-r.h));
+        else if(!style.bottom.is_auto())r.y=std::min(normal_y,std::max(std::min(normal_y,port.bottom()-resolve_length(style.bottom,port.h,style.font_size)-r.h),begin_y));
+        if(!style.left.is_auto())r.x=std::max(normal_x,std::min(std::max(normal_x,port.x+resolve_length(style.left,port.w,style.font_size)),begin_x+width-r.w));
+        else if(!style.right.is_auto())r.x=std::min(normal_x,std::max(std::min(normal_x,port.right()-resolve_length(style.right,port.w,style.font_size)-r.w),begin_x));
     }
     return cached(r);
 }

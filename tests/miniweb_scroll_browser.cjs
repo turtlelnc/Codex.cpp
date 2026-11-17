@@ -148,6 +148,28 @@ module.exports = async function (browser, probe) {
       await page.locator("body").getAttribute("data-click"),
       "sticky",
     );
+    await page.setContent(
+      fs.readFileSync("miniweb/test/scroll-sticky-flow.html", "utf8"),
+    );
+    await page.evaluate(() => scrollTo(0, 0));
+    for (const [offset, top] of [
+      [0, 300],
+      [200, 100],
+      [300, 0],
+      [450, 0],
+    ]) {
+      await page
+        .locator("#panel")
+        .evaluate((n, y) => (n.scrollTop = y), offset);
+      assert.equal(
+        await page
+          .locator("#late")
+          .evaluate((n) => n.getBoundingClientRect().y),
+        top,
+      );
+    }
+    await page.mouse.click(5, 5);
+    assert.equal(await page.locator("body").getAttribute("data-click"), "late");
     console.log(
       "MiniWeb/Chromium scrolling geometry, sticky, fixed and click comparison passed",
     );
