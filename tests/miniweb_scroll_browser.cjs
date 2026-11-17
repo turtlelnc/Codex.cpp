@@ -132,6 +132,22 @@ module.exports = async function (browser, probe) {
     assert.equal(result.status, 0, result.stderr);
     const native = JSON.parse(result.stdout.match(/SCROLL_RESULT (.*)/)[1]);
     assert.deepEqual(native, actual);
+    await page.setContent(
+      fs.readFileSync("miniweb/test/scroll-clip-sticky.html", "utf8"),
+    );
+    await page.evaluate(() => scrollTo(0, 200));
+    await page.waitForFunction(() => scrollY === 200);
+    assert.equal(
+      await page
+        .locator("#header")
+        .evaluate((n) => n.getBoundingClientRect().y),
+      0,
+    );
+    await page.mouse.click(10, 10);
+    assert.equal(
+      await page.locator("body").getAttribute("data-click"),
+      "sticky",
+    );
     console.log(
       "MiniWeb/Chromium scrolling geometry, sticky, fixed and click comparison passed",
     );

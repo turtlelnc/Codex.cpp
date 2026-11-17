@@ -35,6 +35,8 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  d->body->set_attr("style","height:500px");check(e.render(false)&&d->scroll_y==20&&d->body->attr("data-window-scroll")=="20","Viewport clamp emits scroll event");
  node("panel")->set_attr("style","display:none");check(e.render(false)&&e.click(305,15)&&d->body->attr("data-panel-metrics")=="0:0:0","Hidden element exposes no stale scroll geometry");
  node("panel")->detach();check(e.render(false)&&e.click(305,15)&&d->body->attr("data-panel-metrics")=="0:0:0","Detached element exposes no stale scroll geometry");
+ Engine clipped(640,480);clipped.set_wait_ms(0);check(clipped.load((directory/"scroll-clip-sticky.html").u8string(),&error)&&clipped.render(false)&&clipped.scroll(600,400,0,200)&&clipped.render(false),"Clip wrapper sticky fixture");
+ check(clipped.document()->get_element_by_id("header")->viewport_rect().y==0&&clipped.click(10,10)&&clipped.document()->body->attr("data-click")=="sticky","Clip-only ancestor does not establish a sticky scrollport");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

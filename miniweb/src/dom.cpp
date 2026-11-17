@@ -476,7 +476,7 @@ RectF Node::viewport_rect() const {
     else if(doc){r.x-=doc->scroll_x;r.y-=doc->scroll_y;}
     if(style.position==Position::Sticky&&doc){
         const Node* container=parent;
-        while(container&&container!=doc->html&&overflow_axis(container,false)==Overflow::Visible&&overflow_axis(container,true)==Overflow::Visible)container=container->parent;
+        while(container&&container!=doc->html&&!scrollable(container,false)&&!scrollable(container,true))container=container->parent;
         RectF port{0,0,float(doc->viewport_w),float(doc->viewport_h)};
         if(container&&container!=doc->html)port=padding_box(container,container==layout.parent?parent_box:container->viewport_rect());
         if(!layout.parent)parent_box={0,0,float(doc->viewport_w),doc->scroll_height};
