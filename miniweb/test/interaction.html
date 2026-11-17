@@ -81,7 +81,17 @@ document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('in
 })();
 var focusProbeIndex=0;
 function startFocusProbe(){
- var kind=['blur','change','focusout','change'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(focusProbeIndex>4) {
+   box.innerHTML='<div id="probe-panel"><button id="probe-close" type="button">Close</button></div><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var close=box.querySelector('#probe-close'),count=0;close.addEventListener('click',function(){
+     count++;document.body.setAttribute('data-close-probe',kind+':'+count);
+     if(kind==='hide')box.querySelector('#probe-panel').style.display='none';
+     else if(kind==='disable')close.disabled=true;
+     else {var parent=close.parentNode;close.remove();parent.appendChild(close);if(kind==='reattach-focus')close.focus();}
+   });
+   box.querySelector('#probe-done').addEventListener('click',function(){box.remove()});close.focus();return;
+ }
  box.innerHTML='<input id="probe-a"><input id="probe-b"><input id="probe-c"><button id="probe-advance" type="button">Advance</button><button id="probe-done" type="button">Done</button>';
  document.body.appendChild(box);var a=box.querySelector('#probe-a'),b=box.querySelector('#probe-b'),c=box.querySelector('#probe-c');
  a.addEventListener(kind,function(){(focusProbeIndex===4?a:c).focus()});
@@ -91,6 +101,15 @@ function startFocusProbe(){
 }
 </script>
 <button id="focus-start" type="button" style="position:absolute;left:150px;top:445px;width:110px;height:24px">Focus probe</button><script>document.getElementById('focus-start').addEventListener('click',startFocusProbe)</script>
+<script>
+(function(){
+ var box=document.createElement('div');box.style.cssText='position:absolute;left:0;top:0;opacity:0';document.body.appendChild(box);
+ var a=document.createElement('input');box.appendChild(a);a.focus();box.removeChild(a);box.appendChild(a);var result=[document.activeElement===document.body];
+ a.focus();result.push(document.activeElement===a);var replacement=document.createElement('input');box.replaceChild(replacement,a);result.push(document.activeElement===document.body);
+ replacement.focus();box.innerHTML='<input id="detach-inner">';result.push(document.activeElement===document.body);box.querySelector('input').focus();box.textContent='';result.push(document.activeElement===document.body);
+ box.remove();document.body.setAttribute('data-focus-detach',result.join(':'));
+})();
+</script>
 <script>
 // Put sequential keyboard navigation at the document start after setup probes.
 // Chromium executes parser scripts before later markup, unlike MiniWeb's load pass.

@@ -126,7 +126,9 @@ after geometry, painting and interaction evidence agree.
 persistent Engine: Tab/Shift+Tab, input/default value separation, Unicode editing,
 change on blur, checkbox/submit, cancelable beforeinput, readonly controls and
 Escape/restore focus. Native pixels check positioned controls and clearing edited
-textarea text. Chromium executes the same primary form/settings transitions and
+textarea text. Focus regressions also cover callback-driven redirection, the
+first-legend fieldset exception, hiding/disabling active controls, subtree
+removal/reinsertion and explicit refocus. Chromium executes the same primary form/settings transitions and
 compares resulting state and required event presence, not identical key event timing.
 
 `miniweb_session_test.cjs` exercises real sandbox workers, independent session

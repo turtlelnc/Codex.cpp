@@ -546,7 +546,7 @@
     get baseURI() { return N.baseUrl() || this.URL; }
     get location() { return globalThis.location; }
     get defaultView() { return globalThis; }
-    get activeElement() { return activeControl && activeControl.isConnected ? activeControl : this.body; }
+    get activeElement() { reconcileFocus(); return activeControl || this.body; }
     get cookie() { return ''; }
     set cookie(v) {}
     get hidden() { return false; }
@@ -1022,7 +1022,18 @@
   function focusable(n) {
     return enabled(n) && n.type !== 'hidden' && (/^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
   }
+  function forgetDetachedFocus() {
+    if(activeControl && N.focusControl()!==activeControl.__id) {
+      activeControl=null;++focusRevision;N.focusControl(0);
+    }
+  }
+  function reconcileFocus() {
+    forgetDetachedFocus();
+    while(activeControl && !focusable(activeControl))focusControl(null);
+  }
+  globalThis.__mwReconcileFocus=reconcileFocus;
   function focusControl(n) {
+    forgetDetachedFocus();
     if (n && !focusable(n)) return;
     if (n === activeControl) return;
     var old = activeControl, revision=++focusRevision;
@@ -1077,7 +1088,7 @@
     return !!n && !formDisabled(n);
   }
   function activate(n, x, y, pointer) {
-    if (!activatable(n) || (pointer && !n.isConnected)) return false;
+    if (!activatable(n) || (pointer && !enabled(n))) return false;
     if (pointer) {
       var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
       if (down) {
@@ -1086,7 +1097,7 @@
         focusControl(target);
         if (target && target===activeControl && editable(target)) target.selectionStart = target.selectionEnd = target.value.length;
       }
-      if(!n.isConnected || !activatable(n))return true;
+      if(!enabled(n))return true;
       n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
       if(!n.isConnected || !activatable(n))return true;
     }
@@ -1137,7 +1148,7 @@
   globalThis.__mwKey = function (key) {
     var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
     var n = document.activeElement;
-    if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift }))) {
+    if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift })) && enabled(n)) {
       if (key === 'Tab') {
         var list = document.querySelectorAll('input,textarea,button,select,a,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
         list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });

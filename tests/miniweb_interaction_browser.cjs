@@ -35,6 +35,10 @@ module.exports = async function interactionBrowser(browser, probe) {
       await page.locator("body").getAttribute("data-fieldset-probe"),
       "true:legend-switch:false:false:false:1:true",
     );
+    assert.equal(
+      await page.locator("body").getAttribute("data-focus-detach"),
+      "true:true:true:true:true",
+    );
     for (const [op, value] of [
       ["press", "Tab"],
       ["insertText", "你好"],
@@ -224,6 +228,29 @@ module.exports = async function interactionBrowser(browser, probe) {
       assert.equal(
         await page.locator("#" + id).inputValue(),
         id === "probe-a" ? "editX" : "X",
+      );
+      await page.locator("#probe-done").click();
+    }
+    for (const mode of ["hide", "disable", "detach", "reattach-focus"]) {
+      await page.locator("#focus-start").click();
+      await page.keyboard.press("Enter");
+      // Observe a painted browser frame before sending the next user action.
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      await page.evaluate(() => void document.body.offsetHeight);
+      await page.keyboard.press("Enter");
+      await page.evaluate(() => void document.body.offsetHeight);
+      assert.equal(
+        await page.locator("body").getAttribute("data-close-probe"),
+        mode + (mode === "reattach-focus" ? ":2" : ":1"),
+      );
+      assert.equal(
+        await page.evaluate(() => document.activeElement.id),
+        mode === "reattach-focus" ? "probe-close" : "",
       );
       await page.locator("#probe-done").click();
     }

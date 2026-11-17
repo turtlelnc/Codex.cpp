@@ -473,7 +473,8 @@ JSValue js_control_value(JSContext* ctx, JSValueConst, int argc, JSValueConst* a
 }
 
 JSValue js_focus_control(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
-    auto* b = bridge(ctx); if (!b || !argc) return JS_UNDEFINED;
+    auto* b = bridge(ctx); if (!b) return JS_UNDEFINED;
+    if(!argc)return JS_NewInt32(ctx,b->doc->focused_id);
     b->doc->focused_id = arg_i32(ctx, argv[0]); ++b->doc->revision; return JS_UNDEFINED;
 }
 JSValue js_control_checked(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {

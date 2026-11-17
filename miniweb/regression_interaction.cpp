@@ -11,6 +11,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.document()->body->attr("data-reflected-types")=="text:submit:TEXT:SUBMIT:text:submit","Reflected control types normalize casing/defaults without rewriting attributes");
  check(engine.document()->body->attr("data-value-modes")=="on:second:second:second:first:first:second","Only text controls use dirty live values; other values reflect attributes");
  check(engine.document()->body->attr("data-fieldset-probe")=="true:legend-switch:false:false:false:1:true","Disabled fieldsets exempt only the first legend and allow re-enabling");
+ check(engine.document()->body->attr("data-focus-detach")=="true:true:true:true:true","Detached/replaced focused subtrees lose focus and explicit refocus remains possible");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -58,6 +59,12 @@ void check_interaction(const std::filesystem::path& directory,bool report){
    check(engine.type("X"),"Redirected focus accepts subsequent typing");
    auto id=expected.substr(expected.find(':')+1);check(engine.document()->get_element_by_id(id)->control_value==(id=="probe-a"?"editX":"X"),"Typing targets callback-selected control");
    check(click("probe-done"),"Close focus probe");
+ }
+ for(const auto& mode:std::vector<std::string>{"hide","disable","detach","reattach-focus"}){
+   check(click("focus-start")&&engine.key("Enter")&&engine.key("Enter"),"Close probe keyboard operations");
+   check(body->attr("data-close-probe")==mode+(mode=="reattach-focus"?":2":":1"),"Invisible or detached controls must not receive repeated keyboard activation");
+   check((engine.document()->focused_id!=0)==(mode=="reattach-focus"),"Native focus state reconciles with DOM and style changes");
+   check(click("probe-done"),"Close lifecycle probe");
  }
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
