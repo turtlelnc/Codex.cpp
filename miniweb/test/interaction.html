@@ -81,7 +81,19 @@ document.body.setAttribute('data-value-modes',[checkDefault.value,valueProbe('in
 })();
 var focusProbeIndex=0;
 function startFocusProbe(){
- var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit','maxlength'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ var kind=['blur','change','focusout','change','hide','disable','detach','reattach-focus','linebreaks','submit-commit','maxlength','reset'][focusProbeIndex++],box=document.createElement('div');box.id='focus-probe';box.style.cssText='position:absolute;left:0;top:0;width:540px;height:200px;background:white;z-index:100';
+ if(kind==='reset') {
+   box.innerHTML='<form id="probe-reset-form"><input id="probe-reset-text" value="seed"><textarea id="probe-reset-area">note</textarea><input id="probe-reset-check" type="checkbox" checked><button id="probe-reset-cancel" type="reset">Canceled reset</button><button id="probe-reset-button" type="reset">Reset</button><input id="probe-reset-input" type="reset" value="Reset input"></form><input id="probe-reset-external" form="probe-reset-form" value="external"><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
+   var form=box.querySelector('form'),text=box.querySelector('#probe-reset-text'),area=box.querySelector('textarea'),check=box.querySelector('#probe-reset-check'),external=box.querySelector('#probe-reset-external'),resets=0,inputs=0,cancel=false;
+   function state(){document.body.setAttribute('data-reset-state',[text.value,area.value,check.checked,external.value,resets,inputs].join(':'))}
+   form.addEventListener('input',function(){++inputs});
+   form.addEventListener('reset',function(e){++resets;form.reset();if(cancel)e.preventDefault()});
+   box.querySelector('#probe-reset-cancel').addEventListener('click',function(){cancel=true});
+   box.querySelector('#probe-reset-button').addEventListener('click',function(){cancel=false});
+   document.body.setAttribute('data-reset-state','');
+   box.querySelector('#probe-done').addEventListener('click',function(){state();box.remove()});
+   external.value='changed';text.focus();text.selectionStart=text.selectionEnd=text.value.length;return;
+ }
  if(kind==='maxlength') {
    box.innerHTML='<input id="probe-limit" maxlength="3" value="abc"><textarea id="probe-limit-area" maxlength="3">abc</textarea><button id="probe-limits-reset" type="button">Reset limits</button><button id="probe-done" type="button">Done</button>';document.body.appendChild(box);
    var input=box.querySelector('#probe-limit'),area=box.querySelector('#probe-limit-area'),events=0;
@@ -140,6 +152,15 @@ function startFocusProbe(){
 </script>
 <script>
 (function(){var input=document.createElement('input'),area=document.createElement('textarea');input.maxLength=3;area.maxLength=3;input.value='abcdef';area.value='abcdef';document.body.setAttribute('data-script-maxlength',input.value+':'+area.value+':'+input.maxLength+':'+area.getAttribute('maxlength'))})();
+</script>
+<script>
+(function(){
+ var form=document.createElement('form');form.innerHTML='<input value="first"><textarea>initial</textarea><input type="checkbox" checked>';var text=form.querySelector('input'),area=form.querySelector('textarea'),check=form.querySelector('input[type=checkbox]'),events=0;
+ form.addEventListener('input',function(){++events});form.addEventListener('change',function(){++events});
+ text.value='edit';area.value='edit';check.checked=false;form.reset();
+ var result=[text.value,area.value,check.checked];text.defaultValue='later';area.defaultValue='later';check.defaultChecked=false;result.push(text.value,area.value,check.checked,events);
+ document.body.setAttribute('data-reset-defaults',result.join(':'));
+})();
 </script>
 <script>
 // Put sequential keyboard navigation at the document start after setup probes.

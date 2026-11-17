@@ -14,6 +14,7 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(engine.document()->body->attr("data-focus-detach")=="true:true:true:true:true","Detached/replaced focused subtrees lose focus and explicit refocus remains possible");
  check(engine.document()->body->attr("data-newline-values")=="abcd|a\nb\nc\nd","Script value sanitation strips single-line CR/LF and normalizes textarea newlines");
  check(engine.document()->body->attr("data-script-maxlength")=="abcdef:abcdef:3:3","maxlength reflects while script-assigned values remain unrestricted");
+ check(engine.document()->body->attr("data-reset-defaults")=="first:initial:true:later:later:false:0","Programmatic detached form reset clears dirty flags without input/change events");
  check(!engine.type("unfocused"),"Unfocused typing must fail");
  check(engine.key("Tab")&&engine.type(u8"\u4f60\u597d")&&engine.key("Home")&&engine.type("A")&&engine.key("End")&&engine.key("Backspace"),"Text editing");
  check(engine.key("Tab")&&engine.type("!")&&engine.key("Enter")&&engine.type("line2"),"Textarea focus/input");
@@ -83,6 +84,9 @@ void check_interaction(const std::filesystem::path& directory,bool report){
  check(click("probe-limits-reset")&&engine.type(u8"\U0001f600")&&engine.document()->get_element_by_id("probe-limit")->control_value.empty(),"maxlength cannot insert half of a supplementary character");
  check(engine.type("Z")&&engine.type("Y")&&engine.document()->get_element_by_id("probe-limit")->control_value=="Z"&&engine.key("Tab")&&engine.type("X")&&engine.document()->get_element_by_id("probe-limit-area")->control_value.empty(),"Dynamic maxlength and zero limit respect selection replacement");
  check(click("probe-done"),"Close maxlength probe");
+ check(click("focus-start")&&engine.type("edited")&&engine.key("Tab")&&engine.type("changed")&&click("probe-reset-check")&&click("probe-reset-cancel"),"Prepare and cancel reset");
+ check(engine.document()->get_element_by_id("probe-reset-text")->control_value=="seededited"&&!engine.document()->get_element_by_id("probe-reset-check")->checked_value,"Canceled reset preserves edited values and checkbox");
+ check(click("probe-reset-button")&&engine.key("Tab")&&engine.key("Enter")&&click("probe-done")&&body->attr("data-reset-state")=="seed:note:true:external:3:3","Pointer and keyboard reset restore owned controls without extra input/change events");
  check(click("clear")&&engine.render(false),"Clear textarea live value");
  auto area=engine.document()->get_element_by_id("note")->absolute_rect();
  for(int y=static_cast<int>(area.y)+5;y<area.bottom()-5;++y)for(int x=static_cast<int>(area.x)+5;x<area.right()-5;++x){auto i=(y*640+x)*4;const auto& pixels=engine.canvas()->pixels();check(pixels[i]==255&&pixels[i+1]==255&&pixels[i+2]==255,"Cleared textarea must not paint default text");}

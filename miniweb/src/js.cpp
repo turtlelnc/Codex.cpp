@@ -483,6 +483,14 @@ JSValue js_control_checked(JSContext* ctx, JSValueConst, int argc, JSValueConst*
     if (argc > 1) { n->checked_value = JS_ToBool(ctx, argv[1]) > 0; n->checked_dirty = true; ++n->doc->revision; }
     return JS_NewBool(ctx, n->checked_dirty ? n->checked_value : n->has_attr("checked"));
 }
+JSValue js_reset_control(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    Node* n = argc ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
+    if (n && (n->is_element("input") || n->is_element("textarea"))) {
+        n->control_value.clear(); n->control_dirty = false;
+        n->checked_value = false; n->checked_dirty = false; ++n->doc->revision;
+    }
+    return JS_UNDEFINED;
+}
 JSValue js_has_attr(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 2) return JS_FALSE;
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
@@ -754,6 +762,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("attr", 2, js_attr),
     bridge_function("controlValue", 2, js_control_value),
     bridge_function("controlChecked", 2, js_control_checked),
+    bridge_function("resetControl", 1, js_reset_control),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),

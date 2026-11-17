@@ -348,6 +348,29 @@ module.exports = async function interactionBrowser(browser, probe) {
     await page.keyboard.insertText("X");
     assert.equal(await page.locator("#probe-limit-area").inputValue(), "");
     await page.locator("#probe-done").click();
+    await page.locator("#focus-start").click();
+    await page.keyboard.insertText("edited");
+    await page.keyboard.press("Tab");
+    await page.keyboard.insertText("changed");
+    await page.locator("#probe-reset-check").click();
+    await page.locator("#probe-reset-cancel").click();
+    assert.equal(
+      await page.locator("#probe-reset-text").inputValue(),
+      "seededited",
+    );
+    assert.equal(await page.locator("#probe-reset-check").isChecked(), false);
+    await page.locator("#probe-reset-button").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await page.locator("#probe-done").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-reset-state"),
+      "seed:note:true:external:3:3",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-reset-defaults"),
+      "first:initial:true:later:later:false:0",
+    );
     await page.screenshot({ path: "/tmp/miniweb-interaction-chromium.png" });
     await page.setContent(
       fs.readFileSync("miniweb/test/background.html", "utf8"),

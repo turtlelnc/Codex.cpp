@@ -486,6 +486,8 @@
     }
     get checked() { return N.controlChecked(this.__id); }
     set checked(v) { N.controlChecked(this.__id, !!v); }
+    get defaultChecked() { return this.hasAttribute('checked'); }
+    set defaultChecked(v) { if(v)this.setAttribute('checked','');else this.removeAttribute('checked'); }
     get disabled() { return this.hasAttribute('disabled'); }
     set disabled(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); }
     get selected() { return this.hasAttribute('selected'); }
@@ -522,6 +524,7 @@
     focus() { focusControl(this); }
     blur() { if (activeControl === this) focusControl(null); }
     click() { activate(this, 0, 0, false); }
+    reset() { if(this.tagName==='FORM')resetForm(this); }
     scrollIntoView() { N.unsupported('Element.scrollIntoView', 'scrolling is not supported'); }
     attachShadow() { N.unsupported('Element.attachShadow', 'shadow DOM is not supported'); return null; }
     getRootNode() { var n = this; while (n.parentNode) n = n.parentNode; return n; }
@@ -1104,6 +1107,22 @@
     ev.submitter = submitter || null;
     if (form.dispatchEvent(ev)) N.unsupported('form navigation', 'Form submitted; navigation/network submission is not supported');
   }
+  function resetForm(n) {
+    var form=formOf(n);
+    if(!form || form.__resetting)return;
+    form.__resetting=true;
+    try {
+      if(!form.dispatchEvent(new Event('reset',{bubbles:true,cancelable:true})))return;
+      var controls=form.querySelectorAll('input,textarea,select').concat(document.querySelectorAll('input,textarea,select'));
+      var seen=new Set();
+      controls.forEach(function(c){
+        if(seen.has(c) || formOf(c)!==form)return;seen.add(c);
+        if(c.tagName==='SELECT'){N.unsupported('select reset','Native select reset is not supported');return;}
+        N.resetControl(c.__id);c.__userEdited=false;c.__focusValue=c.value;
+        c.selectionStart=c.selectionEnd=0;
+      });
+    } finally { form.__resetting=false; }
+  }
   function activatable(n) {
     return !!n && !formDisabled(n);
   }
@@ -1140,6 +1159,7 @@
       }
     }
     if (control && activatable(control) && ((control.tagName === 'BUTTON' && (!control.type || control.type === 'submit')) || control.type === 'submit')) submitForm(control, control);
+    else if (control && activatable(control) && control.type === 'reset') resetForm(control);
     return true;
   }
   function editable(n) {

@@ -94,7 +94,7 @@ keeps the session alive; ordinary pointer-default cancellation still applies.
 Supported user defaults are deliberately bounded: text-like inputs, textarea,
 checkboxes and buttons; Tab/Shift+Tab focus, beforeinput/input, change on blur or implicit submission,
 checkbox changes, associated/nested label activation, cancelable default submit
-button activation, basic text-editing keys and Escape
+button activation, cancelable form reset (text/textarea values and input checkedness), basic text-editing keys and Escape
 handlers. Live values are distinct from default HTML attributes. Script-assigned
 values do not emit user-input events. Disabled/hidden controls cannot be edited;
 readonly controls can receive focus but cannot be edited. Focus/checked CSS states
@@ -102,7 +102,7 @@ and a basic focus border are drawn. Single-line pasted line breaks become spaces
 script-assigned single-line values strip CR/LF. Textareas normalize CR/CRLF to LF
 while retaining multiple lines. User text insertion respects `maxlength` in UTF-16
 units, accounting for replaced selections without splitting surrogate pairs;
-script-assigned values remain unrestricted. Native select menus, radio-group navigation,
+script-assigned values remain unrestricted. Native select menus/reset, radio-group navigation,
 validation, form serialization, IME/composition, rich-text editing, exact pointer
 caret placement, caret/selection painting and multiline textarea typography are
 not implemented. Pointer text clicks currently place the insertion point at the
