@@ -57,6 +57,7 @@ private:
     std::vector<LinkHit> links_;
 
     bool interact(const std::string& code);
+    bool flush_scroll_events();
     void collect_stylesheets();
     void apply_styles();
     void do_layout();

@@ -13,7 +13,7 @@
 <script>
 var panel=document.getElementById('panel'),fixed=document.getElementById('fixed'),target=document.getElementById('target');
 fixed.onwheel=function(e){e.preventDefault();document.body.setAttribute('data-wheel','canceled')};
-target.onclick=function(){document.body.setAttribute('data-click','target')};fixed.onclick=function(){document.body.setAttribute('data-click','fixed')};
-panel.addEventListener('scroll',function(){document.body.setAttribute('data-scroll',panel.scrollLeft+':'+panel.scrollTop)});
+target.onclick=function(){document.body.setAttribute('data-click','target')};fixed.onclick=function(){if(document.body.hasAttribute('data-coalesce')){panel.scrollTop=10;panel.scrollTop=20;panel.scrollTop=30}document.body.setAttribute('data-click','fixed');document.body.setAttribute('data-panel-metrics',[panel.clientHeight,panel.scrollHeight,panel.scrollTop].join(':'))};
+var scrollEvents=0;panel.addEventListener('scroll',function(){document.body.setAttribute('data-scroll-count',String(++scrollEvents));document.body.setAttribute('data-scroll',panel.scrollLeft+':'+panel.scrollTop)});
 document.addEventListener('scroll',function(){document.body.setAttribute('data-window-scroll',String(scrollY))});
 </script>

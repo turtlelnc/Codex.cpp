@@ -26,6 +26,21 @@ module.exports = async function (browser, probe) {
       await page.locator("body").getAttribute("data-click"),
       "target",
     );
+    await page
+      .locator("body")
+      .evaluate((n) => n.setAttribute("data-coalesce", ""));
+    await page.locator("#fixed").click();
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-scroll-count") === "2",
+    );
+    assert.equal(await page.locator("#panel").evaluate((n) => n.scrollTop), 30);
+    await page
+      .locator("body")
+      .evaluate((n) => n.removeAttribute("data-coalesce"));
+    await page.locator("#panel").evaluate((n) => n.scrollTo(100, 260));
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-scroll") === "100:260",
+    );
     await page.locator("#panel").evaluate((n) => {
       n.style.overflowX = "hidden";
       n.style.overflowY = "auto";
@@ -78,6 +93,36 @@ module.exports = async function (browser, probe) {
       JSON.parse(deep.stdout)._measure,
       "clicked",
       "Deep sticky render and hit testing finish within bounded time",
+    );
+    await page.locator("#panel").evaluate((n) => n.scrollTo(100, 520));
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-scroll") === "100:520",
+    );
+    await page.evaluate(() => {
+      document.getElementById("target").remove();
+      document.getElementById("content").style.height = "100px";
+    });
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-scroll") === "100:0",
+    );
+    await page.evaluate(() => (document.body.style.height = "500px"));
+    await page.waitForFunction(
+      () => document.body.getAttribute("data-window-scroll") === "20",
+    );
+    await page.locator("#panel").evaluate((n) => (n.style.display = "none"));
+    assert.deepEqual(
+      await page
+        .locator("#panel")
+        .evaluate((n) => [n.clientHeight, n.scrollHeight, n.scrollTop]),
+      [0, 0, 0],
+    );
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const n = document.getElementById("panel");
+        n.remove();
+        return [n.clientHeight, n.scrollHeight, n.scrollTop];
+      }),
+      [0, 0, 0],
     );
     const result = spawnSync(
       probe,

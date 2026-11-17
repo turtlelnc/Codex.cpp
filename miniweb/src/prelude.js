@@ -803,13 +803,13 @@
     if(x&&typeof x==='object'){y=x.top===undefined?(relative?0:oldY):x.top;x=x.left===undefined?(relative?0:oldX):x.left;}
     return [(Number.isFinite(Number(x))?Number(x):0)+(relative?oldX:0),(Number.isFinite(Number(y))?Number(y):0)+(relative?oldY:0)];
   }
-  var pendingScroll=new Set();
   function changeScroll(n,x,y){
     if(!Number.isFinite(x))x=0;if(!Number.isFinite(y))y=0;
-    if(N.scroll(n.__id,x,y)&&!pendingScroll.has(n.__id)){
-      pendingScroll.add(n.__id);setTimeout(function(){pendingScroll.delete(n.__id);var target=n===document.documentElement?document:n;target.dispatchEvent(new Event('scroll',{bubbles:n===document.documentElement}));},0);
-    }
+    N.scroll(n.__id,x,y);
   }
+  globalThis.__mwFlushScrollEvents=function(){
+    N.scrollEvents().forEach(function(id){var n=wrap(id);if(!n||!n.isConnected)return;var root=n===document.documentElement;var target=root?document:n;target.dispatchEvent(new Event('scroll',{bubbles:root}));});
+  };
   Object.defineProperty(globalThis,'scrollX',{get:function(){return document.documentElement.scrollLeft}});
   Object.defineProperty(globalThis,'scrollY',{get:function(){return document.documentElement.scrollTop}});
   Object.defineProperty(globalThis,'pageXOffset',{get:function(){return scrollX}});

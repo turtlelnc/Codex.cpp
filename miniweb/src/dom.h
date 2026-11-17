@@ -3,6 +3,7 @@
 #include "style.h"
 #include <cstdint>
 #include <deque>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -81,6 +82,7 @@ struct Node {
 struct Document {
     uint64_t revision = 0;
     uint64_t visual_revision = 1;
+    std::set<int> pending_scroll_events;
     int focused_id = 0;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout

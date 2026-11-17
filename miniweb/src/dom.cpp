@@ -490,6 +490,7 @@ RectF Node::viewport_rect() const {
 }
 void update_scroll_layout(Document& doc){
     ++doc.visual_revision;
+    for(auto& n:doc.arena)if(!n.layout.has_box){n.scroll_x=n.scroll_y=n.scroll_width=n.scroll_height=0;doc.pending_scroll_events.erase(n.id);}
     std::function<RectF(Node*)> measure=[&](Node* n){
         const auto& l=n->layout;float right=l.content_w,bottom=l.content_h;
         for(const auto& line:l.lines)for(const auto& item:line.items){right=std::max(right,item.x+item.w);bottom=std::max(bottom,item.y+item.h);}
@@ -497,19 +498,23 @@ void update_scroll_layout(Document& doc){
             right=std::max(right,b.x+extent.w);bottom=std::max(bottom,b.y+extent.h);}
         n->scroll_width=std::max(client_size(n,true),l.padding_left+right+l.padding_right);
         n->scroll_height=std::max(client_size(n,false),l.padding_top+bottom+l.padding_bottom);
+        const auto previous_x=n->scroll_x,previous_y=n->scroll_y;
         n->scroll_x=scrollable(n,true)?std::clamp(n->scroll_x,0.0f,std::max(0.0f,n->scroll_width-client_size(n,true))):0;
         n->scroll_y=scrollable(n,false)?std::clamp(n->scroll_y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
+        if(previous_x!=n->scroll_x||previous_y!=n->scroll_y)doc.pending_scroll_events.insert(n->id);
         return RectF{0,0,overflow_axis(n,true)==Overflow::Visible?std::max(l.border.w,l.border_left+n->scroll_width):l.border.w,overflow_axis(n,false)==Overflow::Visible?std::max(l.border.h,l.border_top+n->scroll_height):l.border.h};
     };
     if(!doc.html)return;auto extent=measure(doc.html);
     doc.scroll_width=std::max(float(doc.viewport_w),std::max(extent.w,doc.html->scroll_width));doc.scroll_height=std::max(float(doc.viewport_h),std::max(extent.h,doc.html->scroll_height));
+    const auto previous_x=doc.scroll_x,previous_y=doc.scroll_y;
     doc.scroll_x=std::clamp(doc.scroll_x,0.0f,std::max(0.0f,doc.scroll_width-doc.viewport_w));doc.scroll_y=std::clamp(doc.scroll_y,0.0f,std::max(0.0f,doc.scroll_height-doc.viewport_h));
+    if(previous_x!=doc.scroll_x||previous_y!=doc.scroll_y)doc.pending_scroll_events.insert(doc.html->id);
 }
 bool set_scroll(Node* n,float x,float y){
-    if(!n||!n->doc||!std::isfinite(x)||!std::isfinite(y))return false;
-    if(n==n->doc->html){auto& d=*n->doc;auto ox=d.scroll_x,oy=d.scroll_y;d.scroll_x=overflow_axis(n,true)==Overflow::Clip?0:std::clamp(x,0.0f,std::max(0.0f,d.scroll_width-d.viewport_w));d.scroll_y=overflow_axis(n,false)==Overflow::Clip?0:std::clamp(y,0.0f,std::max(0.0f,d.scroll_height-d.viewport_h));const bool changed=ox!=d.scroll_x||oy!=d.scroll_y;if(changed)++d.visual_revision;return changed;}
+    if(!n||!n->doc||!n->layout.has_box||!std::isfinite(x)||!std::isfinite(y))return false;
+    if(n==n->doc->html){auto& d=*n->doc;auto ox=d.scroll_x,oy=d.scroll_y;d.scroll_x=overflow_axis(n,true)==Overflow::Clip?0:std::clamp(x,0.0f,std::max(0.0f,d.scroll_width-d.viewport_w));d.scroll_y=overflow_axis(n,false)==Overflow::Clip?0:std::clamp(y,0.0f,std::max(0.0f,d.scroll_height-d.viewport_h));const bool changed=ox!=d.scroll_x||oy!=d.scroll_y;if(changed){++d.visual_revision;d.pending_scroll_events.insert(n->id);}return changed;}
     const auto ox=n->scroll_x,oy=n->scroll_y;
     n->scroll_x=scrollable(n,true)?std::clamp(x,0.0f,std::max(0.0f,n->scroll_width-client_size(n,true))):0;
     n->scroll_y=scrollable(n,false)?std::clamp(y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
-    const bool changed=ox!=n->scroll_x||oy!=n->scroll_y;if(changed)++n->doc->visual_revision;return changed;
+    const bool changed=ox!=n->scroll_x||oy!=n->scroll_y;if(changed){++n->doc->visual_revision;n->doc->pending_scroll_events.insert(n->id);}return changed;
 }

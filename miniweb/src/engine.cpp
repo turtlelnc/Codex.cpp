@@ -125,6 +125,7 @@ bool Engine::render(bool full_page) {
     }
     if(js_runtime_ && !js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
     ensure_layout();
+    if(!flush_scroll_events())return false;
     content_height_ = (int)std::ceil(document_content_height(*doc_));
     if (content_height_ <= 0) content_height_ = 1;
     content_height_ = std::min(content_height_, 20000);
@@ -154,6 +155,16 @@ bool Engine::interact(const std::string& code) {
     collect_stylesheets();
     apply_styles();
     do_layout();
+    return flush_scroll_events();
+}
+
+bool Engine::flush_scroll_events(){
+    if(!js_runtime_)return true;
+    for(int pass=0;pass<8&&!doc_->pending_scroll_events.empty();++pass){
+        if(!js_runtime_->eval("__mwFlushScrollEvents();__mwReconcileFocus();","<scroll-events>",false))return false;
+        js_runtime_->drain_timers(0);ensure_layout();
+    }
+    if(!doc_->pending_scroll_events.empty())diag::approximate("scroll event feedback deferred","More than eight callback-induced scroll rounds; remaining events deferred to the next action/frame");
     return true;
 }
 
@@ -170,7 +181,7 @@ bool Engine::advance(int milliseconds) {
     if (!js_runtime_ || milliseconds<0 || milliseconds>3000) return false;
     js_runtime_->drain_timers(milliseconds);
     if(!js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
-    ensure_layout(); return true;
+    ensure_layout(); return flush_scroll_events();
 }
 
 bool Engine::scroll(float x,float y,float dx,float dy) {
