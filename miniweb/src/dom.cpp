@@ -43,14 +43,16 @@ void Node::set_attr(const std::string& name, const std::string& value) {
     if(doc)++doc->revision;
     std::string n = lower_attr(name);
     for (auto& a : attrs) {
-        if (a.first == n) { a.second = value; return; }
+        if (a.first == n) { if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"attributes",n,a.second,true);a.second = value; return; }
     }
+    if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"attributes",n);
     attrs.emplace_back(n, value);
 }
 
 void Node::remove_attr(const std::string& name) {
     if(doc)++doc->revision;
     std::string n = lower_attr(name);
+    auto old=attr_ptr(n);if(!old)return;if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"attributes",n,*old,true);
     attrs.erase(std::remove_if(attrs.begin(), attrs.end(), [&](auto& a) { return a.first == n; }),
                 attrs.end());
 }
@@ -69,9 +71,11 @@ Node* Node::append_child(Node* child) {
     for (Node* p = this; p; p = p->parent) if (p == child) return nullptr;
     if(doc)++doc->revision;
     if (child->parent) child->detach();
+    auto* previous=children.empty()?nullptr:children.back();
     child->parent = this;
     children.push_back(child);
-    if (doc) child->doc = doc;
+    if(doc)child->doc=doc;
+    if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{child},{},previous,nullptr);
     return child;
 }
 
@@ -86,9 +90,11 @@ Node* Node::insert_before(Node* child, Node* ref) {
     if (child->parent) child->detach();
     auto it = std::find(children.begin(), children.end(), ref);
     if (it == children.end()) return append_child(child);
+    auto* previous=it==children.begin()?nullptr:*(it-1);
     child->parent = this;
     if (doc) child->doc = doc;
     children.insert(it, child);
+    if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{child},{},previous,ref);
     return child;
 }
 
@@ -105,6 +111,7 @@ Node* Node::remove_child(Node* child) {
     if (it == children.end()) return nullptr;
     if(doc)++doc->revision;
     clear_detached_focus(child);
+    if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{}, {child},child->previous_sibling(),child->next_sibling());
     children.erase(it);
     if (child) child->parent = nullptr;
     return child;
@@ -120,27 +127,21 @@ Node* Node::replace_child(Node* new_child, Node* old_child) {
     if (new_child->parent) new_child->detach();
     it=std::find(children.begin(),children.end(),old_child);
     if(it==children.end())return nullptr;
+    auto* previous=old_child->previous_sibling();auto* next=old_child->next_sibling();
     new_child->parent = this;
     if (doc) new_child->doc = doc;
     *it = new_child;
+    if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{new_child},{old_child},previous,next);
     clear_detached_focus(old_child);
     old_child->parent = nullptr;
     return old_child;
 }
 
-void Node::detach() {
-    if (parent) {
-        clear_detached_focus(this);
-        if(doc)++doc->revision;
-        auto it = std::find(parent->children.begin(), parent->children.end(), this);
-        if (it != parent->children.end()) parent->children.erase(it);
-        parent = nullptr;
-    }
-}
+void Node::detach() { if(parent)parent->remove_child(this); }
 
 void Node::remove_all_children() {
-    if(doc)++doc->revision;
-    for (auto* c : children) if (c) { clear_detached_focus(c); c->parent = nullptr; }
+    if(doc){++doc->revision;if(doc->capture_mutations&&!doc->mutation_suppression&&!children.empty())doc->record_mutation(this,"childList",{},{},false,{},children);}
+    for(auto* c:children)if(c){clear_detached_focus(c);c->parent=nullptr;}
     children.clear();
 }
 
@@ -176,12 +177,41 @@ std::string Node::text_content() const {
     return out;
 }
 
-void Node::set_text_content(const std::string& text) {
-    remove_all_children();
+void Node::set_data(const std::string& text) {
     if (doc) {
-        Node* t = doc->create_text(text);
-        append_child(t);
+        ++doc->revision;
+        if (doc->capture_mutations && !doc->mutation_suppression)
+            doc->record_mutation(this, "characterData", {}, data, true);
     }
+    data = text;
+}
+
+void Node::replace_children(const std::vector<Node*>& nodes) {
+    for (auto* n : nodes)
+        if (n && n->parent && n->parent != this) n->detach();
+    std::vector<Node*> old;
+    if (doc && doc->capture_mutations && !doc->mutation_suppression) old = children;
+    struct Suppress {
+        Document* d;
+        explicit Suppress(Document* value) : d(value) { if (d) ++d->mutation_suppression; }
+        ~Suppress() { if (d) --d->mutation_suppression; }
+    };
+    {
+        Suppress guard(doc);
+        remove_all_children();
+        for (auto* n : nodes) append_child(n);
+    }
+    if (doc && doc->capture_mutations && !doc->mutation_suppression &&
+        (!old.empty() || !children.empty()))
+        doc->record_mutation(this, "childList", {}, {}, false, children, old);
+}
+
+void Node::set_text_content(const std::string& text) {
+    if (is_text() || is_comment()) { set_data(text); return; }
+    if (is_document()) return;
+    std::vector<Node*> nodes;
+    if (doc && !text.empty()) nodes.push_back(doc->create_text(text));
+    replace_children(nodes);
 }
 
 std::string Node::inner_html() const {
@@ -577,4 +607,36 @@ RectF Node::client_rect() const {
         visit(doc->html);doc->inline_geometry_revision=doc->visual_revision;
     }
     return visual_cache_revision==doc->visual_revision?visual_cache:RectF{};
+}
+
+void Document::record_mutation(Node* node, const std::string& type, const std::string& name,
+                               const std::string& old_value, bool old_present,
+                               const std::vector<Node*>& added, const std::vector<Node*>& removed,
+                               Node* previous, Node* next) {
+    if (!capture_mutations || mutation_suppression || mutation_overflow || !node) return;
+    bool interested = false;
+    for (auto* p = node; p; p = p->parent)
+        if (mutation_roots.count(p->id)) { interested = true; break; }
+    if (!interested) return;
+    if (old_value.size() > 2 * 1024 * 1024) {
+        mutations.clear(); mutation_bytes = 0; mutation_overflow = true;
+        return;
+    }
+    MutationChange m;
+    m.target = node->id; m.type = type; m.name = name;
+    m.old_value = old_value; m.old_present = old_present;
+    m.previous = previous ? previous->id : 0;
+    m.next = next ? next->id : 0;
+    for (auto* p = node; p; p = p->parent) m.ancestors.push_back(p->id);
+    for (auto* n : added) if (n) m.added.push_back(n->id);
+    for (auto* n : removed) if (n) m.removed.push_back(n->id);
+    size_t bytes = sizeof(m) + m.type.size() + m.name.size() + m.old_value.size() +
+                   sizeof(int) * (m.ancestors.size() + m.added.size() + m.removed.size());
+    if (mutations.size() >= 4096 || bytes > 2 * 1024 * 1024 ||
+        mutation_bytes > 2 * 1024 * 1024 - bytes) {
+        mutations.clear(); mutation_bytes = 0; mutation_overflow = true;
+        return;
+    }
+    mutation_bytes += bytes;
+    mutations.push_back(std::move(m));
 }

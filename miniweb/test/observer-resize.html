@@ -1,0 +1,14 @@
+<!doctype html><style>body{margin:0;font:16px sans-serif}#parent{width:200px;height:100px;padding:10px;border:2px solid black}#child{width:50px;height:20px}</style><div id="parent"><div id="child"></div></div><span id="inline">Text</span><div id="hidden" style="display:none;width:50px;height:20px"></div><button id="border">Border</button><button id="content">Content</button><button id="unobserve">Unobserve</button><button id="exception">Exception</button><button id="disconnect">Disconnect</button>
+<script>
+var p=document.getElementById('parent'),c=document.getElementById('child'),log=[],following=0,throwing=null,safe=null;
+function record(){document.body.setAttribute('data-result',JSON.stringify({log:log,following:following}))}
+function entry(e){return [e.target.id,e.contentRect.width,e.contentRect.height,e.borderBoxSize[0].inlineSize,e.borderBoxSize[0].blockSize]}
+var content=new ResizeObserver(function(es){log.push(['content',es.map(entry)]);record()}),border=new ResizeObserver(function(es){log.push(['border',es.map(entry)]);record()});
+content.observe(p);content.observe(c);content.observe(document.getElementById('inline'));content.observe(document.getElementById('hidden'));border.observe(p,{box:'border-box'});
+document.getElementById('border').onclick=function(){p.style.borderWidth='4px'};
+document.getElementById('content').onclick=function(){p.style.width='220px';c.style.width='70px'};
+document.getElementById('unobserve').onclick=function(){content.unobserve(c);c.style.width='80px';record()};
+document.getElementById('exception').onclick=function(){throwing=new ResizeObserver(function(){throw new Error('expected resize callback error')});safe=new ResizeObserver(function(){++following;record()});throwing.observe(c);safe.observe(c)};
+document.getElementById('disconnect').onclick=function(){content.disconnect();border.disconnect();if(throwing)throwing.disconnect();if(safe)safe.disconnect();p.style.width='400px';record()};
+record();
+</script>

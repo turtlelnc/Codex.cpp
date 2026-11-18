@@ -16,6 +16,12 @@ enum class NodeType : int {
 };
 
 struct Document;
+struct MutationChange {
+    std::string type, name, old_value;
+    bool old_present = false;
+    int target = 0, previous = 0, next = 0;
+    std::vector<int> ancestors, added, removed;
+};
 
 struct Node {
     NodeType type = NodeType::Element;
@@ -68,6 +74,8 @@ struct Node {
 
     std::string text_content() const;
     void set_text_content(const std::string& text);
+    void set_data(const std::string& text);
+    void replace_children(const std::vector<Node*>& nodes);
     std::string inner_html() const;
     std::string outer_html() const;
     std::string inner_text() const;
@@ -86,6 +94,15 @@ struct Document {
     uint64_t visual_revision = 1;
     uint64_t inline_geometry_revision = 0;
     std::set<int> pending_scroll_events;
+    bool capture_mutations = false, mutation_overflow = false;
+    std::set<int> mutation_roots;
+    unsigned mutation_suppression = 0;
+    size_t mutation_bytes = 0;
+    std::vector<MutationChange> mutations;
+    void record_mutation(Node* target, const std::string& type,
+                         const std::string& name = {}, const std::string& old_value = {}, bool old_present = false,
+                         const std::vector<Node*>& added = {}, const std::vector<Node*>& removed = {},
+                         Node* previous = nullptr, Node* next = nullptr);
     int focused_id = 0;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout

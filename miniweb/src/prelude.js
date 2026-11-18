@@ -914,13 +914,450 @@
       addEventListener: function () {}, removeEventListener: function () {}
     };
   };
-  globalThis.MutationObserver = class {
-    constructor(cb) { this.callback = cb; }
-    observe() { N.unsupported('MutationObserver.observe', 'observers do not fire'); } disconnect() {} takeRecords() { return []; }
+  var mutationStates = new WeakMap(),
+    mutationObservers = new Set(),
+    mutationPending = new Set();
+  var mutationScheduled = false,
+    mutationDeferred = false,
+    queuedMutationCount = 0,
+    queuedMutationBytes = 0;
+  var enqueueObserverJob = Function.prototype.call.bind(
+    Promise.prototype.then,
+    Promise.resolve(),
+  );
+  function observerError(kind, error) {
+    var message;
+    try {
+      message = String((error && error.stack) || error);
+    } catch (ignored) {
+      message = "callback threw an unreadable value";
+    }
+    N.log("error", kind + " callback: " + message);
+  }
+  function realNode(target) {
+    if (
+      !(target instanceof Node) ||
+      getID(target) <= 0 ||
+      !N.nodeType(getID(target))
+    )
+      throw new TypeError("Observer requires a native Node");
+    return getID(target);
+  }
+  function mutationState(observer) {
+    var state = mutationStates.get(observer);
+    if (!state) throw new TypeError("Invalid MutationObserver receiver");
+    return state;
+  }
+  function syncMutationRoots() {
+    var ids = new Set();
+    mutationObservers.forEach(function (s) {
+      s.registrations.concat(s.transients).forEach(function (r) {
+        ids.add(r.id);
+      });
+    });
+    N.captureMutations(Array.from(ids));
+  }
+  function staticNodes(ids) {
+    var nodes = ids.map(wrap);
+    Object.defineProperty(nodes, "item", {
+      value: function (i) {
+        return this[i] || null;
+      },
+    });
+    return Object.freeze(nodes);
+  }
+  function takeMutationRecords(s) {
+    var result = s.records;
+    s.records = [];
+    queuedMutationCount -= result.length;
+    queuedMutationBytes -= s.bytes;
+    s.bytes = 0;
+    return result;
+  }
+  function scheduleMutations() {
+    if (mutationScheduled || mutationDeferred || !mutationPending.size) return;
+    mutationScheduled = true;
+    enqueueObserverJob(deliverMutations);
+  }
+  function deliverMutations() {
+    mutationScheduled = false;
+    if (!N.observerTurn()) {
+      mutationDeferred = true;
+      N.log(
+        "warn",
+        "MutationObserver feedback deferred: checkpoint delivery budget reached",
+      );
+      return;
+    }
+    var pending = Array.from(mutationPending);
+    mutationPending.clear();
+    pending.forEach(function (s) {
+      s.transients = [];
+      syncMutationRoots();
+      var records = takeMutationRecords(s);
+      if (records.length)
+        try {
+          s.callback.call(s.observer, records, s.observer);
+        } catch (e) {
+          observerError("MutationObserver", e);
+        }
+    });
+  }
+  function flushMutationRecords() {
+    if (!mutationObservers.size) return;
+    N.mutations().forEach(function (change) {
+      mutationObservers.forEach(function (s) {
+        var eligible = false,
+          oldValue = false,
+          transients = [];
+        s.registrations.concat(s.transients).forEach(function (r) {
+          if (
+            change.ancestors.indexOf(r.id) < 0 ||
+            (change.target !== r.id && !r.options.subtree)
+          )
+            return;
+          var o = r.options;
+          if (change.type === "childList" && o.subtree)
+            change.removed.forEach(function (id) {
+              transients.push({ id: id, options: o, source: r.source || r.id });
+            });
+          if (
+            change.type === "attributes" &&
+            o.attributes &&
+            (!o.attributeFilter || o.attributeFilter.indexOf(change.name) >= 0)
+          ) {
+            eligible = true;
+            oldValue = oldValue || o.attributeOldValue;
+          }
+          if (change.type === "characterData" && o.characterData) {
+            eligible = true;
+            oldValue = oldValue || o.characterDataOldValue;
+          }
+          if (change.type === "childList" && o.childList) eligible = true;
+        });
+        transients.forEach(function (r) {
+          if (
+            !s.transients.some(function (t) {
+              return t.id === r.id && t.options === r.options;
+            })
+          )
+            s.transients.push(r);
+        });
+        if (s.transients.length > 4096)
+          throw new RangeError(
+            "MutationObserver transient subtree budget exceeded",
+          );
+        if (transients.length) mutationPending.add(s);
+        if (!eligible) return;
+        var weight =
+          128 +
+          (change.added.length + change.removed.length) * 8 +
+          (oldValue && change.old ? change.old.length * 2 : 0);
+        if (
+          queuedMutationCount >= 4096 ||
+          queuedMutationBytes + weight > 2 * 1024 * 1024
+        )
+          throw new RangeError("MutationObserver queued record budget exceeded");
+        s.records.push(
+          Object.freeze({
+            type: change.type,
+            target: wrap(change.target),
+            addedNodes: staticNodes(change.added),
+            removedNodes: staticNodes(change.removed),
+            previousSibling: wrap(change.previous),
+            nextSibling: wrap(change.next),
+            attributeName: change.name,
+            attributeNamespace: null,
+            oldValue: oldValue ? change.old : null,
+          }),
+        );
+        ++queuedMutationCount;
+        queuedMutationBytes += weight;
+        s.bytes += weight;
+        mutationPending.add(s);
+      });
+    });
+    syncMutationRoots();
+    scheduleMutations();
+  }
+  globalThis.__mwResumeMutations = function () {
+    mutationDeferred = false;
+    scheduleMutations();
   };
+  globalThis.MutationObserver = class {
+    constructor(callback) {
+      if (typeof callback !== "function")
+        throw new TypeError("MutationObserver callback must be a function");
+      mutationStates.set(this, {
+        observer: this,
+        callback: callback,
+        registrations: [],
+        transients: [],
+        records: [],
+        bytes: 0,
+      });
+    }
+    observe(target, options) {
+      var s = mutationState(this),
+        id = realNode(target);
+      flushMutationRecords();
+      options = options || {};
+      var attributes = options.attributes,
+        characterData = options.characterData,
+        attributeOldValue = options.attributeOldValue,
+        characterDataOldValue = options.characterDataOldValue,
+        filter = options.attributeFilter;
+      if (
+        filter !== undefined &&
+        (filter === null ||
+          (typeof filter !== "object" && typeof filter !== "function") ||
+          typeof filter[Symbol.iterator] !== "function")
+      )
+        throw new TypeError("attributeFilter must be a sequence");
+      var o = {
+        childList: !!options.childList,
+        subtree: !!options.subtree,
+        attributes:
+          attributes === undefined
+            ? attributeOldValue !== undefined || filter !== undefined
+            : !!attributes,
+        characterData:
+          characterData === undefined
+            ? characterDataOldValue !== undefined
+            : !!characterData,
+        attributeOldValue: !!attributeOldValue,
+        characterDataOldValue: !!characterDataOldValue,
+        attributeFilter:
+          filter === undefined
+            ? null
+            : Array.from(filter, function (v) {
+                return String(v);
+              }),
+      };
+      if (
+        (!o.childList && !o.attributes && !o.characterData) ||
+        (!o.attributes && (o.attributeOldValue || o.attributeFilter)) ||
+        (!o.characterData && o.characterDataOldValue)
+      )
+        throw new TypeError("Inconsistent MutationObserver options");
+      if (!mutationObservers.has(s) && mutationObservers.size >= 64)
+        throw new RangeError("MutationObserver active observer budget exceeded");
+      var exists = s.registrations.some(function (r) {
+        return r.id === id;
+      });
+      var count = 0;
+      mutationObservers.forEach(function (a) {
+        count += a.registrations.length;
+      });
+      if (!exists && count >= 1024)
+        throw new RangeError("MutationObserver target budget exceeded");
+      s.registrations = s.registrations.filter(function (r) {
+        return r.id !== id;
+      });
+      s.transients = s.transients.filter(function (r) {
+        return r.source !== id;
+      });
+      s.registrations.push({ id: id, options: o });
+      mutationObservers.add(s);
+      syncMutationRoots();
+    }
+    disconnect() {
+      var s = mutationState(this);
+      flushMutationRecords();
+      takeMutationRecords(s);
+      s.registrations = [];
+      s.transients = [];
+      mutationPending.delete(s);
+      mutationObservers.delete(s);
+      syncMutationRoots();
+    }
+    takeRecords() {
+      var s = mutationState(this);
+      flushMutationRecords();
+      return takeMutationRecords(s);
+    }
+  };
+  [
+    "append",
+    "insertBefore",
+    "remove",
+    "replace",
+    "setAttr",
+    "removeAttr",
+    "setText",
+    "setTextContent",
+    "setInnerHTML",
+    "setStyle",
+    "setStyleCss",
+    "setTitle",
+    "clone",
+  ].forEach(function (name) {
+    var original = N[name];
+    N[name] = function () {
+      try {
+        return original.apply(N, arguments);
+      } finally {
+        flushMutationRecords();
+      }
+    };
+  });
+
+  var resizeStates = new WeakMap(),
+    resizeObservers = new Set();
+  function resizeState(observer) {
+    var s = resizeStates.get(observer);
+    if (!s) throw new TypeError("Invalid ResizeObserver receiver");
+    return s;
+  }
+  function resizeEntry(target, m) {
+    var rect = Object.freeze({
+      x: m[4],
+      y: m[5],
+      width: m[0],
+      height: m[1],
+      top: m[5],
+      left: m[4],
+      right: m[4] + m[0],
+      bottom: m[5] + m[1],
+      toJSON: function () {
+        return {
+          x: this.x,
+          y: this.y,
+          width: this.width,
+          height: this.height,
+          top: this.top,
+          left: this.left,
+          right: this.right,
+          bottom: this.bottom,
+        };
+      },
+    });
+    return Object.freeze({
+      target: target,
+      contentRect: rect,
+      contentBoxSize: Object.freeze([
+        Object.freeze({ inlineSize: m[0], blockSize: m[1] }),
+      ]),
+      borderBoxSize: Object.freeze([
+        Object.freeze({ inlineSize: m[2], blockSize: m[3] }),
+      ]),
+    });
+  }
   globalThis.ResizeObserver = class {
-    constructor(cb) { this.callback = cb; }
-    observe() { N.unsupported('ResizeObserver.observe', 'observers do not fire'); } unobserve() {} disconnect() {}
+    constructor(callback) {
+      if (typeof callback !== "function")
+        throw new TypeError("ResizeObserver callback must be a function");
+      resizeStates.set(this, {
+        observer: this,
+        callback: callback,
+        targets: new Map(),
+      });
+    }
+    observe(target, options) {
+      if (!(target instanceof Element))
+        throw new TypeError("ResizeObserver requires an Element");
+      var id = realNode(target),
+        s = resizeState(this);
+      options = options || {};
+      var box = options.box === undefined ? "content-box" : String(options.box);
+      if (box === "device-pixel-content-box") {
+        N.unsupported(
+          "ResizeObserver device-pixel-content-box",
+          "Only CSS content-box/border-box are supported",
+        );
+        throw new TypeError("Unsupported ResizeObserver box");
+      }
+      if (box !== "content-box" && box !== "border-box") {
+        N.log("warn", "Ignored invalid ResizeObserver box option");
+        return;
+      }
+      var m = N.resizeMetrics(id);
+      if (m[8]) {
+        N.unsupported(
+          "ResizeObserver SVG",
+          "Only HTML layout boxes are supported",
+        );
+        throw new TypeError("SVG resize observation is unsupported");
+      }
+      if (!resizeObservers.has(s) && resizeObservers.size >= 64)
+        throw new RangeError("ResizeObserver active observer budget exceeded");
+      var count = 0;
+      resizeObservers.forEach(function (a) {
+        count += a.targets.size;
+      });
+      if (!s.targets.has(id) && count >= 1024)
+        throw new RangeError("ResizeObserver target budget exceeded");
+      var old = s.targets.get(id);
+      if (old && old.box === box) return;
+      s.targets.set(id, { target: target, box: box, last: null });
+      resizeObservers.add(s);
+    }
+    unobserve(target) {
+      if (!(target instanceof Element))
+        throw new TypeError("ResizeObserver requires an Element");
+      var s = resizeState(this);
+      s.targets.delete(realNode(target));
+      if (!s.targets.size) resizeObservers.delete(s);
+    }
+    disconnect() {
+      var s = resizeState(this);
+      s.targets.clear();
+      resizeObservers.delete(s);
+    }
+  };
+  globalThis.__mwResizeFrame = function () {
+    var depth = 0,
+      skipped = false,
+      unfinished = false;
+    for (var pass = 0; pass < 64; pass++) {
+      var batches = [],
+        minimum = Infinity;
+      skipped = false;
+      resizeObservers.forEach(function (s) {
+        var active = [];
+        s.targets.forEach(function (t, id) {
+          var m = N.resizeMetrics(id),
+            size = t.box === "border-box" ? [m[2], m[3]] : [m[0], m[1]];
+          if (t.last && t.last[0] === size[0] && t.last[1] === size[1]) return;
+          if (m[6] <= depth) {
+            skipped = true;
+            return;
+          }
+          active.push({ id: id, target: t, metrics: m, size: size });
+          minimum = Math.min(minimum, m[6]);
+        });
+        if (active.length) batches.push({ state: s, active: active });
+      });
+      if (!batches.length) {
+        unfinished = false;
+        break;
+      }
+      unfinished = true;
+      batches.forEach(function (batch) {
+        var s = batch.state,
+          entries = [];
+        batch.active.forEach(function (a) {
+          if (s.targets.get(a.id) !== a.target) return;
+          a.target.last = a.size;
+          entries.push(resizeEntry(a.target.target, a.metrics));
+        });
+        if (entries.length)
+          try {
+            s.callback.call(s.observer, entries, s.observer);
+          } catch (e) {
+            observerError("ResizeObserver", e);
+          }
+      });
+      depth = minimum;
+    }
+    if (skipped || unfinished) {
+      var message =
+        "ResizeObserver loop completed with undelivered notifications.";
+      N.log("warn", message);
+      var error = new Event("error");
+      error.message = message;
+      globalThis.dispatchEvent(error);
+    }
   };
   globalThis.IntersectionObserver = class {
     constructor(cb) { this.callback = cb; }

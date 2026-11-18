@@ -1,0 +1,15 @@
+<!doctype html><div id="root"></div><button id="start">Start</button><button id="stop">Stop</button><script>
+var count=0,root=document.getElementById('root'),observer=new MutationObserver(function(){++count;document.body.setAttribute('data-count',String(count));root.setAttribute('n',String(count))});observer.observe(root,{attributes:true});
+document.getElementById('start').onclick=function(){root.setAttribute('n','start')};document.getElementById('stop').onclick=function(){observer.disconnect();document.body.setAttribute('data-count',String(count))};
+</script>
+<button id="budget">Budget</button><script>
+document.getElementById('budget').onclick=function(){
+  var observers=[],limited=false,queueLimited=false;
+  try{for(var i=0;i<65;i++){var o=new MutationObserver(function(){});o.observe(root,{attributes:true});observers.push(o)}}catch(e){limited=e instanceof RangeError}
+  observers.forEach(function(o){o.disconnect()});
+  var queue=new MutationObserver(function(){});queue.observe(root,{attributes:true});
+  try{for(var i=0;i<4100;i++)root.setAttribute('n',String(i))}catch(e){queueLimited=e instanceof RangeError}
+  queue.disconnect();
+  document.body.setAttribute('data-budget',JSON.stringify([limited,queueLimited]));
+};
+</script>
