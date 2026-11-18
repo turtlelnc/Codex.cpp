@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;font:16px sans-serif;background:#f5f1e7;color:#35312a}button{height:30px}#root{padding:10px}#box{width:120px;height:60px;padding:8px;border:2px solid #cfa989;box-sizing:border-box;background:#e6d8bf}[hidden]{display:none!important}
+</style></head><body><div id="root"><div id="leaf" data-x="old">seed</div></div><div id="box">Preview</div><div id="status"></div><div id="inline">inline placeholder</div>
+<button id="mutate">Update DOM</button><button id="resize">Resize</button><button id="hide">Hide</button><button id="show">Show</button><button id="disconnect">Disconnect</button><button id="loop">Feedback</button>
+<script>
+var root=document.getElementById('root'),leaf=document.getElementById('leaf'),box=document.getElementById('box'),moBatches=[],resizeLog=[],order=[],loopErrors=0;
+function compact(r){return {type:r.type,target:r.target.id||r.target.nodeName,name:r.attributeName,old:r.oldValue,added:Array.from(r.addedNodes).map(function(n){return n.id||n.nodeName}),removed:Array.from(r.removedNodes).map(function(n){return n.id||n.nodeName}),previous:r.previousSibling?r.previousSibling.id||r.previousSibling.nodeName:null,next:r.nextSibling?r.nextSibling.id||r.nextSibling.nodeName:null}}
+function record(){document.body.setAttribute('data-measure',JSON.stringify({mutations:moBatches,resize:resizeLog,order:order,loopErrors:loopErrors}))}
+var observer=new MutationObserver(function(rs){order.push('mutation');moBatches.push(rs.map(compact));document.getElementById('status').textContent='DOM updated';record()});
+observer.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:['data-x'],attributeOldValue:true,characterData:true,characterDataOldValue:true});
+var resizeObserver=new ResizeObserver(function(entries){entries.forEach(function(e){resizeLog.push([e.contentRect.width,e.contentRect.height,e.contentRect.x,e.contentRect.y,e.borderBoxSize[0].inlineSize,e.borderBoxSize[0].blockSize])});record()});resizeObserver.observe(box);
+document.getElementById('mutate').onclick=function(){order.push('sync');leaf.setAttribute('data-x','new');leaf.setAttribute('ignored','x');leaf.firstChild.nodeValue='edited';var child=document.createElement('span');child.id='new-child';child.textContent='Child';root.appendChild(child);Promise.resolve().then(function(){order.push('promise');record()});record()};
+document.getElementById('resize').onclick=function(){box.style.width='180px';box.style.height='90px'};
+document.getElementById('hide').onclick=function(){box.hidden=true};document.getElementById('show').onclick=function(){box.hidden=false};
+document.getElementById('disconnect').onclick=function(){observer.disconnect();resizeObserver.disconnect();root.setAttribute('data-x','disconnected');box.style.width='200px';record()};
+window.addEventListener('error',function(e){if(e.message&&e.message.indexOf('ResizeObserver loop')>=0){++loopErrors;record()}});
+document.getElementById('loop').onclick=function(){resizeObserver.disconnect();var feedback=new ResizeObserver(function(){box.style.width=String(box.getBoundingClientRect().width+1)+'px'});feedback.observe(box);document.getElementById('disconnect').onclick=function(){feedback.disconnect();observer.disconnect()}};
+record();
+</script></body></html>

@@ -12,6 +12,7 @@ public:
 
     bool init();
     void refresh_layout(){if(refresh_)refresh_();}
+    bool consume_observer_turn(){return ++observer_turns_<=64;}
     void run(int wait_ms = 2500);
     void execute_scripts();
     void dispatch_dom_content_loaded();
@@ -32,6 +33,7 @@ private:
     void* rt_ = nullptr;
     void* ctx_ = nullptr;
     double deadline_ms_ = 0;
+    unsigned observer_turns_ = 0;
 
     bool install_bridge();
     void drain_jobs();

@@ -123,9 +123,9 @@ bool Engine::render(bool full_page) {
         }
         js_ran_ = true;
     }
-    if(js_runtime_ && !js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
+    if(js_runtime_ && !js_runtime_->eval("__mwResumeMutations();__mwReconcileFocus();","<focus-reconcile>"))return false;
     ensure_layout();
-    if(!flush_scroll_events())return false;
+    if(!settle_frame())return false;
     content_height_ = (int)std::ceil(document_content_height(*doc_));
     if (content_height_ <= 0) content_height_ = 1;
     content_height_ = std::min(content_height_, 20000);
@@ -149,12 +149,20 @@ bool Engine::click(float x, float y) {
 }
 
 bool Engine::interact(const std::string& code) {
-    if (!js_runtime_ || !js_runtime_->eval("__mwReconcileFocus();"+code, "<viewer-interaction>", false)) return false;
+    if (!js_runtime_ || !js_runtime_->eval("__mwResumeMutations();__mwReconcileFocus();"+code, "<viewer-interaction>", false)) return false;
     js_runtime_->drain_timers(500);
     if(!js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
     collect_stylesheets();
     apply_styles();
     do_layout();
+    return settle_frame();
+}
+
+bool Engine::settle_frame() {
+    if (!flush_scroll_events()) return false;
+    if (js_runtime_ && !js_runtime_->eval("__mwResizeFrame();", "<resize-observers>", false))
+        return false;
+    ensure_layout();
     return flush_scroll_events();
 }
 
@@ -180,8 +188,8 @@ bool Engine::key(const std::string& key) {
 bool Engine::advance(int milliseconds) {
     if (!js_runtime_ || milliseconds<0 || milliseconds>3000) return false;
     js_runtime_->drain_timers(milliseconds);
-    if(!js_runtime_->eval("__mwReconcileFocus();","<focus-reconcile>"))return false;
-    ensure_layout(); return flush_scroll_events();
+    if(!js_runtime_->eval("__mwResumeMutations();__mwReconcileFocus();","<focus-reconcile>"))return false;
+    ensure_layout(); return settle_frame();
 }
 
 bool Engine::scroll(float x,float y,float dx,float dy) {

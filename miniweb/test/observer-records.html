@@ -1,0 +1,21 @@
+<!doctype html><body><div id="root"><span id="a">A</span><span id="b">B</span></div><button id="run">Run</button><script>
+var root=document.getElementById('root');
+function compact(r){return {type:r.type,target:r.target.id||r.target.nodeName,name:r.attributeName,old:r.oldValue,added:Array.from(r.addedNodes).map(function(n){return n.id||n.nodeName}),removed:Array.from(r.removedNodes).map(function(n){return n.id||n.nodeName}),previous:r.previousSibling?r.previousSibling.id||r.previousSibling.nodeName:null,next:r.nextSibling?r.nextSibling.id||r.nextSibling.nodeName:null}}
+async function run(){
+ var result={},b=document.getElementById('b'),o=new MutationObserver(function(){});o.observe(root,{childList:true,subtree:true,attributes:true,attributeOldValue:true,characterData:true,characterDataOldValue:true});
+ b.setAttribute('data-z','1');b.setAttribute('data-z','1');b.removeAttribute('data-z');b.removeAttribute('data-z');result.attributes=o.takeRecords().map(compact);
+ var n=document.createElement('em');n.id='n';root.insertBefore(n,b);root.removeChild(n);var replacement=document.createElement('i');replacement.id='r';root.replaceChild(replacement,b);result.children=o.takeRecords().map(compact);
+ root.innerHTML='<strong id="one">one</strong><strong id="two">two</strong>';result.html=o.takeRecords().map(compact);
+ root.textContent='plain';result.text=o.takeRecords().map(compact);root.textContent='';result.empty=o.takeRecords().map(compact);
+ var comment=document.createComment('before');root.appendChild(comment);o.takeRecords();comment.data='after';result.comment=o.takeRecords().map(compact);
+ root.setAttribute('data-before-disconnect','yes');o.disconnect();result.disconnected=o.takeRecords().length;
+ var leaf=document.createElement('span');leaf.id='removed';root.appendChild(leaf);var batches=[];var subtree=new MutationObserver(function(rs){batches.push(rs.map(compact))});subtree.observe(root,{attributes:true,subtree:true,attributeOldValue:true});root.removeChild(leaf);leaf.setAttribute('x','first');await Promise.resolve();leaf.setAttribute('x','second');await Promise.resolve();subtree.disconnect();result.detached=batches;
+ var styled=document.createElement('div'),styleObserver=new MutationObserver(function(){});styleObserver.observe(styled,{attributes:true});styled.style.width='10px';styled.style.width='10px';result.styleNoop=styleObserver.takeRecords().length;styled.style.cssText='width: 10px;';styled.style.cssText='width: 10px;';result.cssText=styleObserver.takeRecords().length;styleObserver.disconnect();
+ var errors=0;[{}, {attributes:false,attributeOldValue:true},{characterData:false,characterDataOldValue:true},{attributes:false,attributeFilter:[]}].forEach(function(options){try{new MutationObserver(function(){}).observe(root,options)}catch(e){if(e.name==='TypeError')++errors}});result.invalid=errors;
+ var overlap=new MutationObserver(function(){});root.appendChild(leaf);overlap.observe(root,{attributes:true,subtree:true});overlap.observe(leaf,{attributes:true,attributeOldValue:true});leaf.setAttribute('x','third');result.overlap=overlap.takeRecords().map(compact);overlap.disconnect();
+ var calls=0,takeObserver=new MutationObserver(function(){++calls});takeObserver.observe(leaf,{attributes:true});leaf.setAttribute('taken','yes');result.taken=takeObserver.takeRecords().length;await Promise.resolve();result.takeCallbacks=calls;takeObserver.disconnect();
+ var afterError=0,errorObserver=new MutationObserver(function(){throw new Error('expected mutation callback error')}),followingObserver=new MutationObserver(function(){++afterError});errorObserver.observe(leaf,{attributes:true});followingObserver.observe(leaf,{attributes:true});leaf.setAttribute('after-error','yes');await Promise.resolve();result.afterError=afterError;errorObserver.disconnect();followingObserver.disconnect();
+ document.body.setAttribute('data-result',JSON.stringify(result));
+}
+document.getElementById('run').onclick=function(){run().catch(function(e){document.body.setAttribute('data-error',String(e.stack||e))})};
+</script></body>

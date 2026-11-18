@@ -33,12 +33,12 @@ void check_diagnostics(const std::filesystem::path& directory) {
         {Kind::Structural, "inline-table", "inline-table was not reported"},
         {Kind::MissingJs, "attachShadow", "attachShadow was not reported"},
         {Kind::MissingJs, "IntersectionObserver", "IntersectionObserver was not reported"},
-        {Kind::MissingJs, "ResizeObserver", "ResizeObserver was not reported"},
         {Kind::MissingJs, "undefinedGlobalApi", "undefined global was not reported"},
         {Kind::MissingJs, "unknown function call", "unknown method call was not reported"},
     };
     for (const auto& item : expected)
         if (!has(item.kind, item.feature)) throw std::runtime_error(item.message);
+    if(has(Kind::MissingJs,"ResizeObserver")||has(Kind::MissingJs,"MutationObserver"))throw std::runtime_error("Implemented observer incorrectly reported missing");
     if(has(Kind::MissingJs,"scrollIntoView"))throw std::runtime_error("Implemented scrollIntoView was incorrectly reported missing");
     if(has(Kind::MissingJs,"window.scrollTo"))throw std::runtime_error("Implemented window.scrollTo was incorrectly reported missing");
     const std::string summary = diag::report().summary();
