@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today — Task Checklist</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #faf6ef;
+    color: #3a332c;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 30px 24px 40px;
+  }
+  .app-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .count {
+    margin: 0 0 0 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #f4ebdf;
+    color: #9c6a45;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .add {
+    display: flex;
+    align-items: stretch;
+    margin: 0;
+  }
+  .new-task {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    padding: 0 14px;
+    border: 1px solid #e6dbcc;
+    border-radius: 10px;
+    background: #fffdf9;
+    color: inherit;
+    font: inherit;
+    outline: none;
+  }
+  .new-task::placeholder { color: #b3a596; }
+  .new-task:focus {
+    border-color: #e8703a;
+    box-shadow: 0 0 0 3px rgba(232, 112, 58, 0.16);
+  }
+  .new-task.is-invalid {
+    border-color: #cf4430;
+    box-shadow: 0 0 0 3px rgba(207, 68, 48, 0.14);
+  }
+  .add-btn {
+    height: 44px;
+    margin-left: 8px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 10px;
+    background: #e8703a;
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .add-btn:hover { background: #d2622f; }
+  .add-btn:active { background: #bf5728; }
+  .add-btn:focus-visible,
+  .filter:focus-visible {
+    outline: 2px solid #b64f1f;
+    outline-offset: 2px;
+  }
+  .hint {
+    min-height: 20px;
+    margin: 6px 0 10px;
+    color: #c2412b;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .filters {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .filter {
+    margin-right: 6px;
+    padding: 7px 12px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: #7a6d61;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .filter:hover { background: #f3ebdf; }
+  .filter.is-active {
+    background: #fdeadd;
+    border-color: #f1c9ad;
+    color: #a94d1c;
+  }
+  .tasks {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .task {
+    display: block;
+    margin-bottom: 8px;
+    padding: 10px 14px;
+    border: 1px solid #ece2d4;
+    border-radius: 12px;
+    background: #fffdf9;
+    box-shadow: 0 1px 2px rgba(66, 52, 40, 0.04);
+  }
+  .task-label {
+    display: flex;
+    align-items: center;
+    min-height: 24px;
+    cursor: pointer;
+  }
+  .task-box {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin: 0 12px 0 0;
+    accent-color: #e8703a;
+    cursor: pointer;
+  }
+  .task-text {
+    flex: 1;
+    word-break: break-word;
+  }
+  .task.is-done .task-text {
+    color: #a79b8e;
+    text-decoration: line-through;
+  }
+  .empty {
+    display: none;
+    margin: 14px 2px 0;
+    color: #a3988b;
+    font-size: 14px;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  @media (max-width: 460px) {
+    .app { padding: 22px 16px 32px; }
+    h1 { font-size: 21px; }
+    .add-btn { padding: 0 16px; }
+    .count { margin-left: 8px; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="app-head">
+    <h1>Today</h1>
+    <p class="count" id="count" aria-live="polite">2 tasks left</p>
+  </header>
+
+  <form class="add" id="add-form" novalidate>
+    <label class="sr-only" for="new-task">New task</label>
+    <input class="new-task" id="new-task" type="text" placeholder="Add a task…" autocomplete="off">
+    <button class="add-btn" type="submit">Add</button>
+  </form>
+  <p class="hint" id="hint" role="status" aria-live="polite"></p>
+
+  <div class="filters" role="group" aria-label="Filter tasks">
+    <button class="filter is-active" type="button" data-filter="all" aria-pressed="true">All</button>
+    <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
+    <button class="filter" type="button" data-filter="done" aria-pressed="false">Done</button>
+  </div>
+
+  <ul class="tasks" id="tasks"></ul>
+  <p class="empty" id="empty">No tasks to show.</p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  function initialTasks() {
+    return [
+      { text: "Confirm backup rotation schedule", done: false },
+      { text: "Review onboarding checklist", done: false }
+    ];
+  }
+
+  var tasks = initialTasks();
+  var items = [];
+  var filterMode = "all";
+
+  var form = document.getElementById("add-form");
+  var input = document.getElementById("new-task");
+  var hint = document.getElementById("hint");
+  var countEl = document.getElementById("count");
+  var list = document.getElementById("tasks");
+  var emptyEl = document.getElementById("empty");
+  var filterButtons = document.querySelectorAll(".filter");
+
+  function setHint(message) {
+    hint.textContent = message || "";
+    input.className = message ? "new-task is-invalid" : "new-task";
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+  }
+
+  function updateCount() {
+    var left = 0;
+    var i;
+    for (i = 0; i < tasks.length; i += 1) {
+      if (!tasks[i].done) { left += 1; }
+    }
+    countEl.textContent = left === 1 ? "1 task left" : left + " tasks left";
+  }
+
+  function matchesFilter(task) {
+    if (filterMode === "active") { return !task.done; }
+    if (filterMode === "done") { return task.done; }
+    return true;
+  }
+
+  function applyFilter() {
+    var visible = 0;
+    var i;
+    for (i = 0; i < items.length; i += 1) {
+      var entry = items[i];
+      var show = matchesFilter(entry.task);
+      entry.li.style.display = show ? "block" : "none";
+      entry.li.className = entry.task.done ? "task is-done" : "task";
+      if (show) { visible += 1; }
+    }
+    emptyEl.style.display = visible === 0 ? "block" : "none";
+    updateCount();
+  }
+
+  function buildItem(task) {
+    var li = document.createElement("li");
+    li.className = "task";
+
+    var label = document.createElement("label");
+    label.className = "task-label";
+
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "task-box";
+    box.checked = task.done;
+    box.setAttribute("aria-label", "Mark \"" + task.text + "\" as done");
+
+    var text = document.createElement("span");
+    text.className = "task-text";
+    text.textContent = task.text;
+
+    label.appendChild(box);
+    label.appendChild(text);
+    li.appendChild(label);
+    list.appendChild(li);
+
+    var entry = { task: task, li: li, box: box };
+    box.addEventListener("change", function () {
+      task.done = box.checked;
+      applyFilter();
+    });
+
+    return entry;
+  }
+
+  function setFilter(next) {
+    filterMode = next;
+    var i;
+    for (i = 0; i < filterButtons.length; i += 1) {
+      var btn = filterButtons[i];
+      var on = btn.getAttribute("data-filter") === next;
+      btn.className = on ? "filter is-active" : "filter";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    applyFilter();
+  }
+
+  var i;
+  for (i = 0; i < tasks.length; i += 1) {
+    items.push(buildItem(tasks[i]));
+  }
+  applyFilter();
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var value = input.value.replace(/^\s+|\s+$/g, "");
+    if (!value) {
+      setHint("Please enter a task name before adding.");
+      input.focus();
+      return;
+    }
+    setHint("");
+    var task = { text: value, done: false };
+    tasks.push(task);
+    items.push(buildItem(task));
+    input.value = "";
+    input.focus();
+    setFilter("all");
+  });
+
+  input.addEventListener("input", function () {
+    if (hint.textContent) { setHint(""); }
+  });
+
+  for (i = 0; i < filterButtons.length; i += 1) {
+    (function (btn) {
+      btn.addEventListener("click", function () {
+        setFilter(btn.getAttribute("data-filter"));
+      });
+    })(filterButtons[i]);
+  }
+})();
+</script>
+</body>
+</html>

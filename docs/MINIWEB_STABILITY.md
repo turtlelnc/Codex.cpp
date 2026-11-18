@@ -167,3 +167,19 @@ hooks journal only mutations under observed roots; the journal is drained after
 native mutation calls. Resize delivery reads actual layout once a host frame is
 settled. Neither API adds a background thread, network access or a new runtime.
 See [observer limits](MINIWEB.md#observers) before relying on browser semantics.
+
+### Live-task cascade and marker regression
+
+The DeepSeek-generated offline task page is retained as `live-task.html` with its
+original semantic `ul`/`li` structure. Native and Chromium tests add a task,
+submit with Enter, check completion and select Done at 640px and 390px widths.
+They also check empty-input feedback and the author's 44px input height. No model
+credentials or paid requests are required to replay this regression.
+
+`cascade-markers.html` isolates UA versus author origin ordering, author
+specificity/inline/important precedence, inherited `list-style:none`, explicit
+`disc`, initial/unset, longhand/shorthand and dynamic changes. Native pixel tests
+and Chromium image decoding check actual marker presence, rather than accepting
+computed style alone. Normal author rules outrank normal UA rules before specificity is compared;
+important origin order is reversed. Cascade layers, user styles and complete
+revert semantics remain outside this repair.

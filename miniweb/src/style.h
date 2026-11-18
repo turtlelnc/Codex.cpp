@@ -97,6 +97,7 @@ struct ComputedStyle {
     TextAlign text_align = TextAlign::Left;
     WhiteSpace white_space = WhiteSpace::Normal;
     TextTransform text_transform = TextTransform::None;
+    bool list_marker = true; // Supported list-style-type subset: disc / none.
     float letter_spacing = 0;
     bool underline = false;
     bool line_through = false;
@@ -158,6 +159,7 @@ inline ComputedStyle inherited_style(const ComputedStyle& parent) {
     st.visibility = parent.visibility;
     st.letter_spacing = parent.letter_spacing;
     st.text_transform = parent.text_transform;
+    st.list_marker = parent.list_marker;
     st.custom_props = parent.custom_props;
     st.border_spacing_x = parent.border_spacing_x;
     st.border_spacing_y = parent.border_spacing_y;

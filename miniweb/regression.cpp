@@ -3,6 +3,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+void check_live_task(const std::filesystem::path& directory);
+void check_cascade_markers(const std::filesystem::path& directory);
 void check_text_visibility(const std::filesystem::path& directory);
 void check_tables(const std::filesystem::path& directory);
 void check_dynamic_tables(const std::filesystem::path& directory);
@@ -50,6 +52,8 @@ int main(int argc,char** argv){try{
  auto* siblings=runtime.document()->get_element_by_id("siblings");auto* a=runtime.document()->get_element_by_id("a");if(a->replace_child(siblings,nullptr)||siblings->replace_child(body,a)||body->parent==siblings)throw std::runtime_error("Ancestor replacement accepted");
  Engine clock(640,480);clock.set_wait_ms(500);if(!clock.load((page.parent_path()/"clock.html").u8string(),&error)||!clock.render(false))throw std::runtime_error(error);
  if(clock.document()->body->has_attr("data-timer")||!clock.click(2,2)||clock.document()->body->attr("data-click-clock")!="500"||clock.document()->body->attr("data-timer")!="fired")throw std::runtime_error("Idle clock did not advance through replay wait");
+ check_cascade_markers(page.parent_path());
+ check_live_task(page.parent_path());
  check_text_visibility(page.parent_path());
  check_font_border(page.parent_path());
  check_tables(page.parent_path());

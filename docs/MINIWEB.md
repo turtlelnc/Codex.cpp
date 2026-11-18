@@ -234,3 +234,19 @@ Resize SVG and device-pixel-content-box are explicitly rejected and diagnosed;
 vertical writing modes, fragmented boxes and transformed dimensions are not
 covered. IntersectionObserver remains a diagnosed stub. Full framework support
 must be verified against a real browser rather than inferred from these APIs.
+
+## Author styles and list markers
+
+Normal author declarations override built-in UA defaults before selector
+specificity is compared. Inline/important ordering within the author origin is
+preserved, and UA-important rules retain higher priority than author-important
+rules. This repairs cases where default input dimensions, borders or padding
+incorrectly beat page styles. It does not add cascade layers or full revert
+semantics.
+
+The existing unordered-list painter now honors inherited `list-style-type:none`
+and `disc`, including the supported `list-style` shorthand, CSS-wide keywords
+and dynamic style changes. `getComputedStyle().listStyleType` reports this subset.
+Inside positioning remains an explicitly reported approximation; custom images,
+other marker shapes, counters and general `display:list-item` layout remain
+unsupported. These fixes do not establish complete CSS or browser equivalence.
