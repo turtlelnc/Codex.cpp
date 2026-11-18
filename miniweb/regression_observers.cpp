@@ -32,7 +32,7 @@ void observer_records(const std::filesystem::path& page, bool report) {
     check(!body->has_attr("data-error"), body->attr("data-error"));
     check(body->has_attr("data-result"), "Observer records did not complete");
     auto result = body->attr("data-result");
-    for (const char* expected : {"\"styleNoop\":1", "\"cssText\":2", "\"invalid\":4",
+    for (const char* expected : {"\"styleNoop\":1", "\"stylePriority\":[100,200,1]", "\"cssText\":2", "\"invalid\":4",
                                 "\"takeCallbacks\":0", "\"afterError\":1",
                                 "\"comment\":[{\"type\":\"characterData\""}) {
         check(result.find(expected) != std::string::npos,

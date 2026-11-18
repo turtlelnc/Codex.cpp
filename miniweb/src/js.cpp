@@ -613,9 +613,19 @@ JSValue js_set_style(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
     if (!n) return JS_UNDEFINED;
     std::string css = n->attr("style");
-    const auto property=arg_str(ctx,argv[1]),value=arg_str(ctx,argv[2]);
-    if(get_style_prop(css,property)==util::trim(value))return JS_UNDEFINED;
-    set_style_prop(css,property,value);
+    const auto property = arg_str(ctx, argv[1]), value = arg_str(ctx, argv[2]);
+    const auto name = util::starts_with(property, "--") ? property : util::to_lower(property);
+    unsigned matches = 0;
+    bool unchanged = false;
+    for (const auto& declaration : parse_style_decls(css)) {
+        if (declaration.name != name) continue;
+        ++matches;
+        unchanged = declaration.value == util::trim(value);
+    }
+    // A last textual value is insufficient: an earlier !important declaration
+    // may still win. Let the existing setter resolve duplicate declarations.
+    if ((matches == 1 && unchanged) || (matches == 0 && value.empty())) return JS_UNDEFINED;
+    set_style_prop(css, property, value);
     n->set_attr("style", css);
     return JS_UNDEFINED;
 }
