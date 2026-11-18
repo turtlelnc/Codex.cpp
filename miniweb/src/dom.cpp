@@ -521,3 +521,32 @@ bool set_scroll(Node* n,float x,float y){
     n->scroll_y=scrollable(n,false)?std::clamp(y,0.0f,std::max(0.0f,n->scroll_height-client_size(n,false))):0;
     const bool changed=ox!=n->scroll_x||oy!=n->scroll_y;if(changed){++n->doc->visual_revision;n->doc->pending_scroll_events.insert(n->id);}return changed;
 }
+
+void reveal_node(Node* n,int block,int inline_alignment,bool only_if_needed,bool nearest_container){
+    if(!n||!n->doc||!n->layout.has_box||block<0||block>3||inline_alignment<0||inline_alignment>3)return;
+    auto& doc=*n->doc;
+    auto delta=[&](float start,float end,float low,float high,int alignment){
+        const float a=start-low,b=end-high,size=end-start,port=high-low;
+        if(only_if_needed&&((a>=0&&b<=0)||(a<=0&&b>=0)))return 0.0f;
+        if(alignment==0)return a;
+        if(alignment==1)return (a+b)/2;
+        if(alignment==2)return b;
+        if((a>=0&&b<=0)||(a<=0&&b>=0))return 0.0f;
+        return (a<0&&size<=port)||(b>0&&size>port)?a:b;
+    };
+    Node* current=n;
+    for(Node* ancestor=n==doc.html?n:n->parent;ancestor;current=ancestor,ancestor=ancestor->parent){
+        if(viewport_fixed(current))break;
+        const bool root=ancestor==doc.html;
+        if(ancestor->layout.has_box&&(root||scrollable(ancestor,true)||scrollable(ancestor,false))){
+            const auto target=n->viewport_rect();
+            const auto port=root?RectF{0,0,float(doc.viewport_w),float(doc.viewport_h)}:padding_box(ancestor,ancestor->viewport_rect());
+            const float x=root?doc.scroll_x:ancestor->scroll_x,y=root?doc.scroll_y:ancestor->scroll_y;
+            const float dx=(root||scrollable(ancestor,true))?delta(target.x,target.right(),port.x,port.right(),inline_alignment):0;
+            const float dy=(root||scrollable(ancestor,false))?delta(target.y,target.bottom(),port.y,port.bottom(),block):0;
+            set_scroll(ancestor,x+dx,y+dy);
+            if(nearest_container)break;
+        }
+        if(root)break;
+    }
+}

@@ -646,6 +646,12 @@ JSValue js_scroll(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto arr=JS_NewArray(ctx);for(int i=0;i<6;++i)JS_SetPropertyUint32(ctx,arr,i,JS_NewFloat64(ctx,n->layout.has_box?values[i]:0));return arr;
 }
 
+JSValue js_reveal(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if(!refresh_geometry(ctx))return JS_EXCEPTION;
+    if(argc>=5)reveal_node(node_of(ctx,arg_i32(ctx,argv[0])),arg_i32(ctx,argv[1]),arg_i32(ctx,argv[2]),JS_ToBool(ctx,argv[3])>0,JS_ToBool(ctx,argv[4])>0);
+    return JS_UNDEFINED;
+}
+
 JSValue js_scroll_events(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     auto* b=bridge(ctx);std::set<int> pending;if(b)pending.swap(b->doc->pending_scroll_events);
     std::vector<int> ids;for(int id:pending){auto* n=id>0&&size_t(id)<b->doc->id_map.size()?b->doc->id_map[id]:nullptr;if(n&&n->layout.has_box)ids.push_back(id);}return array_of_ids(ctx,ids);
@@ -783,6 +789,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("resetControl", 1, js_reset_control),
     bridge_function("scroll", 3, js_scroll),
     bridge_function("scrollEvents", 0, js_scroll_events),
+    bridge_function("reveal", 5, js_reveal),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),

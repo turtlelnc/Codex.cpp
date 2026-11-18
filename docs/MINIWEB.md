@@ -54,7 +54,7 @@ JSON shape remains unchanged.
 - `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
 - `approximate`: features implemented only approximately, such as basic inset-only `position:sticky`, complex fixed-position stacking, inline containing blocks, clipping across stacking groups, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
 - `structural`: constructs that affect layout but are dropped, such as table captions, `col`/`colgroup`, `rowspan`/`colspan`, collapsed borders and `inline-table`.
-- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as automatic scrollIntoView, shadow DOM, observers and Web Animations.
+- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as smooth scroll animation, shadow DOM, observers and Web Animations.
 
 Counts are encounter counts from rendering (including replayed clicks), not precise usage counts. The report is best-effort: it cannot enumerate every gap, and absence of an entry is not proof of support. Treat layout and rendering near reported features as unreliable, and do not rewrite valid page code to accommodate them.
 
@@ -181,4 +181,19 @@ Use `scroll` with viewport `x`, `y` and signed pixel `delta_x`, `delta_y` (each 
 
 Element scrollTop/scrollLeft, scrollWidth/scrollHeight, clientWidth/clientHeight and scrollTo/scrollBy are backed by native layout. Window scrollTo/scrollBy, scrollX/scrollY and document.scrollingElement address the viewport. Scroll offsets persist across actions/screenshots, clamp on content shrink, and feed painting, DOM viewport geometry, link rectangles and hit testing. Scroll events are queued natively and coalesced per target, including offsets clamped by layout. Elements without layout boxes report zero metrics. Event handlers that cause repeated scrolling are limited to eight delivery rounds per action/frame; remaining events stay queued for the next action/frame with a capability warning. overflow:hidden supports programmatic scrolling; overflow:clip does not. Basic top/left/bottom/right sticky insets and viewport-fixed elements use the same visual geometry.
 
-This is a bounded first implementation: no painted scrollbars, smooth scrolling, scroll snapping/anchoring, automatic focus reveal/scrollIntoView, overscroll-behavior, touch gestures or RTL/vertical writing modes. Combined diagonal gestures choose one container rather than distributing axes independently. Opposing sticky insets and complex sticky sizing, transformed/stacked clipping and body-to-viewport overflow propagation remain approximate. No navigation or network permission was added. Native, sandbox-session and Chromium same-fixture regressions cover nested/page scrolling, fixed/sticky geometry, visible pixels and click coordinates.
+This is a bounded first implementation: no painted scrollbars, smooth scrolling, scroll snapping/anchoring, overscroll-behavior, touch gestures or RTL/vertical writing modes. Combined diagonal gestures choose one container rather than distributing axes independently. Opposing sticky insets and complex sticky sizing, transformed/stacked clipping and body-to-viewport overflow propagation remain approximate. No navigation or network permission was added. Native, sandbox-session and Chromium same-fixture regressions cover nested/page scrolling, fixed/sticky geometry, visible pixels and click coordinates.
+
+## Revealing controls and focus
+
+Tab/Shift+Tab and element.focus() reveal offscreen controls through nested scroll containers and the viewport. Focus scrolling centers vertically when needed and uses minimal horizontal movement. Already visible controls do not move; focus({preventScroll:true}) changes focus without scrolling. Descendants of a viewport-fixed settings panel scroll within that panel rather than moving the background. Hidden and detached targets cannot gain focus.
+
+scrollIntoView() and scrollIntoView(true) use block:start / inline:nearest; false uses block:end. Options support start/center/end/nearest for block and inline, and container:all (default) or container:nearest. Hidden/detached targets are no-ops. Invalid enum options are ignored with a warning; smooth uses an instant fallback and reports the missing animation capability. Existing native scroll event coalescing and limits remain in effect.
+
+```js
+input.scrollIntoView({block: "nearest", inline: "nearest"});
+input.focus({preventScroll: true});
+```
+
+HTMLElement.hidden now reflects the HTML attribute, so scripted settings panels can open/close reliably. Use an explicit [hidden] display rule when author styles override browser defaults. The until-found attribute value is reflected, but find-in-page/anchor reveal is not implemented.
+
+This is basic rectangular reveal, not complete CSSOM View: no scroll-margin/padding, smooth animation, caret-in-textarea scrolling, occlusion detection or RTL/vertical-writing alignment. Complex transformed/stacked clipping remains approximate. Acceptance uses focus-reveal.html plus existing form/settings/long-page suites, native visible-pixel checks and real Chromium keyboard/mouse actions.

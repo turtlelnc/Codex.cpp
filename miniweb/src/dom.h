@@ -126,6 +126,7 @@ Overflow overflow_axis(const Node* node, bool horizontal);
 RectF overflow_clip(const Node* node, const RectF& box);
 void update_scroll_layout(Document& doc);
 bool set_scroll(Node* node, float x, float y);
+void reveal_node(Node* node, int block, int inline_alignment, bool only_if_needed, bool nearest_container);
 
 // Shared visual geometry/order keeps painting, links and hit-testing consistent.
 inline RectF visual_box(const Node* n,float ox,float oy){

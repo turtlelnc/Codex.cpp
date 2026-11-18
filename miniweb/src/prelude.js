@@ -490,6 +490,8 @@
     set defaultChecked(v) { if(v)this.setAttribute('checked','');else this.removeAttribute('checked'); }
     get disabled() { return this.hasAttribute('disabled'); }
     set disabled(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); }
+    get hidden() { return this.getAttribute('hidden')==='until-found'?'until-found':this.hasAttribute('hidden'); }
+    set hidden(v) { if(v)this.setAttribute('hidden',v==='until-found'?'until-found':'');else this.removeAttribute('hidden'); }
     get selected() { return this.hasAttribute('selected'); }
     set selected(v) { if (v) this.setAttribute('selected', ''); else this.removeAttribute('selected'); }
     get placeholder() { return this.getAttribute('placeholder') || ''; }
@@ -521,13 +523,21 @@
       return { x: x, y: y, left: x, top: y, width: w, height: h, right: x + w, bottom: y + h };
     }
     getClientRects() { return [this.getBoundingClientRect()]; }
-    focus() { focusControl(this); }
+    focus(options) { focusControl(this,!!(options&&options.preventScroll)); }
     blur() { if (activeControl === this) focusControl(null); }
     click() { activate(this, 0, 0, false); }
     reset() { if(this.tagName==='FORM')resetForm(this); }
     scrollTo(x,y) { var p=scrollArguments(x,y,this.scrollLeft,this.scrollTop,false);changeScroll(this,p[0],p[1]); }
     scrollBy(x,y) { var p=scrollArguments(x,y,this.scrollLeft,this.scrollTop,true);changeScroll(this,p[0],p[1]); }
-    scrollIntoView() { N.unsupported('Element.scrollIntoView', 'automatic reveal is not supported; use scrollTo or scrollBy'); }
+    scrollIntoView(options) {
+      if(options!=null&&typeof options!=='object'&&typeof options!=='function')options={block:options?'start':'end'};
+      options=options||{};
+      var positions=['start','center','end','nearest'],block=options.block===undefined?'start':String(options.block),inline=options.inline===undefined?'nearest':String(options.inline);
+      var behavior=options.behavior===undefined?'auto':String(options.behavior),container=options.container===undefined?'all':String(options.container);
+      if(positions.indexOf(block)<0||positions.indexOf(inline)<0||['auto','instant','smooth'].indexOf(behavior)<0||['all','nearest'].indexOf(container)<0){N.log('warn','Ignored invalid scrollIntoView options');return;}
+      if(behavior==='smooth')N.unsupported('smooth scrolling','scrollIntoView uses an instant fallback');
+      N.reveal(this.__id,positions.indexOf(block),positions.indexOf(inline),false,container==='nearest');
+    }
     attachShadow() { N.unsupported('Element.attachShadow', 'shadow DOM is not supported'); return null; }
     getRootNode() { var n = this; while (n.parentNode) n = n.parentNode; return n; }
     animate() { N.unsupported('Element.animate', 'Web Animations are not supported'); return { cancel: function () {}, finish: function () {}, play: function () {}, pause: function () {} }; }
@@ -1086,7 +1096,7 @@
     n.__userEdited=false;n.__focusValue=n.value;
     if(changed)n.dispatchEvent(new Event('change',{bubbles:true}));
   }
-  function focusControl(n) {
+  function focusControl(n,preventScroll) {
     forgetDetachedFocus();
     if (n && !focusable(n)) return;
     if (n === activeControl) return;
@@ -1104,6 +1114,7 @@
     if (n) {
       n.__focusValue = n.value; n.__userEdited=false;
       if (typeof n.selectionStart !== 'number') n.selectionStart = n.selectionEnd = 0;
+      if(!preventScroll)N.reveal(n.__id,1,3,true,false);
       n.dispatchEvent(new FocusEvent('focus', { relatedTarget: old }));
       if(revision!==focusRevision)return;
       n.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: old }));
