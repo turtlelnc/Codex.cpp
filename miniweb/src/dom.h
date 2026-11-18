@@ -36,6 +36,7 @@ struct Node {
     float scroll_x = 0, scroll_y = 0, scroll_width = 0, scroll_height = 0;
     mutable uint64_t visual_cache_revision = 0;
     mutable RectF visual_cache;
+    mutable Node* inline_layout_owner = nullptr;
 
     bool is_element() const { return type == NodeType::Element; }
     bool is_text() const { return type == NodeType::Text; }
@@ -77,11 +78,13 @@ struct Node {
     std::string src() const;
     RectF absolute_rect() const;
     RectF viewport_rect() const;
+    RectF client_rect() const;
 };
 
 struct Document {
     uint64_t revision = 0;
     uint64_t visual_revision = 1;
+    uint64_t inline_geometry_revision = 0;
     std::set<int> pending_scroll_events;
     int focused_id = 0;
     std::deque<Node> arena;

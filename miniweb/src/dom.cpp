@@ -523,7 +523,8 @@ bool set_scroll(Node* n,float x,float y){
 }
 
 void reveal_node(Node* n,int block,int inline_alignment,bool only_if_needed,bool nearest_container){
-    if(!n||!n->doc||!n->layout.has_box||block<0||block>3||inline_alignment<0||inline_alignment>3)return;
+    if(!n||!n->doc||block<0||block>3||inline_alignment<0||inline_alignment>3)return;
+    n->client_rect();if(!n->layout.has_box&&!n->inline_layout_owner)return;
     auto& doc=*n->doc;
     auto delta=[&](float start,float end,float low,float high,int alignment){
         const float a=start-low,b=end-high,size=end-start,port=high-low;
@@ -535,11 +536,11 @@ void reveal_node(Node* n,int block,int inline_alignment,bool only_if_needed,bool
         return (a<0&&size<=port)||(b>0&&size>port)?a:b;
     };
     Node* current=n;
-    for(Node* ancestor=n==doc.html?n:n->parent;ancestor;current=ancestor,ancestor=ancestor->parent){
+    for(Node* ancestor=n==doc.html?n:n->layout.has_box?n->layout.parent:n->inline_layout_owner;ancestor;current=ancestor,ancestor=ancestor->layout.parent){
         if(viewport_fixed(current))break;
         const bool root=ancestor==doc.html;
         if(ancestor->layout.has_box&&(root||scrollable(ancestor,true)||scrollable(ancestor,false))){
-            const auto target=n->viewport_rect();
+            const auto target=n->client_rect();
             const auto port=root?RectF{0,0,float(doc.viewport_w),float(doc.viewport_h)}:padding_box(ancestor,ancestor->viewport_rect());
             const float x=root?doc.scroll_x:ancestor->scroll_x,y=root?doc.scroll_y:ancestor->scroll_y;
             const float dx=(root||scrollable(ancestor,true))?delta(target.x,target.right(),port.x,port.right(),inline_alignment):0;
@@ -549,4 +550,29 @@ void reveal_node(Node* n,int block,int inline_alignment,bool only_if_needed,bool
         }
         if(root)break;
     }
+}
+
+RectF Node::client_rect() const {
+    if(layout.has_box)return viewport_rect();
+    if(!doc||!is_element()||style.display!=Display::Inline){inline_layout_owner=nullptr;return {};}
+    if(doc->inline_geometry_revision!=doc->visual_revision){
+        // Build all inline unions once per visual revision, not once per query.
+        for(auto& n:doc->arena)if(!n.layout.has_box){n.visual_cache={};n.visual_cache_revision=doc->visual_revision;n.inline_layout_owner=nullptr;}
+        auto common=[](Node* a,Node* b){for(auto* x=a;x;x=x->layout.parent)for(auto* y=b;y;y=y->layout.parent)if(x==y)return x;return static_cast<Node*>(nullptr);};
+        std::function<void(Node*)> visit=[&](Node* owner){
+            if(!owner||!owner->layout.has_box)return;
+            auto box=owner->viewport_rect();const float x=box.x+owner->layout.content_x-owner->scroll_x,y=box.y+owner->layout.content_y-owner->scroll_y;
+            for(const auto& line:owner->layout.lines)for(const auto& item:line.items){
+                if(!item.node||item.w<=0||item.h<=0)continue;RectF fragment{x+item.x,y+item.y,item.w,item.h};
+                for(auto* target=item.node;target;target=target->parent){
+                    if(!target->is_element()||target->layout.has_box||target->style.display!=Display::Inline)continue;
+                    if(!target->inline_layout_owner){target->inline_layout_owner=owner;target->visual_cache=fragment;}
+                    else{auto& r=target->visual_cache;const float right=std::max(r.right(),fragment.right()),bottom=std::max(r.bottom(),fragment.bottom());r.x=std::min(r.x,fragment.x);r.y=std::min(r.y,fragment.y);r.w=right-r.x;r.h=bottom-r.y;target->inline_layout_owner=common(target->inline_layout_owner,owner);}
+                }
+            }
+            for(auto* child:owner->layout.box_children)visit(child);
+        };
+        visit(doc->html);doc->inline_geometry_revision=doc->visual_revision;
+    }
+    return visual_cache_revision==doc->visual_revision?visual_cache:RectF{};
 }

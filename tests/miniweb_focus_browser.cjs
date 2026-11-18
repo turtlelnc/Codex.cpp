@@ -71,6 +71,52 @@ module.exports = async function (browser, probe) {
     await page.keyboard.insertText("!");
     await page.keyboard.press("Escape");
     assert.deepEqual(await state(), native);
+    await page.setContent(
+      fs.readFileSync("miniweb/test/reveal-absolute.html", "utf8"),
+    );
+    for (const id of ["start", "nearest", "focus"]) {
+      await page.locator("#" + id).click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-measure"),
+        id === "focus" ? "[0,570,230]" : "[0,800,0]",
+      );
+    }
+    await page.setContent(
+      fs.readFileSync("miniweb/test/reveal-inline.html", "utf8"),
+    );
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "link");
+    let box = await page.locator("#link").boundingBox();
+    assert(box.width > 0 && Math.abs(box.y + box.height / 2 - 240) < 5);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.equal(await page.locator("body").getAttribute("data-click"), "link");
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.evaluate(() => document.activeElement.id),
+      "inline",
+    );
+    for (const id of ["start", "nearest"]) {
+      await page.locator("#" + id).click();
+      assert(
+        Math.abs(
+          await page
+            .locator("#inline")
+            .evaluate((n) => n.getBoundingClientRect().y),
+        ) < 1,
+      );
+    }
+    await page.locator("#hide").click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-hidden-noop"),
+      "true",
+    );
+    assert.equal(
+      await page
+        .locator("#inline")
+        .evaluate((n) => n.getBoundingClientRect().width),
+      0,
+    );
     console.log(
       "MiniWeb/Chromium form, settings and long-page reveal acceptance passed",
     );

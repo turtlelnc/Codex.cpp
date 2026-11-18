@@ -626,7 +626,7 @@ JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     RectF r;
     if (argc >= 1) {
         Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->viewport_rect();}
+        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->client_rect();}
     }
     JSValue arr = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, arr, 0, JS_NewFloat64(ctx, r.x));
