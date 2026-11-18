@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}[hidden]{display:none!important}html,body{margin:0;padding:0}body{height:2200px;background:#f5f1e7;color:#35312a;font:16px sans-serif}
+#toolbar{position:fixed;top:0;left:0;width:640px;height:60px;background:#e8dfce;z-index:30}
+#toolbar button{position:absolute;width:80px;height:28px;padding:0;font-size:12px}
+#near{position:absolute;top:100px;left:20px;width:150px;height:24px}
+h1{position:absolute;left:20px;top:64px;margin:0;font-size:20px}
+#panel{position:absolute;top:600px;left:20px;width:200px;height:100px;overflow:auto;background:white}
+#content{width:400px}#far{display:block;position:relative;left:120px;width:100px;height:20px;padding:0;border:0;background:#f0ddbd}
+#submit{position:relative;left:120px;display:block;width:100px;height:20px;padding:0;border:0}
+#dialog{position:fixed;left:260px;top:80px;width:300px;height:260px;background:#ece4d4;z-index:50}#dialog h2{margin:8px;font-size:18px}
+#dialog-scroll{position:absolute;left:20px;top:40px;width:260px;height:140px;overflow:auto;background:white}
+#dialog-input{background:#f0ddbd;display:block;width:160px;height:20px;padding:0;border:0}#dialog p{position:absolute;top:190px;left:20px;margin:0}
+</style></head><body><h1>Project preferences</h1><input id="near" value="near"><div id="toolbar"></div>
+<form id="form"><div id="panel"><div id="content"><div style="height:300px"></div><input id="far" value="seed"><button id="submit" type="submit">Save task</button><div style="height:300px"></div></div></div></form>
+<section id="dialog" hidden><h2>Editor settings</h2><div id="dialog-scroll"><div style="height:300px"></div><input id="dialog-input" value="warm"><div style="height:300px"></div></div><p>Esc closes settings</p></section>
+<script>
+var near=document.getElementById('near'),far=document.getElementById('far'),panel=document.getElementById('panel'),dialog=document.getElementById('dialog'),dialogInput=document.getElementById('dialog-input'),submits=0;
+function record(){var r=far.getBoundingClientRect();document.body.setAttribute('data-measure',JSON.stringify({px:panel.scrollLeft,py:panel.scrollTop,wy:scrollY,x:r.x,y:r.y,active:document.activeElement.id,value:far.value,submitted:submits,dialog:!dialog.hidden,dy:document.getElementById('dialog-scroll').scrollTop}))}
+var commands={
+ reset:function(){far.hidden=false;near.focus({preventScroll:true});panel.scrollTo(0,0);scrollTo(0,0)},
+ start:function(){far.scrollIntoView()},end:function(){far.scrollIntoView(false)},
+ nearest:function(){far.scrollIntoView({block:'nearest',inline:'nearest'})},center:function(){far.scrollIntoView({block:'center',inline:'center'})},
+ container:function(){far.scrollIntoView({container:'nearest'})},prevent:function(){far.focus({preventScroll:true})},
+ settings:function(){dialog.hidden=false;dialogInput.focus()},
+ hidden:function(){far.hidden=true;far.focus();far.scrollIntoView()},detached:function(){document.createElement('input').scrollIntoView()},
+ invalid:function(){try{far.scrollIntoView({block:'invalid'})}catch(e){document.body.setAttribute('data-invalid',e.name)}},
+ formreset:function(){document.getElementById('form').reset()}
+};
+Object.keys(commands).forEach(function(id,i){var b=document.createElement('button');b.id=id;b.type='button';b.setAttribute('tabindex','-1');b.textContent=id;b.style.cssText='left:'+(i%8*80)+'px;top:'+(Math.floor(i/8)*30)+'px';b.addEventListener('click',function(){commands[id]();record()});document.getElementById('toolbar').appendChild(b)});
+document.getElementById('form').addEventListener('submit',function(e){e.preventDefault();++submits;record()});
+document.addEventListener('focusin',record);panel.addEventListener('scroll',record);window.addEventListener('scroll',record);
+dialog.addEventListener('keydown',function(e){if(e.key==='Escape'){dialog.hidden=true;near.focus({preventScroll:true});record()}});
+near.focus({preventScroll:true});record();
+</script></body></html>

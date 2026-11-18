@@ -1,0 +1,11 @@
+<!doctype html><html><head><style>
+html,body{margin:0;font:16px Arial,sans-serif;line-height:20px}body{height:2400px}[hidden]{display:none!important}p{margin:0}button{position:fixed;top:0;width:90px;height:24px}#start{left:300px}#nearest{left:400px}#hide{left:500px}
+</style></head><body><div style="height:1200px"></div><p><a id="link" href="#done">Open <span>release notes</span></a></p><div style="height:400px"></div><span id="inline" tabindex="0">More settings</span><div style="height:600px"></div><button id="start" tabindex="-1">Start</button><button id="nearest" tabindex="-1">Nearest</button><button id="hide" tabindex="-1">Hide</button>
+<script>
+var link=document.getElementById('link'),inline=document.getElementById('inline');
+function record(){var r=inline.getBoundingClientRect();document.body.setAttribute('data-measure',JSON.stringify([scrollY,r.y,r.width,r.height]))}
+link.onclick=function(e){e.preventDefault();document.body.setAttribute('data-click','link')};inline.onclick=function(){document.body.setAttribute('data-click','inline')};
+document.getElementById('start').onclick=function(){inline.scrollIntoView();record()};
+document.getElementById('nearest').onclick=function(){inline.scrollIntoView({container:'nearest'});record()};
+document.getElementById('hide').onclick=function(){inline.hidden=true;inline.getBoundingClientRect();var before=scrollY;inline.scrollIntoView();document.body.setAttribute('data-hidden-noop',String(scrollY===before));record()};
+</script></body></html>

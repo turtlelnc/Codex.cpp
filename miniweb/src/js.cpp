@@ -626,7 +626,7 @@ JSValue js_rect(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     RectF r;
     if (argc >= 1) {
         Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->viewport_rect();}
+        if (n) {auto* ancestor=n;while(ancestor->parent)ancestor=ancestor->parent;auto* b=bridge(ctx);if(b&&ancestor==b->doc->root)r=n->client_rect();}
     }
     JSValue arr = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, arr, 0, JS_NewFloat64(ctx, r.x));
@@ -644,6 +644,12 @@ JSValue js_scroll(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     bool root=n==b->doc->html;auto& d=*b->doc;const auto& l=n->layout;
     double values[]={root?d.scroll_x:n->scroll_x,root?d.scroll_y:n->scroll_y,root?d.scroll_width:n->scroll_width,root?d.scroll_height:n->scroll_height,root?double(d.viewport_w):double(std::max(0.0f,l.border.w-l.border_left-l.border_right)),root?double(d.viewport_h):double(std::max(0.0f,l.border.h-l.border_top-l.border_bottom))};
     auto arr=JS_NewArray(ctx);for(int i=0;i<6;++i)JS_SetPropertyUint32(ctx,arr,i,JS_NewFloat64(ctx,n->layout.has_box?values[i]:0));return arr;
+}
+
+JSValue js_reveal(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if(!refresh_geometry(ctx))return JS_EXCEPTION;
+    if(argc>=5)reveal_node(node_of(ctx,arg_i32(ctx,argv[0])),arg_i32(ctx,argv[1]),arg_i32(ctx,argv[2]),JS_ToBool(ctx,argv[3])>0,JS_ToBool(ctx,argv[4])>0);
+    return JS_UNDEFINED;
 }
 
 JSValue js_scroll_events(JSContext* ctx, JSValueConst, int, JSValueConst*) {
@@ -783,6 +789,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("resetControl", 1, js_reset_control),
     bridge_function("scroll", 3, js_scroll),
     bridge_function("scrollEvents", 0, js_scroll_events),
+    bridge_function("reveal", 5, js_reveal),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),

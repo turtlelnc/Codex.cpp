@@ -147,3 +147,7 @@ or unsupported; see [session limits](MINIWEB.md#persistent-interaction-sessions)
 ### Native scroll state
 
 Scroll offsets now live with native nodes/document rather than JS expandos. Painting, hit testing and DOM viewport rectangles share that state. `scroll.html` covers nested horizontal/vertical offsets, sticky insets, fixed elements, clipping, clamping, event cancellation and ancestor chaining. Chromium compares the same geometry and click actions; isolated-session tests verify screenshots retain offsets. See MINIWEB.md for explicit unsupported behaviors.
+
+### Reveal acceptance
+
+focus-reveal.html exercises a long-page form, a nested scroll area and fixed settings panel. Native and Chromium flows cover Tab/type/submit/reset, start/end/center/nearest alignment, nearest-container-only scrolling, preventScroll, hidden/detached/invalid requests, Escape close and background scroll preservation. Native pixel checks ensure the controls are actually painted where geometry reports them. HTMLElement.hidden reflects its attribute rather than storing an unrelated expando. The existing screenshot and session APIs are unchanged.
