@@ -58,6 +58,7 @@ private:
 
     bool interact(const std::string& code);
     bool flush_scroll_events();
+    bool settle_frame();
     void collect_stylesheets();
     void apply_styles();
     void do_layout();

@@ -152,6 +152,22 @@ Scroll offsets now live with native nodes/document rather than JS expandos. Pain
 
 focus-reveal.html exercises a long-page form, a nested scroll area and fixed settings panel. Native and Chromium flows cover Tab/type/submit/reset, start/end/center/nearest alignment, nearest-container-only scrolling, preventScroll, hidden/detached/invalid requests, Escape close and background scroll preservation. Native pixel checks ensure the controls are actually painted where geometry reports them. HTMLElement.hidden reflects its attribute rather than storing an unrelated expando. The existing screenshot and session APIs are unchanged.
 
+### Bounded observer acceptance
+
+`observers.html`, `observer-records.html`, `observer-resize.html` and
+`observer-feedback.html` exercise real DOM mutation records, prior attribute/text
+values, sibling references, grouped replacement, subtree removal, filtering,
+`takeRecords()`, disconnect, callback exceptions and resize feedback. Chromium
+compares complete record/state snapshots and content/border dimensions. The
+native regression also runs these cases on all platforms and under ASan;
+self-triggering mutation callbacks must yield and remain disconnectable.
+
+Mutation delivery uses intrinsic Promise microtasks, not a DOM-wide diff. Native
+hooks journal only mutations under observed roots; the journal is drained after
+native mutation calls. Resize delivery reads actual layout once a host frame is
+settled. Neither API adds a background thread, network access or a new runtime.
+See [observer limits](MINIWEB.md#observers) before relying on browser semantics.
+
 ### Live-task cascade and marker regression
 
 The DeepSeek-generated offline task page is retained as `live-task.html` with its

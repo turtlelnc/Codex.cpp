@@ -537,7 +537,7 @@ JSValue js_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
 JSValue js_set_text(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 2) return JS_UNDEFINED;
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
-    if (n && (n->type == NodeType::Text || n->type == NodeType::Comment)) {n->data = arg_str(ctx, argv[1]);if(n->doc)++n->doc->revision;}
+    if (n && (n->type == NodeType::Text || n->type == NodeType::Comment)) {n->set_data(arg_str(ctx, argv[1]));}
     return JS_UNDEFINED;
 }
 
@@ -552,7 +552,7 @@ JSValue js_set_text_content(JSContext* ctx, JSValueConst, int argc, JSValueConst
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
     if (!n) return JS_UNDEFINED;
     std::string text = arg_str(ctx, argv[1]);
-    if (n->type == NodeType::Text || n->type == NodeType::Comment) {n->data = text;if(n->doc)++n->doc->revision;}
+    if (n->type == NodeType::Text || n->type == NodeType::Comment) {n->set_data(text);}
     else n->set_text_content(text);
     return JS_UNDEFINED;
 }
@@ -570,8 +570,7 @@ JSValue js_set_inner_html(JSContext* ctx, JSValueConst, int argc, JSValueConst* 
     if (!n) return JS_UNDEFINED;
     std::string html = arg_str(ctx, argv[1]);
     auto kids = parse_html_fragment(*b->doc, html);
-    n->remove_all_children();
-    for (auto* k : kids) n->append_child(k);
+    n->replace_children(kids);
     b->doc->recompute_head_body();
     return JS_UNDEFINED;
 }
@@ -615,7 +614,19 @@ JSValue js_set_style(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     Node* n = node_of(ctx, arg_i32(ctx, argv[0]));
     if (!n) return JS_UNDEFINED;
     std::string css = n->attr("style");
-    set_style_prop(css, arg_str(ctx, argv[1]), arg_str(ctx, argv[2]));
+    const auto property = arg_str(ctx, argv[1]), value = arg_str(ctx, argv[2]);
+    const auto name = util::starts_with(property, "--") ? property : util::to_lower(property);
+    unsigned matches = 0;
+    bool unchanged = false;
+    for (const auto& declaration : parse_style_decls(css)) {
+        if (declaration.name != name) continue;
+        ++matches;
+        unchanged = declaration.value == util::trim(value);
+    }
+    // A last textual value is insufficient: an earlier !important declaration
+    // may still win. Let the existing setter resolve duplicate declarations.
+    if ((matches == 1 && unchanged) || (matches == 0 && value.empty())) return JS_UNDEFINED;
+    set_style_prop(css, property, value);
     n->set_attr("style", css);
     return JS_UNDEFINED;
 }
@@ -656,6 +667,89 @@ JSValue js_reveal(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
 JSValue js_scroll_events(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     auto* b=bridge(ctx);std::set<int> pending;if(b)pending.swap(b->doc->pending_scroll_events);
     std::vector<int> ids;for(int id:pending){auto* n=id>0&&size_t(id)<b->doc->id_map.size()?b->doc->id_map[id]:nullptr;if(n&&n->layout.has_box)ids.push_back(id);}return array_of_ids(ctx,ids);
+}
+
+JSValue js_capture_mutations(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    auto* b = bridge(ctx);
+    if (!b) return JS_UNDEFINED;
+    std::set<int> roots;
+    if (argc && JS_IsArray(argv[0])) {
+        auto length = JS_GetPropertyStr(ctx, argv[0], "length");
+        uint32_t size = 0;
+        JS_ToUint32(ctx, &size, length);
+        JS_FreeValue(ctx, length);
+        if (size > 4096) return JS_ThrowRangeError(ctx, "MutationObserver registration budget exceeded");
+        for (uint32_t i = 0; i < size; ++i) {
+            auto value = JS_GetPropertyUint32(ctx, argv[0], i);
+            int id = arg_i32(ctx, value);
+            JS_FreeValue(ctx, value);
+            if (node_of(ctx, id)) roots.insert(id);
+        }
+    }
+    auto& d = *b->doc;
+    d.mutation_roots.swap(roots);
+    d.capture_mutations = !d.mutation_roots.empty();
+    if (!d.capture_mutations) {
+        d.mutations.clear();
+        d.mutation_bytes = 0;
+        d.mutation_overflow = false;
+    }
+    return JS_UNDEFINED;
+}
+
+JSValue js_mutations(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    auto* b = bridge(ctx);
+    if (!b) return JS_NewArray(ctx);
+    auto& d = *b->doc;
+    if (d.mutation_overflow) {
+        d.mutation_overflow = false;
+        return JS_ThrowRangeError(ctx, "MutationObserver native record budget exceeded");
+    }
+    std::vector<MutationChange> changes;
+    changes.swap(d.mutations);
+    d.mutation_bytes = 0;
+    auto result = JS_NewArray(ctx);
+    uint32_t i = 0;
+    for (const auto& m : changes) {
+        auto record = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, record, "type", str_val(ctx, m.type));
+        JS_SetPropertyStr(ctx, record, "target", JS_NewInt32(ctx, m.target));
+        JS_SetPropertyStr(ctx, record, "name", m.name.empty() ? JS_NULL : str_val(ctx, m.name));
+        JS_SetPropertyStr(ctx, record, "old", m.old_present ? str_val(ctx, m.old_value) : JS_NULL);
+        JS_SetPropertyStr(ctx, record, "ancestors", array_of_ids(ctx, m.ancestors));
+        JS_SetPropertyStr(ctx, record, "added", array_of_ids(ctx, m.added));
+        JS_SetPropertyStr(ctx, record, "removed", array_of_ids(ctx, m.removed));
+        JS_SetPropertyStr(ctx, record, "previous", JS_NewInt32(ctx, m.previous));
+        JS_SetPropertyStr(ctx, record, "next", JS_NewInt32(ctx, m.next));
+        JS_SetPropertyUint32(ctx, result, i++, record);
+    }
+    return result;
+}
+
+JSValue js_observer_turn(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+    auto* b = bridge(ctx);
+    return JS_NewBool(ctx, b && b->owner && b->owner->consume_observer_turn());
+}
+
+JSValue js_resize_metrics(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    if (!refresh_geometry(ctx)) return JS_EXCEPTION;
+    auto* n = argc ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
+    if (!n) return JS_UNDEFINED;
+    const auto& l = n->layout;
+    bool box = l.has_box;
+    unsigned depth = 0;
+    for (auto* p = n; p; p = p->parent) ++depth;
+    double values[] = {
+        box ? l.content_w : 0, box ? l.content_h : 0,
+        box ? l.border.w : 0, box ? l.border.h : 0,
+        box ? l.padding_left : 0, box ? l.padding_top : 0, double(depth),
+        n->style.display == Display::Inline && !box ? 1.0 : 0.0,
+        n->is_element("svg") ? 1.0 : 0.0
+    };
+    auto result = JS_NewArray(ctx);
+    for (uint32_t i = 0; i < 9; ++i)
+        JS_SetPropertyUint32(ctx, result, i, JS_NewFloat64(ctx, values[i]));
+    return result;
 }
 
 JSValue js_computed(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
@@ -791,6 +885,10 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("scroll", 3, js_scroll),
     bridge_function("scrollEvents", 0, js_scroll_events),
     bridge_function("reveal", 5, js_reveal),
+    bridge_function("captureMutations", 1, js_capture_mutations),
+    bridge_function("mutations", 0, js_mutations),
+    bridge_function("observerTurn", 0, js_observer_turn),
+    bridge_function("resizeMetrics", 1, js_resize_metrics),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),
@@ -942,6 +1040,7 @@ void JsRuntime::dump_exception(const char* where) {
 }
 
 void JsRuntime::drain_jobs() {
+    observer_turns_=0;
     auto* ctx = static_cast<JSContext*>(ctx_);
     auto* rt = static_cast<JSRuntime*>(rt_);
     for (int i = 0; i < 10000; i++) {

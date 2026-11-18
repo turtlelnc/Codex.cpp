@@ -54,7 +54,7 @@ JSON shape remains unchanged.
 - `ignored_css`: properties and values with no implementation, such as `filter`, `text-shadow`, unknown `display` values and vendor-prefixed properties.
 - `approximate`: features implemented only approximately, such as basic inset-only `position:sticky`, complex fixed-position stacking, inline containing blocks, clipping across stacking groups, transforms beyond `translate`, `display:contents`, automatic table column distribution and auto-width tables nested in cells.
 - `structural`: constructs that affect layout but are dropped, such as table captions, `col`/`colgroup`, `rowspan`/`colspan`, collapsed borders and `inline-table`.
-- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as smooth scroll animation, shadow DOM, observers and Web Animations.
+- `missing_js`: stubbed methods and unknown element properties or globals observed at runtime, such as smooth scroll animation, shadow DOM, IntersectionObserver and Web Animations.
 
 Counts are encounter counts from rendering (including replayed clicks), not precise usage counts. The report is best-effort: it cannot enumerate every gap, and absence of an entry is not proof of support. Treat layout and rendering near reported features as unreliable, and do not rewrite valid page code to accommodate them.
 
@@ -72,7 +72,7 @@ automatic-minimum-size warnings. These repairs do not implement all CSS algorith
 For new pages explicitly targeting this renderer, see the bounded
 [design profile and actual-page assessment](MINIWEB_DESIGN_PROFILE.md).
 
-A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, complex fixed/sticky behavior, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/observers, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
+A screenshot is **not Chromium-equivalent verification**. The supplied engine has known structural gaps: general transforms/stacking contexts, complex fixed/sticky behavior, advanced table layout (see above), advanced Grid placement, pseudo-elements, web fonts/icon fonts, complex text shaping/emoji, Canvas/WebGL, dynamic imports/IntersectionObserver, iframe/media and Shadow DOM. React/Vue examples exercise only a subset. A correctly implemented site can look wrong here; do not rewrite valid application code just to match MiniWeb. Prefer a real browser for final acceptance of modern WebUI.
 
 This integration does not claim the whole Codex.cpp WebUI works inside MiniWeb. It requires server RPC and CSS/browser APIs beyond this file-only renderer. Tests use actual supported local pages, pixel probes and negative access-control cases. Remaining feature work is tracked separately from integration reliability.
 
@@ -199,6 +199,41 @@ HTMLElement.hidden now reflects the HTML attribute, so scripted settings panels 
 This is basic rectangular reveal, not complete CSSOM View: no scroll-margin/padding, smooth animation, caret-in-textarea scrolling, occlusion detection or RTL/vertical-writing alignment. Complex transformed/stacked clipping remains approximate. Acceptance uses focus-reveal.html plus existing form/settings/long-page suites, native visible-pixel checks and real Chromium keyboard/mouse actions.
 
 Reveal walks the actual layout ancestor chain, so absolute targets do not scroll unrelated DOM wrappers. Text-bearing inline links and tabindex elements use unions of rendered line fragments for client geometry and reveal; the inline geometry index is built once per visual revision and refreshed after scrolling/layout. Empty inlines with no rendered fragments, exact inline border/padding metrics and full getClientRects fragmentation remain outside this subset.
+
+## Observers
+
+MiniWeb implements a bounded subset of `MutationObserver` and `ResizeObserver`.
+
+- MutationObserver supports real native Document/Element/Text/Comment targets,
+  child lists, attributes, character data, subtree, old values and attribute
+  filters. Records contain actual nodes and sibling references. Delivery is
+  batched in Promise microtasks; `takeRecords()`, re-observe and `disconnect()`
+  are supported. Removed subtrees remain observable until their pending
+  notification is delivered. Callback exceptions are logged without preventing
+  other observers from running.
+- ResizeObserver supports HTML `content-box` and `border-box`, initial entries,
+  hidden/restored elements, `unobserve()` and `disconnect()`. It uses layout
+  dimensions, including padding/borders, rather than inferring changes from CSS
+  strings. Position-only changes do not trigger it. Same-depth resize feedback
+  is deferred with an error event and the usual undelivered-notifications message.
+- Rendering remains host-driven: open/render, actions and explicit advance settle
+  a resize frame; there is no independent wall-clock browser event loop. Mutation
+  feedback yields after 64 notification rounds per job drain and resumes on the
+  next host action/frame. Disconnect clears deferred records.
+- Each API permits 64 active observers and 1,024 target registrations. Mutation
+  journal/queued records are bounded to 4,096 records and approximately 2 MiB;
+  removed-subtree registrations are bounded too. Exceeding a capture/queue limit
+  raises a RangeError rather than silently claiming full delivery. The DOM change
+  itself can already have completed. Existing script/worker limits still apply.
+
+This is not complete browser compatibility: synthetic DocumentFragment targets,
+namespace-aware attributes, Shadow DOM, cross-document adoption, full platform
+record/NodeList/DOMRect prototypes and browser event-loop timing are unsupported.
+Fragment insertion and same-node replace/insert record grouping can differ.
+Resize SVG and device-pixel-content-box are explicitly rejected and diagnosed;
+vertical writing modes, fragmented boxes and transformed dimensions are not
+covered. IntersectionObserver remains a diagnosed stub. Full framework support
+must be verified against a real browser rather than inferred from these APIs.
 
 ## Author styles and list markers
 
