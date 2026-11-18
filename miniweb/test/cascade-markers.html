@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>Cascade origins and marker visibility</title>
+<style>
+html,body { margin:0; background:white; color:black; font:16px Arial,sans-serif; }
+input { position:absolute; top:20px; width:120px; height:44px; padding:0; border:2px solid #e8703a; box-sizing:border-box; }
+#class-rule { left:20px; } #tag-rule { left:180px; } #inline-rule { left:340px; }
+.field { height:44px; }
+.important { height:36px !important; }
+#important-rule { top:80px; left:20px; } #inline-important { top:80px; left:180px; }
+ul { position:absolute; margin:0; padding:0; width:140px; }
+li { height:24px; line-height:24px; }
+#none { left:40px; top:180px; list-style:none; }
+#default { left:220px; top:180px; }
+#restored { list-style-type:disc; }
+#inherited { list-style-type:inherit; }
+#initial { list-style-type:initial; }
+#unset { list-style:unset; }
+#type-none { list-style-type:none; }
+#shorthand { list-style:none outside; }
+#mixed { list-style:none disc outside; }
+#invalid { list-style:none; list-style:disc disc; }
+#toggle { position:absolute; left:20px; top:370px; width:180px; height:32px; }
+</style>
+<input id="class-rule" class="field" type="text"><input id="tag-rule" type="search">
+<input id="inline-rule" type="text" style="height:40px">
+<input id="important-rule" class="important" type="text" style="height:80px">
+<input id="inline-important" class="important" type="text" style="height:32px!important">
+<input id="hidden" hidden type="text">
+<ul id="none"><li id="suppressed">No marker</li><li id="restored">Restored</li><li id="inherited">Inherited none</li><li id="initial">Initial disc</li><li id="unset">Unset none</li></ul>
+<ul id="default"><li id="control">Default disc</li><li id="type-none">Type none</li><li id="shorthand">Shorthand none</li><li id="mixed">Image none, type disc</li><li id="invalid">Ignore invalid</li></ul>
+<button id="toggle">Toggle markers</button>
+<script>
+document.getElementById('toggle').onclick = function () {
+  document.getElementById('none').style.listStyleType = this.getAttribute('data-on') === 'yes' ? 'none' : 'disc';
+  this.setAttribute('data-on', this.getAttribute('data-on') === 'yes' ? 'no' : 'yes');
+  document.body.setAttribute('data-marker', getComputedStyle(document.getElementById('suppressed')).listStyleType);
+};
+</script>

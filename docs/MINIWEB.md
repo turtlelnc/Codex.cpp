@@ -199,3 +199,19 @@ HTMLElement.hidden now reflects the HTML attribute, so scripted settings panels 
 This is basic rectangular reveal, not complete CSSOM View: no scroll-margin/padding, smooth animation, caret-in-textarea scrolling, occlusion detection or RTL/vertical-writing alignment. Complex transformed/stacked clipping remains approximate. Acceptance uses focus-reveal.html plus existing form/settings/long-page suites, native visible-pixel checks and real Chromium keyboard/mouse actions.
 
 Reveal walks the actual layout ancestor chain, so absolute targets do not scroll unrelated DOM wrappers. Text-bearing inline links and tabindex elements use unions of rendered line fragments for client geometry and reveal; the inline geometry index is built once per visual revision and refreshed after scrolling/layout. Empty inlines with no rendered fragments, exact inline border/padding metrics and full getClientRects fragmentation remain outside this subset.
+
+## Author styles and list markers
+
+Normal author declarations override built-in UA defaults before selector
+specificity is compared. Inline/important ordering within the author origin is
+preserved, and UA-important rules retain higher priority than author-important
+rules. This repairs cases where default input dimensions, borders or padding
+incorrectly beat page styles. It does not add cascade layers or full revert
+semantics.
+
+The existing unordered-list painter now honors inherited `list-style-type:none`
+and `disc`, including the supported `list-style` shorthand, CSS-wide keywords
+and dynamic style changes. `getComputedStyle().listStyleType` reports this subset.
+Inside positioning remains an explicitly reported approximation; custom images,
+other marker shapes, counters and general `display:list-item` layout remain
+unsupported. These fixes do not establish complete CSS or browser equivalence.

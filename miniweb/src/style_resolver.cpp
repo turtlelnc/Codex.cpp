@@ -30,6 +30,7 @@ h4 { font-size: 1em; font-weight: bold; margin: 1.33em 0; }
 h5 { font-size: 0.83em; font-weight: bold; margin: 1.67em 0; }
 h6 { font-size: 0.67em; font-weight: bold; margin: 2.33em 0; }
 ul, ol { margin: 1em 0; padding-left: 40px; }
+ul { list-style-type: disc; }
 li { display: block; }
 a { color: #0000ee; text-decoration: underline; }
 strong, b { font-weight: bold; }
@@ -62,6 +63,7 @@ struct DeclItem {
     std::string value;
     bool important = false;
     bool inline_style = false;
+    bool user_agent = false;
     int spec_id = 0, spec_class = 0, spec_tag = 0;
     int order = 0;
     int index = 0;
@@ -218,7 +220,7 @@ float parse_float_value(const std::string& s, float def = 0) {
 bool is_inherited_prop(const std::string& p) {
     return p == "color" || p == "font-family" || p == "font-size" || p == "font-weight" ||
            p == "font-style" || p == "line-height" || p == "text-align" || p == "white-space" ||
-           p == "border-spacing" || p == "visibility" || p == "letter-spacing" || p == "text-transform" ||
+           p == "list-style" || p == "list-style-type" || p == "border-spacing" || p == "visibility" || p == "letter-spacing" || p == "text-transform" ||
            util::starts_with(p, "font") || util::starts_with(p, "text-");
 }
 
@@ -248,6 +250,7 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
     else if (p == "line-height") st.line_height = Length{};
     else if (p == "text-align") st.text_align = TextAlign::Left;
     else if (p == "white-space") st.white_space = WhiteSpace::Normal;
+    else if (p == "list-style" || p == "list-style-type") st.list_marker = true;
     else if (p == "visibility") st.visibility = Visibility::Visible;
     else if (p == "opacity") st.opacity = 1;
     else if (p == "width") st.width = Length{};
@@ -320,6 +323,7 @@ bool inherit_prop(ComputedStyle& st, const std::string& p, const ComputedStyle* 
     else if (p == "line-height") st.line_height = parent->line_height;
     else if (p == "text-align") st.text_align = parent->text_align;
     else if (p == "white-space") st.white_space = parent->white_space;
+    else if (p == "list-style" || p == "list-style-type") st.list_marker = parent->list_marker;
     else if (p == "visibility") st.visibility = parent->visibility;
     else if (p == "letter-spacing") st.letter_spacing = parent->letter_spacing;
     else if (p == "text-transform") st.text_transform = parent->text_transform;
@@ -801,6 +805,32 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
     if (p == "display") {
         st.display = parse_display(vl);
         report_display_value(vl);
+    }
+    else if (p == "list-style-type") {
+        if (vl == "none" || vl == "disc") st.list_marker = vl == "disc";
+        else diag::ignored_css(p, v);
+    }
+    else if (p == "list-style") {
+        bool disc = false, inside = false, position = false, invalid = false;
+        unsigned none = 0;
+        const auto tokens = split_ws_paren(vl);
+        for (const auto& token : tokens) {
+            if (token == "none") ++none;
+            else if (token == "disc" && !disc) disc = true;
+            else if ((token == "inside" || token == "outside") && !position) {
+                position = true;
+                inside = token == "inside";
+            } else invalid = true;
+        }
+        // A single none sets the type to none; alongside disc it sets only
+        // the image to none. Preserve a previous declaration for invalid input.
+        if (invalid || tokens.empty() || none > (disc ? 1u : 2u)) {
+            diag::ignored_css(p, v);
+            return;
+        }
+        st.list_marker = disc || none == 0;
+        if (inside && st.list_marker)
+            diag::approximate("list-style-position:inside uses outside marker", v);
     }
     else if (p == "position") {
         if (vl == "relative") st.position = Position::Relative;
@@ -1294,13 +1324,14 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         st.is_root = node == doc.html;
 
         std::vector<DeclItem> items;
-        auto add_rule_decls = [&](const CssRule& rule, int spec_id, int spec_class, int spec_tag) {
+        auto add_rule_decls = [&](const CssRule& rule, int spec_id, int spec_class, int spec_tag, bool user_agent) {
             for (size_t k = 0; k < rule.declarations.size(); k++) {
                 DeclItem it;
                 it.decl = &rule.declarations[k];
                 it.name = rule.declarations[k].name;
                 it.value = rule.declarations[k].value;
                 it.important = rule.declarations[k].important;
+                it.user_agent = user_agent;
                 it.spec_id = spec_id;
                 it.spec_class = spec_class;
                 it.spec_tag = spec_tag;
@@ -1310,7 +1341,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
             }
         };
 
-        auto consider_sheet = [&](const Stylesheet& sheet) {
+        auto consider_sheet = [&](const Stylesheet& sheet, bool user_agent) {
             for (auto& rule : sheet.rules) {
                 bool matched = false;
                 int bi = -1, bc = -1, bt = -1;
@@ -1322,11 +1353,11 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
                         else if (sel.spec_id == bi && sel.spec_class == bc && sel.spec_tag > bt) { bt = sel.spec_tag; }
                     }
                 }
-                if (matched) add_rule_decls(rule, bi, bc, bt);
+                if (matched) add_rule_decls(rule, bi, bc, bt, user_agent);
             }
         };
-        consider_sheet(ua);
-        for (auto& sheet : sheets) consider_sheet(sheet);
+        consider_sheet(ua, true);
+        for (auto& sheet : sheets) consider_sheet(sheet, false);
 
         auto inline_decls = parse_inline_style(node->attr("style"));
         for (size_t k = 0; k < inline_decls.size(); k++) {
@@ -1345,7 +1376,12 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         }
 
         std::stable_sort(items.begin(), items.end(), [](const DeclItem& a, const DeclItem& b) {
-            if (a.important != b.important) return !a.important;
+            // Origin precedes specificity. Important origin order is reversed:
+            // UA normal < author normal < author important < UA important.
+            auto rank = [](const DeclItem& d) {
+                return d.important ? (d.user_agent ? 3 : 2) : (d.user_agent ? 0 : 1);
+            };
+            if (rank(a) != rank(b)) return rank(a) < rank(b);
             if (a.inline_style != b.inline_style) return !a.inline_style;
             if (a.spec_id != b.spec_id) return a.spec_id < b.spec_id;
             if (a.spec_class != b.spec_class) return a.spec_class < b.spec_class;

@@ -188,7 +188,7 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
 
     if (!n->is_element("textarea")) for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
 
-    if (visible && n->is_element("li")) {
+    if (visible && n->is_element("li") && n->style.list_marker) {
         Node* p = n->parent;
         bool unordered = p && p->is_element("ul");
         if (unordered) {

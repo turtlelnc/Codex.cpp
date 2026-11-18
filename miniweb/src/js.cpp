@@ -238,6 +238,7 @@ std::string align_css(AlignItems a) {
 std::string prop_css(const Node* n, const std::string& prop) {
     const ComputedStyle& st = n->style;
     if (prop == "display") return display_css(st.display);
+    if (prop == "list-style-type") return st.list_marker ? "disc" : "none";
     if (prop == "table-layout") return st.table_fixed ? "fixed" : "auto";
     if (prop == "border-spacing") {const auto x=util::format_float(st.border_spacing_x,2)+"px";return st.border_spacing_x==st.border_spacing_y?x:x+" "+util::format_float(st.border_spacing_y,2)+"px";}
     if (prop == "vertical-align") {
