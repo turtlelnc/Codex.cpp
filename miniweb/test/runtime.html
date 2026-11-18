@@ -1,4 +1,4 @@
-<!doctype html><html><head><style>#sized{width:100px;height:20px}</style></head><body>
+<!doctype html><html><head><style>#sized{width:100px;height:20px}</style><template><div><script>document.body && document.body.setAttribute("data-template-ran","yes");</script></div></template></head><body>
 <div id="hidden-parent"><div id="hidden-child" style="width:123px;height:10px"></div></div><div id="sized"></div><div id="siblings"><i id="a"></i><i id="b"></i><i id="c"></i></div>
 <script>
 var out=document.body, sized=document.getElementById('sized');
@@ -25,4 +25,4 @@ var once=0, repeat=0, id=setInterval(function(){once++;clearInterval(id);out.set
 setInterval(function(){repeat++;out.setAttribute('data-repeat',repeat);},100);
 setTimeout(function(){out.setAttribute('data-late','bad');},1000);
 setTimeout(function(){Promise.resolve().then(function(){setTimeout(function(){out.setAttribute('data-microtask-clock',__mwTimerNow());},0);});},0);
-</script></body></html>
+</script><template><script>document.body.setAttribute("data-template-ran","yes");</script></template></body></html>

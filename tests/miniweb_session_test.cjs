@@ -43,6 +43,9 @@ module.exports = async function sessionTests(binary) {
     path.resolve("miniweb/test/scroll.html"),
     path.join(root, "scroll.html"),
   );
+  fs.writeFileSync(path.join(root, "missing-styles.html"),
+    '<link rel="stylesheet" href="missing-a.css"><link rel="stylesheet" href="missing-b.css">' +
+    '<link rel="stylesheet" href="missing-c.css"><button>Click</button>');
   const peers = [];
   function peer() {
     const child = spawn(binary, ["preview", "session"], {
@@ -135,6 +138,17 @@ module.exports = async function sessionTests(binary) {
       return;
     }
     const id = token(first);
+    const retry = await p.request({ operation: "click", session: id, x: 640 });
+    assert.equal(retry.exit_code, 2);
+    assert.match(retry.output, /outside bounds/);
+
+    const missing = peer();
+    const missingId = token(await missing.request({ path: "missing-styles.html" }));
+    for (let i = 0; i < 90; ++i) {
+      const r = await missing.request({ operation: "click", session: missingId, x: 20, y: 20 });
+      assert.equal(r.exit_code, 0, r.output);
+    }
+    assert.equal((await missing.request({ operation: "close", session: missingId })).exit_code, 0);
     const act = async (operation, fields = {}) => {
       let r = await p.request({ operation, session: id, ...fields });
       assert.equal(r.exit_code, 0, r.output);
@@ -314,6 +328,7 @@ module.exports = async function sessionTests(binary) {
     denied = await p.request({ operation: "wait", session: quota });
     assert.notEqual(denied.exit_code, 0);
     assert.match(denied.output, /budget|expired/);
+    await p.request({ operation: "close", session: quota });
     const inputBudget = token(await p.request({}));
     await p.request({ operation: "key", session: inputBudget, value: "Tab" });
     for (let i = 0; i < 7; i++) {
@@ -331,6 +346,7 @@ module.exports = async function sessionTests(binary) {
     });
     assert.notEqual(denied.exit_code, 0);
     assert.match(denied.output, /budget/);
+    await p.request({ operation: "close", session: inputBudget });
     const invalid = token(await p.request({}));
     denied = await p.request({
       operation: "key",

@@ -7,6 +7,7 @@
 #include "layout.h"
 #include "loader.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -52,7 +53,7 @@ private:
     FontManager fonts_;
     ImageCache images_;
     std::vector<Stylesheet> sheets_;
-    std::unordered_map<std::string,std::string> stylesheet_cache_;
+    std::unordered_map<std::string, std::optional<std::string>> stylesheet_cache_;
     std::unique_ptr<Canvas> canvas_;
     std::vector<LinkHit> links_;
 
