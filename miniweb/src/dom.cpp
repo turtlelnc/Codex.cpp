@@ -563,8 +563,10 @@ RectF Node::client_rect() const {
             if(!owner||!owner->layout.has_box)return;
             auto box=owner->viewport_rect();const float x=box.x+owner->layout.content_x-owner->scroll_x,y=box.y+owner->layout.content_y-owner->scroll_y;
             for(const auto& line:owner->layout.lines)for(const auto& item:line.items){
-                if(!item.node||item.w<=0||item.h<=0)continue;RectF fragment{x+item.x,y+item.y,item.w,item.h};
+                if(!item.node||item.w<=0||item.h<=0)continue;RectF fragment=item.kind==LineItem::BoxItem&&item.box?item.box->viewport_rect():RectF{x+item.x,y+item.y,item.w,item.h};
                 for(auto* target=item.node;target;target=target->parent){
+                    // Enclosing inline elements receive the outer BoxItem, not its internals.
+                    if(target!=item.node&&target->layout.has_box)break;
                     if(!target->is_element()||target->layout.has_box||target->style.display!=Display::Inline)continue;
                     if(!target->inline_layout_owner){target->inline_layout_owner=owner;target->visual_cache=fragment;}
                     else{auto& r=target->visual_cache;const float right=std::max(r.right(),fragment.right()),bottom=std::max(r.bottom(),fragment.bottom());r.x=std::min(r.x,fragment.x);r.y=std::min(r.y,fragment.y);r.w=right-r.x;r.h=bottom-r.y;target->inline_layout_owner=common(target->inline_layout_owner,owner);}

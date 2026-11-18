@@ -37,6 +37,11 @@ void check_reveal(const std::filesystem::path& directory,bool report){
  check(text.key("Tab")&&text.document()->focused_id==inl->id&&text.document()->scroll_y>1300,"Tab reveals focusable inline span");
  for(const char* id:{"start","nearest"}){auto r=text.document()->get_element_by_id(id)->viewport_rect();check(text.click(r.x+10,r.y+10)&&std::abs(inl->client_rect().y)<1,"Explicit inline reveal uses fragment owner scroll chain");}
  const float previous=text.document()->scroll_y;auto hide=text.document()->get_element_by_id("hide")->viewport_rect();check(text.click(hide.x+10,hide.y+10)&&inl->client_rect().w==0&&text.document()->scroll_y==previous,"Hidden inline fragments cannot reveal stale geometry");
+ Engine atomic(640,480);atomic.set_wait_ms(0);check(atomic.load((directory/"reveal-atomic.html").u8string(),&error)&&atomic.render(false)&&atomic.key("Tab")&&atomic.render(false),"Atomic inline reveal fixture");
+ auto* outer=atomic.document()->get_element_by_id("outer");auto* box=atomic.document()->get_element_by_id("box");auto visible=box->viewport_rect();
+ check(outer->client_rect().h<=110&&std::abs(outer->client_rect().y-visible.y)<1&&visible.y>=0&&visible.bottom()<=480&&box->scroll_y==0,"Clipped internal text cannot inflate enclosing inline link geometry");
+ check(atomic.click(visible.x+10,visible.y+10)&&atomic.document()->body->attr("data-click")=="outer","Atomic inline link remains visible and clickable");
+ check(atomic.key("Tab")&&atomic.document()->focused_id==atomic.document()->get_element_by_id("inner")->id&&box->scroll_y>900&&outer->client_rect().h<=110,"Inner inline target still reveals within atomic scroller without contaminating outer bounds");
  if(report)std::cout<<"REVEAL_RESULT "<<d->body->attr("data-measure")<<"\n";
  std::cerr<<"MiniWeb focus/reveal acceptance passed\n";
 }

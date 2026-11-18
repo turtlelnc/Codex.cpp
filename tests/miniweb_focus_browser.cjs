@@ -117,6 +117,23 @@ module.exports = async function (browser, probe) {
         .evaluate((n) => n.getBoundingClientRect().width),
       0,
     );
+    await page.setContent(
+      fs.readFileSync("miniweb/test/reveal-atomic.html", "utf8"),
+    );
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "outer");
+    const atomicBox = await page.locator("#box").boundingBox();
+    assert(atomicBox.y >= 0 && atomicBox.y + atomicBox.height <= 480);
+    assert.equal(await page.locator("#box").evaluate((n) => n.scrollTop), 0);
+    await page.mouse.click(atomicBox.x + 10, atomicBox.y + 10);
+    assert.equal(
+      await page.locator("body").getAttribute("data-click"),
+      "outer",
+    );
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "inner");
+    assert((await page.locator("#box").evaluate((n) => n.scrollTop)) > 900);
     console.log(
       "MiniWeb/Chromium form, settings and long-page reveal acceptance passed",
     );
