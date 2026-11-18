@@ -244,13 +244,15 @@ private:
     void parse_start_tag() {
         Tag t = parse_tag();
         if (!t.valid) { pos++; return; }
-        if (fragment) {
-            // No implicit html/head/body in fragments.
+        const bool in_template = std::any_of(stack.begin(), stack.end(),
+            [](const Node* node) { return node->is_element("template"); });
+        if (fragment || in_template) {
+            // Template content must stay under the template, including in head.
             Node* parent = current();
             Node* el = doc.create_element(t.name);
             apply_attrs(el, t);
             parent->append_child(el);
-            collect_special(el);
+            if (!in_template) collect_special(el);
             if (is_void_tag(t.name) || t.self_closing) return;
             if (is_raw_text_tag(t.name)) {
                 parse_raw_text(el, t.name);

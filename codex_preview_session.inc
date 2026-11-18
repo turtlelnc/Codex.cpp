@@ -57,7 +57,9 @@ class PreviewSessionTool final:public ToolRuntime {
     }
   }
   ToolResult perform(const std::string& args,const fs::path& root,const std::function<void()>& tick,bool watch){
-    std::string token;try{
+    std::string token;
+    bool action_started = false;
+    try{
       auto request=parse_json(args);if(!request||request->kind!=Json::Object)throw std::runtime_error("Invalid session arguments");
       auto field=[&](const char* name){auto p=request->get(name);if(!p)return std::string{};if(p->kind!=Json::String)throw std::runtime_error("Expected string: "+std::string(name));return p->value;};
       const auto operation=field("operation");token=field("session");const auto owner=fs::canonical(root);const auto now=Clock::now();
@@ -86,6 +88,7 @@ class PreviewSessionTool final:public ToolRuntime {
       }else if(operation=="wait")frame+=" "+std::to_string(integer(*request,"wait_ms",0,0,3000));
       else if(operation!="screenshot")throw std::runtime_error("Unknown preview session operation");
       if(s.sequence>=128||s.bytes+frame.size()>128*1024)throw std::runtime_error("Session cumulative action/input budget exceeded");
+      action_started = true;
       ++s.sequence;s.bytes+=frame.size();s.touched=now;std::string error;
       if(!s.process.send(frame+"\n",error))throw std::runtime_error(error);
       await(s,s.sequence,tick,watch);
@@ -93,7 +96,7 @@ class PreviewSessionTool final:public ToolRuntime {
       const auto output=s.scratch/"screenshot.png";std::error_code ec;if(!fs::is_regular_file(fs::symlink_status(output,ec))||ec||fs::hard_link_count(output)!=1)throw std::runtime_error("Invalid session image artifact");
       std::string why;auto image=image_data_url(output,why);if(!image)throw std::runtime_error(why);auto metadata=preview_metadata(s.scratch/"screenshot.png.report.json");
       return {0,metadata.first+" Experimental MiniWeb persistent session; not Chromium verification."+diagnostics(s),{*image}};
-    }catch(const std::exception& e){const bool closed=!token.empty()&&sessions.erase(token)>0;return {std::string(e.what())=="Session interrupted"?130:2,std::string("Preview session: ")+e.what()+(closed?"; session closed":"")};}
+    }catch(const std::exception& e){const bool closed=action_started&&sessions.erase(token)>0;return {std::string(e.what())=="Session interrupted"?130:2,std::string("Preview session: ")+e.what()+(closed?"; session closed":"")};}
   }
 public:
   std::string name()const override{return "preview_session";}

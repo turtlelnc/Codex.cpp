@@ -75,10 +75,14 @@ void Engine::collect_stylesheets() {
                 const auto url=doc_->resolve(node->attr("href"));auto cached=stylesheet_cache_.find(url);
                 if(cached==stylesheet_cache_.end()){
                     auto loaded=loader_->load_absolute(url);
-                    if(loaded.ok)cached=stylesheet_cache_.emplace(url,std::move(loaded.data)).first;
-                    else util::warn("stylesheet load failed (%s): %s",url.c_str(),loaded.error.c_str());
+                    // Keep failed loads for this document, just like successful loads.
+                    std::optional<std::string> source;
+                    if (loaded.ok) source = std::move(loaded.data);
+                    else util::warn("stylesheet load failed (%s): %s", url.c_str(), loaded.error.c_str());
+                    cached = stylesheet_cache_.emplace(url, std::move(source)).first;
                 }
-                if(cached!=stylesheet_cache_.end())sheets_.push_back(parse_css(cached->second,url,viewport_w_,viewport_h_,&order));
+                if (cached->second)
+                    sheets_.push_back(parse_css(*cached->second, url, viewport_w_, viewport_h_, &order));
             }
         }
         for(auto* child:node->children)visit(child);
