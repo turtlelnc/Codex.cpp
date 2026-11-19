@@ -102,6 +102,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; probe=build/miniweb/Release/miniweb-regression.exe; fi
           "$probe" miniweb/test/structural.html
           node tests/miniweb_test.cjs "$binary"
+          node tests/isolated_plugin_test.cjs "$binary"
       - name: Verify concurrent read-only side conversations
         shell: bash
         run: |

@@ -845,7 +845,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
+struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
@@ -911,6 +911,7 @@ Agent options:
   --design                      enable Design instructions and review
   --no-tools                    discussion-only mode; reject tool calls
   --max-steps N                 agent step limit (default: 64)
+  --isolated-plugin ABSOLUTE_LIBRARY  enable the isolated read-only plugin tool
   --mcp-config PATH             trusted MCP stdio server configuration JSON
   --image PATH                  attach an image to the next prompt (repeatable)
   -h, --help
@@ -940,6 +941,7 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
   if(a == "--session-dir" && i + 1 < argc){o.session_store=fs::absolute(fs::u8path(argv[++i]));continue;}
+  if(a == "--isolated-plugin"){if(i+1==argc){err="Missing isolated plugin library";return std::nullopt;}o.isolated_plugin_library=fs::u8path(argv[++i]);continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a=="--design"){o.design=true;continue;}
@@ -1057,6 +1059,7 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_team_tui.inc"
 #include "codex_plugin_creator.inc"
 #include "codex_preview.inc"
+#include "codex_plugin_isolated.inc"
 #include "codex_portable.inc"
 #include "codex_update.inc"
 #include "codex_local_web.inc"
@@ -1081,12 +1084,14 @@ int main(int argc,char** argv){
   std::vector<std::string> utf8_arguments;for(int i=0;i<wide_count;++i)utf8_arguments.push_back(fs::path(wide_args[i]).u8string());LocalFree(wide_args);
   std::vector<char*> utf8_pointers;for(auto& value:utf8_arguments)utf8_pointers.push_back(value.data());utf8_pointers.push_back(nullptr);argc=wide_count;argv=utf8_pointers.data();
 #endif
+  if(argc>1&&std::string(argv[1])=="--isolated-plugin-worker")return isolated_plugin::worker(argc,argv);
   if(argc>1&&std::string(argv[1])=="--miniweb-worker")return codex_miniweb_worker(argc,argv);
   if(argc>1&&std::string(argv[1])=="--miniweb-session-worker")return codex_miniweb_session_worker(argc,argv);
 #if !defined(_WIN32)
   ::signal(SIGPIPE,SIG_IGN); // Includes preview CLI persistent pipes.
 #endif
   preview_self=native_web::executable(argv[0]);
+  if(argc>2&&std::string(argv[1])=="plugin"&&std::string(argv[2])=="isolated-run")return isolated_plugin::cli(argc,argv);
   std::vector<char*> portable_storage;try{portable_arguments(argc,argv,portable_storage);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}
   if(argc>1&&std::string(argv[1])=="preview"){try{portable::activate();return preview_cli(argc,argv);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}}
   updater::self=native_web::executable(argv[0]);
@@ -1128,6 +1133,10 @@ Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std:
 if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p){return p.enabled&&p.manifest.get("ui");}))router.add<PluginUiTool>();router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 router.add<GitReadTool>();router.add<GitWriteTool>();
 router.add<PluginScaffoldTool>();router.add<PluginCheckTool>();router.add<PluginBuildTool>();router.add<PluginTestTool>();
+if (!opt.isolated_plugin_library.empty()) {
+  try { router.add_dynamic(std::make_unique<isolated_plugin::ReadTool>(opt.isolated_plugin_library)); }
+  catch (const std::exception& e) { std::cerr << "Isolated plugin: " << e.what() << '\n'; return 2; }
+}
 for(const auto& tool:plugin_tools)router.add_dynamic(std::make_unique<PluginTool>(tool));
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;

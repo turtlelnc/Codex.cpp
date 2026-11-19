@@ -357,3 +357,24 @@ WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和�
 ### 实验性内嵌页面预览
 
 `codex-cpp preview shot index.html -o preview.png --width 1280 --height 800` 使用同一可执行文件内的 MiniWeb 生成截图，不依赖 Chromium、Python 或 Node.js。Agent 可用 `preview_screenshot` 获取图片并回传支持视觉的模型。它只读取工作区本地资源，禁止网络，需要可用的 OS 沙箱；Windows 当前明确拒绝执行。CSS/DOM 仅支持部分能力，不能作为真实浏览器兼容性验收。预览会附带能力报告，指出本次渲染中忽略或仅近似实现的 CSS 属性、结构性布局构造和缺失的 JS API；`--report FILE` 可导出完整 JSON。完整边界、命令和已知缺口见 [MiniWeb 文档](docs/MINIWEB.md)。
+
+### 只读隔离插件试点
+
+在 Linux 或 macOS 上，用 `--isolated-plugin /absolute/path/to/module.so`
+为本地 CLI Agent 启用一个 `isolated_plugin_read` 工具。macOS 可传入 dylib。
+插件实现 [isolated.h](plugin/isolated.h) 中的 `codex_plugin_read_v1`。
+宿主每次读取调用指定的一份工作区文件，把字节交给新启动的 Codex.cpp
+沙箱子进程，并将其标准输出作为工具结果。显式启用这个插件意味着允许
+Agent 将符合规则的工作区文件交给它处理。
+
+可以用 CLI 独立验证，无需模型连接。
+
+```sh
+codex-cpp plugin isolated-run /absolute/module.so /absolute/workspace relative-file.txt
+```
+
+单次输入与输出各限 64 KiB。宿主拒绝目录穿越、链接及受保护路径。
+子进程使用私有临时目录、只读模块副本和系统运行时文件，
+不挂载工作区，网络由现有 OS 沙箱隔离。插件崩溃或超时会作为工具失败返回。
+Windows 目前拒绝执行，`--unsafe-execution` 也不能启用这个工具。
+该 ABI 只支持逐次的文件转换，不支持长驻状态、宿主服务调用或现有原生插件 ABI。
