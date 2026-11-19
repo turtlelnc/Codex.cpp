@@ -99,8 +99,8 @@ static Json creator_check(const fs::path& root,const std::string& input,std::map
   for(const auto& name:{"plugin.cpp","native.h","CMakeLists.txt","native.def","README.md"})if(fs::exists(bundle/name,ec)){file(name,true,4*1024*1024);files.push_back(name);}
   size_t total=0;Json hashes;hashes.kind=Json::Object;for(const auto& name:files){file(name,true,32*1024*1024);const auto bytes=name==manifest.filename().u8string()?manifest_bytes:creator_read(bundle,name,32*1024*1024);total+=bytes.size();if(total>128*1024*1024)throw std::runtime_error("Plugin review exceeds 128 MB");hashes.fields[name]=plugin_string(native_web::digest(bytes));if(captured)(*captured)[name]=bytes;}
   const auto fingerprint=native_web::digest(json_dump(hashes));
-  std::vector<std::string> launch={plugin_creator_self.u8string(),"--plugin-reviewed",fs::absolute(manifest).lexically_normal().u8string(),fingerprint,"web","--root",fs::weakly_canonical(root).u8string()};
-  auto report=plugin_object({{"creator",plugin_bool(true)},{"id",plugin_string(id)},{"kind",plugin_string(native?"native":"web")},{"status",plugin_string(native&&!built?"needs_build":"static_checked")},{"built",plugin_bool(built)},{"enabled",plugin_bool(plugin_runtime().has_module(id))},{"manifest",plugin_string(fs::weakly_canonical(manifest).u8string())},{"manifest_relative",plugin_string(manifest.lexically_relative(fs::absolute(root)).generic_u8string())},{"files",creator_array(files)},{"sha256",hashes},{"services",creator_array(services)},{"requires",creator_array(dependencies)},{"native_executed",plugin_bool(false)},{"functional_tested",plugin_bool(false)},{"requires_restart",plugin_bool(true)},{"launch_args",creator_array(launch)},{"launch_command",plugin_string(creator_command(launch))},{"notes",plugin_string("This check did not activate or change any plugin. Command is a local WebUI example. For hosted services the administrator must preserve --plugin-reviewed and its fingerprint in the original startup configuration and restart. No activation has occurred.")}});
+  const std::vector<std::string> launch;
+  auto report=plugin_object({{"creator",plugin_bool(true)},{"id",plugin_string(id)},{"kind",plugin_string(native?"native":"web")},{"status",plugin_string(native&&!built?"needs_build":"static_checked")},{"built",plugin_bool(built)},{"enabled",plugin_bool(plugin_runtime().has_module(id))},{"manifest",plugin_string(fs::weakly_canonical(manifest).u8string())},{"manifest_relative",plugin_string(manifest.lexically_relative(fs::absolute(root)).generic_u8string())},{"files",creator_array(files)},{"sha256",hashes},{"services",creator_array(services)},{"requires",creator_array(dependencies)},{"native_executed",plugin_bool(false)},{"functional_tested",plugin_bool(false)},{"requires_restart",plugin_bool(true)},{"launch_args",creator_array(launch)},{"launch_command",plugin_string(creator_command(launch))},{"notes",plugin_string("Static review only. Legacy runtime activation is disabled. Use plugin test for isolated ABI verification.")}});
   report.fields["library"]=plugin_string(library);report.fields["review_sha256"]=plugin_string(fingerprint);report.fields["security_reviewed"]=plugin_bool(false);report.fields["activation_authorized"]=plugin_bool(false);return report;
 }
 static void plugin_load_reviewed(const fs::path& path,const std::string& fingerprint){
@@ -119,6 +119,19 @@ static void plugin_load_reviewed(const fs::path& path,const std::string& fingerp
   if(path.parent_path().parent_path().filename().u8string().rfind("codex-private-",0)==0)process_protected_paths.push_back(fs::canonical(path.parent_path()));
   // Never reopen the mutable source bundle after comparing the user's pin.
   plugin_load_manifest(manifest);
+}
+static int creator_probe_worker(int argc, char** argv) {
+  if (argc != 4) return 2;
+  try {
+    plugin_builtins();
+    plugin_load_reviewed(fs::u8path(argv[2]), argv[3]);
+    plugin_runtime().freeze();
+    std::cout << plugin_inspect() << '\n';
+    return 0;
+  } catch (const std::exception& e) {
+    std::cerr << "Plugin probe: " << e.what() << '\n';
+    return 2;
+  }
 }
 static Json creator_scaffold(const fs::path& root,const std::string& path,const std::string& id,const std::string& kind){
   if(!creator_id(id))throw std::runtime_error("Invalid Plugin id");if(kind!="native"&&kind!="web")throw std::runtime_error("Plugin kind must be native or web");
@@ -192,7 +205,7 @@ static ToolResult creator_test(const fs::path& root,const std::string& path,cons
   const auto manifest=fs::u8path(plugin_text(report,"manifest"));const auto fingerprints=report.get("sha256");
   CreatorSnapshot snapshot;const auto directory=snapshot.path;std::string error;
   for(const auto& entry:captured)if(!write_all(directory/fs::u8path(entry.first),entry.second,error))throw std::runtime_error(error);
-  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;policy.pinned_directory=fs::canonical(directory);auto tested=creator_process({plugin_creator_self.u8string(),"--plugin-reviewed",(directory/manifest.filename()).u8string(),plugin_text(report,"review_sha256"),"plugin","inspect"},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==plugin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
+  ProcessPolicy policy;policy.role=ProcessRole::Helper;policy.workspace=directory;policy.no_fork=true;policy.pinned_directory=fs::canonical(directory);auto tested=creator_process({plugin_creator_self.u8string(),"--creator-plugin-probe-worker",(directory/manifest.filename()).u8string(),plugin_text(report,"review_sha256")},policy,10,tick,watch);if(tested.exit_code)return {tested.exit_code,tested.output};auto graph=parse_json(trim(tested.output));if(!graph||graph->kind!=Json::Array)return {2,"Native probe did not return a valid service graph"};bool found=false;for(const auto& entry:graph->items)if(plugin_string(entry,"owner")==plugin_text(report,"id"))found=true;if(!found)return {2,"Native probe registered no plugin services"};
   if(json_dump(creator_check(root,path).fields.at("sha256"))!=json_dump(*fingerprints))throw std::runtime_error("Plugin changed during probe; rerun verification");
   report.fields["status"]=plugin_string("native_probe_passed");report.fields["native_executed"]=plugin_bool(true);report.fields["probe_scope"]=plugin_string("read-only isolated subprocess; ABI registration only");report.fields["notes"]=plugin_string("ABI registration passed in an isolated process. Tool/UI behavior remains unverified; plugin is not enabled in this service.");return {0,json_dump(report)};
 }catch(const std::exception& e){return {2,e.what()};}}

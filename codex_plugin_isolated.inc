@@ -17,16 +17,34 @@ static int worker(int argc, char** argv) {
   const rlimit memory{512ull * 1024 * 1024, 512ull * 1024 * 1024};
   if (setrlimit(RLIMIT_AS, &memory)) return 2;
 #endif
-  std::string input(input_limit + 1, '\0');
-  std::cin.read(input.data(), static_cast<std::streamsize>(input.size()));
-  if (!std::cin.eof() || std::cin.bad()) return 2;
-  input.resize(static_cast<size_t>(std::cin.gcount()));
   void* library = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
   if (!library) return 3;
-  const auto handler = reinterpret_cast<decltype(&codex_plugin_read_v1)>(
-      dlsym(library, "codex_plugin_read_v1"));
-  if (!handler) return 3;
-  const int result = handler(input.data(), input.size());
+  const auto v2 = reinterpret_cast<decltype(&codex_plugin_read_v2)>(
+      dlsym(library, "codex_plugin_read_v2"));
+  bool requested = false;
+  auto read = [](void* context, char* buffer, size_t capacity, size_t* actual) -> int {
+    auto& used = *static_cast<bool*>(context);
+    if (used || !buffer || !actual || capacity < input_limit) return 1;
+    used = true;
+    std::cout << "READ\n" << std::flush;
+    std::cin.read(buffer, static_cast<std::streamsize>(input_limit));
+    if (std::cin.bad()) return 1;
+    *actual = static_cast<size_t>(std::cin.gcount());
+    return 0;
+  };
+  int result;
+  if (v2) {
+    const CodexIsolatedReadV2 broker{&requested, read};
+    result = v2(&broker);
+  } else {
+    const auto v1 = reinterpret_cast<decltype(&codex_plugin_read_v1)>(
+        dlsym(library, "codex_plugin_read_v1"));
+    if (!v1) return 3;
+    std::string input(input_limit, '\0');
+    size_t size = 0;
+    if (read(&requested, input.data(), input.size(), &size)) return 2;
+    result = v1(input.data(), size);
+  }
   return result == 0 ? 0 : 4;
 #else
   (void)argc; (void)argv;
@@ -35,14 +53,17 @@ static int worker(int argc, char** argv) {
 }
 
 class ReadTool final : public ToolRuntime {
-  std::string library_;
+  std::string library_, identity_;
 public:
-  explicit ReadTool(const fs::path& library) {
+  plugin_permissions::FileRead permissions;
+  plugin_permissions::Prompt prompt;
+  ReadTool(const fs::path& library, const fs::path& workspace) : permissions(workspace) {
     if (!library.is_absolute()) throw std::runtime_error("Isolated plugin requires an absolute library path");
     const auto parent = fs::canonical(library.parent_path());
     if (sensitive_path(parent / library.filename()))
       throw std::runtime_error("Protected isolated plugin path");
     library_ = creator_read(parent, library.filename().u8string(), 32 * 1024 * 1024);
+    identity_ = native_web::digest(library_);
   }
   std::string name() const override { return "isolated_plugin_read"; }
   std::string spec_json() const override {
@@ -61,13 +82,20 @@ public:
       if (!path || path->find('\0') != std::string::npos)
         return {2, "Isolated plugin requires a relative file path"};
       const auto workspace = fs::canonical(root);
-      const auto target = workspace / fs::u8path(*path);
+      const auto relative = fs::u8path(*path);
+      if (relative.empty() || relative.is_absolute() || path->find_first_of("\\:") != std::string::npos)
+        return {2, "Isolated plugin requires a relative file path"};
+      for (const auto& part : relative)
+        if (part.empty() || part == "." || part == "..")
+          return {2, "Isolated plugin path has an invalid component"};
+      const auto target = workspace / relative;
       if (!within_root(workspace, target) || sensitive_path(target))
         return {126, "Isolated plugin file is outside the workspace or protected"};
-      for (const auto& part : fs::u8path(*path))
-        if (part == ".git" || part == ".codex_cpp" || part == ".codex-cpp")
+      for (const auto& part : relative) {
+        const auto folded = portable::folded(part.u8string());
+        if (folded == ".git" || folded == ".codex_cpp" || folded == ".codex-cpp")
           return {126, "Isolated plugin file is protected"};
-      const auto input = creator_read(workspace, *path, input_limit);
+      }
 
       const auto snapshot = execution.private_dir / random_id("isolated-plugin");
       if (!fs::create_directory(snapshot)) return {2, "Cannot create plugin snapshot"};
@@ -87,25 +115,40 @@ public:
       if (!process.start({preview_self.u8string(), "--isolated-plugin-worker", library.u8string()},
                          policy, error))
         return {126, error};
-      if (!process.send(input, error, 1)) return {2, "Isolated plugin input: " + error};
-      process.close_input();
-
-      TerminalInputScope terminal(watch);
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
       std::string output;
       char buffer[4096];
-      bool eof = false;
+      bool eof = false, delivered = false;
+      std::string request;
       while (std::chrono::steady_clock::now() < deadline) {
         if (tick) tick();
 #if !defined(_WIN32)
-        if (tui_interrupt_requested || (watch && busy_input && busy_input("", 0)))
-          return {130, "Isolated plugin interrupted"};
+        if (tui_interrupt_requested) return {130, "Isolated plugin interrupted"};
 #endif
         if (!eof) {
-          const int n = process.receive(buffer, sizeof buffer, 25);
+          int n;
+          {
+            TerminalInputScope terminal(watch);
+#if !defined(_WIN32)
+            if (watch && busy_input && busy_input("", 0)) return {130, "Isolated plugin interrupted"};
+#endif
+            n = process.receive(buffer, delivered ? sizeof buffer : 1, 25);
+          }
           if (n < -1) return {2, "Isolated plugin pipe failed"};
           if (n == -1) eof = true;
-          if (n > 0) {
+          if (n > 0 && !delivered) {
+            request.push_back(buffer[0]);
+            if (std::string_view("READ\n").substr(0, request.size()) != request)
+              return {2, "Invalid isolated plugin request"};
+            if (request == "READ\n") {
+              const auto input = permissions.read(identity_, workspace, relative, prompt, input_limit);
+              if (!input) return {126, "Plugin file.read is not authorized"};
+              if (!process.send(*input, error, 1)) return {2, "Isolated plugin input: " + error};
+              process.close_input();
+              delivered = true;
+              deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            }
+          } else if (n > 0) {
             if (output.size() + static_cast<size_t>(n) > output_limit)
               return {2, "Isolated plugin output exceeds 64 KiB"};
             output.append(buffer, static_cast<size_t>(n));
@@ -113,7 +156,7 @@ public:
         }
         if (eof) {
           const int status = process.wait(25);
-          if (status == 0) return {0, std::move(output)};
+          if (status == 0 && delivered) return {0, std::move(output)};
           if (status >= 0) return {2, "Isolated plugin worker failed (exit " + std::to_string(status) + ")"};
         }
       }
@@ -132,7 +175,7 @@ static int cli(int argc, char** argv) {
   try {
     const auto root = fs::canonical(fs::u8path(argv[4]));
     execution.initialize(root);
-    ReadTool tool(fs::u8path(argv[3]));
+    ReadTool tool(fs::u8path(argv[3]), root);
     const auto result = tool.run("{\"path\":\"" + json_escape(argv[5]) + "\"}", root);
     (result.exit_code ? std::cerr : std::cout) << result.output << '\n';
     return result.exit_code;

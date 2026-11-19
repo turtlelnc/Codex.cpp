@@ -49,6 +49,11 @@ struct PluginRegistry{
     auto manifest=plugin_json(slurp(file,65537));if(!manifest){error="invalid plugin.json";return{};}Plugin p;p.dir=dir;p.manifest=*manifest;
     if(!validate(p)){error=p.error;return{};}return p;
   }
+  static bool has_legacy_code(const Plugin& p) {
+    for (const auto* key : {"libraries", "services", "tools", "web", "mcp", "frontend"})
+      if (p.manifest.get(key)) return true;
+    return false;
+  }
   void load(){entries.clear();errors.clear();enabled_ids.clear();std::error_code state_ec;const auto state_file=plugin_home()/"plugins-enabled.json";auto state=plugin_json(slurp(state_file,16384));
     bool valid_state=state&&state->kind==Json::Array;if(valid_state)for(const auto& item:state->items)if(item.kind!=Json::String||!plugin_id(item.value)){valid_state=false;break;}
     if(valid_state)for(const auto& item:state->items)enabled_ids.insert(item.value); // keep malformed state fail-closed
@@ -58,7 +63,7 @@ struct PluginRegistry{
       if(entry.path().filename().string().front()=='.'||entry.is_symlink(ec)||!entry.is_directory(ec))continue;std::string error;auto p=read(entry.path(),error);
       if(!p){errors.push_back(entry.path().filename().string()+": "+error);continue;}
       if(p->id!=entry.path().filename().string()){errors.push_back(p->id+": folder must match plugin id");continue;}
-      p->enabled=enabled_ids.count(p->id)!=0;if(!configure(*p,error)){p->enabled=false;p->error=error;errors.push_back(p->id+": "+error);}entries.push_back(std::move(*p));}
+      p->enabled=enabled_ids.count(p->id)!=0;if(p->enabled&&has_legacy_code(*p)){p->enabled=false;errors.push_back(p->id+": legacy execution requires migration to an isolated plugin");}if(!configure(*p,error)){p->enabled=false;p->error=error;errors.push_back(p->id+": "+error);}entries.push_back(std::move(*p));}
     if(ec)errors.push_back(ec.message());std::sort(entries.begin(),entries.end(),[](const Plugin& a,const Plugin& b){return a.id<b.id;});
   }
   const Plugin* find(const std::string& id)const{for(const auto& p:entries)if(p.id==id)return &p;return nullptr;}
@@ -66,7 +71,7 @@ struct PluginRegistry{
       if(p.enabled!=(enabled_ids.count(p.id)!=0))out<<" ["<<(enabled_ids.count(p.id)?"enable":"disable")<<" after restart]";
       out<<" — "<<p.description<<"\n  commands="<<p.commands.size()<<" skills="<<(fs::is_directory(p.dir/"skills")?"yes":"no")<<" MCP="<<(p.manifest.get("mcp")?"LOCAL PROCESS":"none")<<"\n";}
     for(const auto& e:errors)out<<"ERROR "<<e<<'\n';return out.str().empty()?"No plugins installed.":out.str();}
-  bool set_enabled(const std::string& id,bool value,std::string& error){if(!find(id)){error="plugin not found";return false;}auto next=enabled_ids;if(value)next.insert(id);else next.erase(id);
+  bool set_enabled(const std::string& id,bool value,std::string& error){const auto* plugin=find(id);if(!plugin){error="plugin not found";return false;}if(value&&has_legacy_code(*plugin)){error="Legacy execution requires migration to an isolated plugin";return false;}auto next=enabled_ids;if(value)next.insert(id);else next.erase(id);
     std::string json="[";for(const auto& name:next){if(json.size()>1)json+=",";json+="\""+json_escape(name)+"\"";}json+="]\n";
     if(!plugin_save(plugin_home()/"plugins-enabled.json",json,error))return false;enabled_ids=std::move(next);return true;}
   static fs::path settings_path(const std::string& id){return plugin_home()/"plugin-settings"/(id+".json");}

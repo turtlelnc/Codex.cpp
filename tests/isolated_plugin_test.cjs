@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const {spawn, spawnSync} = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -16,6 +17,29 @@ async function main() {
   let server;
   try {
     fs.mkdirSync(workspace);
+    const legacy = path.join(root, 'plugin.json');
+    fs.writeFileSync(legacy, JSON.stringify({api: 1, id: 'legacy-probe',
+      libraries: {linux: 'test-module', macos: 'test-module', windows: 'test-module'},
+      services: {'tools.legacy_probe': ''}, web: {entry: 'client.js'}}));
+    for (const flag of [['--plugin', legacy], ['--plugin-reviewed', legacy, '0'.repeat(64)]]) {
+      const rejected = spawnSync(binary, [...flag, 'plugin', 'inspect'],
+        {cwd: workspace, env, encoding: 'utf8', timeout: 12000});
+      assert.equal(rejected.status, 2, rejected.stderr);
+      assert.match(rejected.stderr, /runtime loading is disabled|execution is disabled/);
+    }
+    const installed = path.join(env.CODEX_CPP_HOME, 'plugins', 'legacy-frontend');
+    fs.mkdirSync(installed, {recursive: true});
+    fs.writeFileSync(path.join(installed, 'plugin.json'), JSON.stringify({
+      api: 1, id: 'legacy-frontend', version: '1', frontend: {protocol: 1, command: 'unused', args: []}
+    }));
+    fs.writeFileSync(path.join(env.CODEX_CPP_HOME, 'plugins-enabled.json'), '["legacy-frontend"]');
+    const registry = spawnSync(binary, ['--provider', 'custom', '--base-url', 'http://127.0.0.1:9',
+      '--model', 'fixture', '--no-api-key', '--ui', 'plain', '-i'],
+      {cwd: workspace, env, input: '/plugins list\n/quit\n', encoding: 'utf8', timeout: 12000});
+    assert.equal(registry.status, 0, registry.stderr);
+    assert.match(registry.stdout, /legacy-frontend 1 \[inactive\]/);
+    assert.match(registry.stderr, /requires migration to an isolated plugin/);
+
     fs.writeFileSync(path.join(workspace, 'normal.txt'), 'selected bytes');
     const run = file => spawnSync(binary, ['plugin', 'isolated-run', library, workspace, file],
       {cwd: workspace, env, encoding: 'utf8', timeout: 12000});
@@ -59,6 +83,23 @@ async function main() {
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     fs.writeFileSync(path.join(workspace, 'check.txt'), 'check:' + server.address().port + ' ' + target);
+    const initial = run('normal.txt');
+    assert.equal(initial.status, 126, initial.stderr);
+    assert.match(initial.stderr, /not authorized/);
+    assert.equal(initial.stdout, '');
+
+    // Install trusted fixture grants outside the workspace to exercise the
+    // actual worker and unattended Agent path without a terminal emulator.
+    const storage = path.join(env.CODEX_CPP_HOME, 'isolated-plugin-permissions');
+    const grants = path.join(storage, 'grants.json');
+    const identity = crypto.createHash('sha256').update(fs.readFileSync(library)).digest('hex');
+    const grant = {id: 'fixture', permission: 'file.read', plugin: identity,
+      workspace: fs.realpathSync(workspace), scope: '', directory: true};
+    fs.writeFileSync(grants, JSON.stringify([{...grant, plugin: 'old-version'}]));
+    assert.equal(run('normal.txt').status, 126, 'old version grant must not carry over');
+    fs.writeFileSync(grants, JSON.stringify([{...grant, scope: 'other.txt', directory: false}]));
+    assert.equal(run('normal.txt').status, 126, 'out-of-scope file must be denied');
+    fs.writeFileSync(grants, JSON.stringify([grant]));
     const normal = run('normal.txt');
     assert.equal(normal.status, 0, normal.stderr);
     assert.match(normal.stdout, /selected bytes/);
@@ -87,6 +128,12 @@ async function main() {
     assert.match(tools.find(item => item.tool_call_id === 'crash').content, /worker failed/);
     assert.match(tools.find(item => item.tool_call_id === 'timeout').content, /timed out/);
     assert.match(tools.find(item => item.tool_call_id === 'success').content, /selected bytes/);
+    fs.writeFileSync(grants, '[]');
+    assert.equal(run('normal.txt').status, 126, 'revoked persistent grant must not be reused');
+    const audit = fs.readFileSync(path.join(storage, 'audit.json'), 'utf8');
+    assert.match(audit, /"event":"use"/);
+    assert.match(audit, /"decision":"deny"/);
+    assert(!audit.includes('selected bytes'));
     console.log('PASS isolated plugin input, boundary enforcement, and Agent recovery after crash and timeout');
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));

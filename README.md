@@ -360,21 +360,36 @@ WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和�
 
 ### 只读隔离插件试点
 
-在 Linux 或 macOS 上，用 `--isolated-plugin /absolute/path/to/module.so`
-为本地 CLI Agent 启用一个 `isolated_plugin_read` 工具。macOS 可传入 dylib。
-插件实现 [isolated.h](plugin/isolated.h) 中的 `codex_plugin_read_v1`。
-宿主每次读取调用指定的一份工作区文件，把字节交给新启动的 Codex.cpp
-沙箱子进程，并将其标准输出作为工具结果。显式启用这个插件意味着允许
-Agent 将符合规则的工作区文件交给它处理。
+用 `--isolated-plugin /absolute/path/to/module.so` 为本地 CLI Agent
+启用 `isolated_plugin_read`。Linux 使用共享库，macOS 可使用 dylib。
+[插件 ABI](plugin/isolated.h) 提供 `codex_plugin_read_v2`。插件通过
+`read_selected` 向 Core 申请本次工具调用选定的一个文件。v1 库由
+隔离子进程的适配器提出相同请求。
 
-可以用 CLI 独立验证，无需模型连接。
+启用插件后读取权限默认为空。TUI 在 `on-request` 策略下展示由
+Core 生成的授权提示，默认拒绝。用户可以授权一次，或将指定文件或
+其所在目录授权给当前会话或持久保存。授权绑定模块 SHA-256 和
+工作区。模块字节变更后需要重新授权。无人值守调用只使用已有授权。
+
+在交互终端使用 `/plugin-permissions list` 查看授权，
+`/plugin-permissions revoke GRANT_ID` 撤销，或
+`/plugin-permissions audit` 查看最近 256 条申请、决定、读取和撤销记录。
+审计记录路径和模块摘要，不保存文件内容。撤销阻止后续读取，已交付的
+字节无法收回。权限状态保存在工作区之外的 Codex.cpp 配置目录。
+
+可以用 CLI 验证持久授权，无需模型连接。
 
 ```sh
 codex-cpp plugin isolated-run /absolute/module.so /absolute/workspace relative-file.txt
 ```
 
-单次输入与输出各限 64 KiB。宿主拒绝目录穿越、链接及受保护路径。
-子进程使用私有临时目录、只读模块副本和系统运行时文件，
-不挂载工作区，网络由现有 OS 沙箱隔离。插件崩溃或超时会作为工具失败返回。
-Windows 目前拒绝执行，`--unsafe-execution` 也不能启用这个工具。
-该 ABI 只支持逐次的文件转换，不支持长驻状态、宿主服务调用或现有原生插件 ABI。
+Core 检查并打开选定文件，拒绝目录穿越、链接和受保护路径。输入与
+输出各限 64 KiB。子进程使用私有临时目录、只读模块副本和系统运行时文件，
+不挂载工作区。网络保持由 OS 沙箱隔离。Windows 或禁用 OS 沙箱时拒绝执行。
+当前协议只支持对选定文件的一次读取请求，终端、网络、常驻状态及签名
+发布者身份还不属于试点。现有进程内原生插件使用单独的信任模式。
+
+旧版 `--plugin` 和 `--plugin-reviewed` 的运行时入口已停用。
+安装目录中的旧原生服务、WebUI 脚本、插件附带 MCP 和第三方前端也不能启用。
+声明式元数据、静态检查和包导入仍可用，Creator 的原生 ABI 探测由隔离子进程执行。
+旧版服务覆盖、前端和团队协议兼容插件需要迁移到各自的隔离接口后才能恢复运行。

@@ -40,7 +40,7 @@ return 32; } struct SlashCommandDef{const char* name;const char* description; };
   {"/settings","open shared settings, providers, team and plugins"},{"/provider","choose the model provider"},{"/model","choose what model and reasoning effort to use"},{"/login","sign in with ChatGPT device code"},
   {"/web","open or manage the loopback WebUI"},{"/update","check/download updates in background; install only after confirmation"},{"/auth","show ChatGPT login status"},{"/team","configure team service, accounts and connection"},
   {"/permissions","choose what Codex is allowed to do"},
-  {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},{"/plugin","inspect active native module services"},
+  {"/skills","list available project and user skills"},{"/plugins","manage user plugins"},{"/plugin-permissions","list, audit or revoke isolated plugin permissions"},{"/plugin","inspect active native module services"},
   {"/review","review my current changes and find issues"},
   {"/rename","rename the current thread"},{"/clear(new)","start a new chat and reset context"},{"/archive","archive this session and exit"},
   {"/delete","permanently delete this session and exit"},{"/resume","resume a saved chat"},{"/fork","fork the current chat"},
@@ -148,7 +148,7 @@ int choose(const std::string& title,const std::vector<std::string>& options,size
 #if !defined(_WIN32)
   if(tui_interrupt_requested){result=-1;break;}
 #endif
-  if(k==KEY_RESIZE){render();continue;}if(k==27){result=-1;break;} if(k==KEY_UP){overlay_choice_=(overlay_choice_+static_cast<int>(options.size())-1)%static_cast<int>(options.size());render();continue;}
+  if(k==KEY_RESIZE){render();continue;}if(k==27 || (strict_overlay_ && !overlay_complete_)){result=-1;break;} if(k==KEY_UP){overlay_choice_=(overlay_choice_+static_cast<int>(options.size())-1)%static_cast<int>(options.size());render();continue;}
   if(k==KEY_DOWN){overlay_choice_=(overlay_choice_+1)%static_cast<int>(options.size());render();continue;}
   if(k>='1' && k<='9'){int n=k-'1';if(n<static_cast<int>(options.size())){result=n;break;}}if(k=='\r'||k=='\n'){result=overlay_choice_;break;} }
 #if !defined(_WIN32)
@@ -180,7 +180,13 @@ std::optional<std::string> form_input(const std::string& title,std::string value
 #endif
   watch_resize(false);overlay_active_=false;overlay_options_.clear();overlay_body_.clear();render();return result;
 }
-int settings_menu(const std::string& title,const std::string& body,const std::vector<std::string>& options){overlay_body_=sanitize_text(body);return choose(title,options);}
+int settings_menu(const std::string& title,const std::string& body,const std::vector<std::string>& options,bool require_full_scope=false){
+  overlay_body_=sanitize_text(body);
+  strict_overlay_=require_full_scope;
+  const int result=choose(title,options);
+  strict_overlay_=false;
+  return result;
+}
 bool approval(const std::string& text){overlay_body_=sanitize_text(text);const int choice=choose("Would you like to run this command?",{"Yes, proceed","No, cancel"},0); overlay_body_.clear();return choice==0;
 }
 void render(const std::string& footer = ""){status_ = footer; if(!footer.empty()&&(footer.find("working")!= std::string::npos || footer.find("running")!= std::string::npos)){
@@ -669,11 +675,16 @@ std::vector<std::string> build_frame()const{const size_t cols=std::max<size_t>(1
   const size_t composer_width = cols > left_margin * 2 ? cols - left_margin * 2 : cols;const size_t text_width = composer_width > 4 ? composer_width - 4 : 1;
   const auto composer_all_lines = composer_.empty()? std::vector<std::string>{std::string()}: wrap(composer_,text_width); const size_t wrapped_rows = std::max<size_t>(1,composer_all_lines.size());
   const size_t composer_h = std::min<size_t>(paste_editing_?std::max<size_t>(3,rows>6?rows-6:3):6,std::max<size_t>(3,wrapped_rows + 2));const size_t bottom_h =(has_status ? 1 : 0)+ composer_h + 2 + wrap(status_details_,text_width,std::min<size_t>(6,rows>composer_h+3?rows-composer_h-3:0)).size(); const size_t panel_width=cols>left_margin*2?cols-left_margin*2:cols;
-  const auto approval_lines=overlay_active_?wrap(overlay_body_,panel_width>6?panel_width-6:panel_width,4):std::vector<std::string>{};
+  const auto approval_lines=overlay_active_?wrap(overlay_body_,panel_width>6?panel_width-6:panel_width,strict_overlay_?rows:4):std::vector<std::string>{};
   const size_t panel_wanted=overlay_active_?4+approval_lines.size()+overlay_options_.size():0;
   auto top=top_rows(cols,rows);if(!sidebar&&!overlay_active_&&rows>=18)for(const auto& line:plugin_rows(panel_width,top.size(),left_margin,4))top.push_back(std::string(left_margin,' ')+paint_bg(line,panel_width,"\x1b[48;5;236m"));
   const size_t top_h=top.size();const size_t avail=rows>top_h?rows-top_h:0;
-  const size_t panel_h=avail>bottom_h+1?std::min(panel_wanted,avail-bottom_h-1):0;const size_t content_h=avail>bottom_h+panel_h?avail-bottom_h-panel_h:0;
+  const size_t panel_h=avail>bottom_h+1?std::min(panel_wanted,avail-bottom_h-1):0;overlay_complete_=panel_h==panel_wanted && (!strict_overlay_ ||
+      (approval_lines.size()<rows && panel_width>8 &&
+       std::all_of(overlay_options_.begin(),overlay_options_.end(),[&](const std::string& option){
+         return display_width(option)+8<=panel_width;
+       })));
+  const size_t content_h=avail>bottom_h+panel_h?avail-bottom_h-panel_h:0;
   auto content=content_lines(cols-sidebar_width,left_margin,content_h);for(auto& button:copy_buttons_)button.row+=top_h;size_t y=top_h; for(size_t i=0;i<top_h;++i)f[i]=top[i];for(auto& l:content)if(y<top_h+content_h)f[y++]=l;const size_t base=rows-bottom_h;
   if(mouse_ && !overlay_active_ && composer_commands(composer_).empty())for(const auto& button:copy_buttons_)if(hover_row_==button.row && hover_col_>=button.col && hover_col_<button.col+3){
     auto& row=f[button.row];const auto icon=row.find("⧉");if(icon!=std::string::npos)row.replace(icon,std::string("⧉").size(),"\x1b[22;1;38;5;81;48;5;240m⧉\x1b[0m\x1b[48;5;236m");break;
@@ -754,6 +765,7 @@ void draw_diff(const std::vector<std::string>& frame){
 }
 struct PasteRange{size_t start,length,index;};size_t paste_id_=0;std::vector<std::pair<std::string,std::string>> pastes_;std::vector<PasteRange> active_pastes_;
 std::vector<std::string> steering_,queued_;
+bool strict_overlay_=false;mutable bool overlay_complete_=false;
 bool active_=false,overlay_active_=false,working_=false,assistant_stream_active_=false;size_t assistant_stream_index_=0;
 struct PasteButton{size_t row,col,width,index;};mutable std::vector<PasteButton> paste_buttons_;bool paste_editing_=false,paste_saved_=false;
 struct CopyButton{size_t row,col;std::string text;};mutable std::vector<CopyButton> copy_buttons_;size_t click_row_=0,click_col_=0,hover_row_=size_t(-1),hover_col_=size_t(-1);

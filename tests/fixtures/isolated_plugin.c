@@ -42,3 +42,11 @@ int codex_plugin_read_v1(const char* input, size_t size) {
 #endif
   return fwrite(input, 1, size, stdout) == size ? 0 : 1;
 }
+
+int codex_plugin_read_v2(const CodexIsolatedReadV2* broker) {
+  char bytes[65537];
+  size_t size = 0;
+  if (broker->read_selected(broker->context, bytes, sizeof(bytes) - 1, &size)) return 1;
+  bytes[size] = 0;
+  return codex_plugin_read_v1(bytes, size);
+}
