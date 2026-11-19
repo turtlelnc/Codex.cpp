@@ -12,7 +12,7 @@ void check_cascade_markers(const std::filesystem::path& directory) {
     auto* doc = engine.document();
     for (const auto& item : std::vector<std::pair<const char*, float>>{
              {"class-rule",44}, {"tag-rule",44}, {"inline-rule",40},
-             {"important-rule",36}, {"inline-important",32}, {"hidden",0}}) {
+             {"important-rule",36}, {"inline-important",32}, {"hidden",0}, {"specific-is",40}, {"specific-not",40}}) {
         auto* n = doc->get_element_by_id(item.first);
         if (!n || std::abs(n->viewport_rect().h - item.second) > .01f)
             throw std::runtime_error(std::string("UA/author/inline cascade mismatch: ") + item.first);

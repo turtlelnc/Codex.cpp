@@ -6,7 +6,7 @@ module.exports = async function(browser, probe, binary) {
   try {
     const fixture = path.resolve('miniweb/test/cascade-markers.html');
     const ids = ['class-rule','tag-rule','inline-rule','important-rule','inline-important','hidden',
-      'suppressed','control','restored','inherited','initial','unset','type-none','shorthand','mixed','invalid'];
+      'suppressed','control','restored','inherited','initial','unset','type-none','shorthand','mixed','invalid','specific-is','specific-not'];
     const geometry = spawnSync(probe,['--geometry',fixture,'640',ids.join(',')],{encoding:'utf8',timeout:10000});
     assert.equal(geometry.status,0,geometry.stderr);
     const native = JSON.parse(geometry.stdout);
