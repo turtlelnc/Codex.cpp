@@ -162,16 +162,27 @@ static CommandResult run_capture_interruptible(const std::string& command,size_t
   if(result.output.size()>=limit)result.output+="\n[truncated]";return result;
 }
 static CommandResult run_capture(const std::string& command,size_t limit=200000,ProcessPolicy policy={}){return run_capture_interruptible(command,limit,{},false,std::move(policy));}
-static std::string slurp(const fs::path& p,size_t limit = 200000){std::ifstream f(p,std::ios::binary);if(!f)return "ERROR: cannot open " + p.string();
-std::string s(limit,'\0');f.read(s.data(),static_cast<std::streamsize>(limit));s.resize(static_cast<size_t>(f.gcount()));if(!f.eof())s += "\n[truncated]"; return s; }
+struct ToolResult{int exit_code;std::string output;std::vector<std::string> images;ToolResult(int code=0,std::string text={},std::vector<std::string> pictures={}):exit_code(code),output(std::move(text)),images(std::move(pictures)){} };
+static ToolResult read_file_result(const fs::path& p,size_t limit = 200000){std::ifstream f(p,std::ios::binary);if(!f)return {2,"ERROR: cannot open " + p.string()};
+std::string s(limit,'\0');f.read(s.data(),static_cast<std::streamsize>(limit));s.resize(static_cast<size_t>(f.gcount()));if(f.bad())return {2,"ERROR: cannot read " + p.string()};if(!f.eof())s += "\n[truncated]"; return {0,std::move(s)}; }
+static std::string slurp(const fs::path& p,size_t limit=200000){return read_file_result(p,limit).output;}
 static bool write_all(const fs::path& p,const std::string& data,std::string& err){std::error_code ec;
 if(!p.parent_path().empty())fs::create_directories(p.parent_path(),ec);std::ofstream f(p,std::ios::binary | std::ios::trunc);
 if(!f){err = "cannot write " + p.string();return false;}f << data;if(!f){err = "write failed " + p.string();return false;}return true; }
-static std::string list_dir(const fs::path& p){std::error_code ec;if(!fs::exists(p,ec))return "ERROR: path does not exist: " + p.string();
-if(!fs::is_directory(p,ec))return "ERROR: not a directory: " + p.string();std::vector<std::string> rows;for(const auto& e : fs::directory_iterator(p,ec)){
-  std::string n = e.path().filename().string();if(e.is_directory(ec))n += '/';rows.push_back(std::move(n));
+static ToolResult list_dir(const fs::path& p) {
+  std::error_code ec;
+  std::vector<std::string> rows;
+  for (fs::directory_iterator it(p, ec), end; !ec && it != end; it.increment(ec)) {
+    auto name = it->path().filename().string();
+    if (it->is_directory(ec)) name += '/';
+    rows.push_back(std::move(name));
+  }
+  if (ec) return {2, "ERROR: cannot list " + p.string() + ": " + ec.message()};
+  std::sort(rows.begin(), rows.end());
+  std::ostringstream result;
+  for (const auto& row : rows) result << row << '\n';
+  return {0, result.str()};
 }
-std::sort(rows.begin(),rows.end());std::ostringstream o;for(const auto& row : rows)o << row << '\n';return o.str(); }
 static bool within_root(const fs::path& root,const fs::path& target){std::error_code ec;const fs::path r = fs::weakly_canonical(root,ec);fs::path t;
 if(fs::exists(target,ec))t = fs::weakly_canonical(target,ec);else t = fs::weakly_canonical(target.parent_path(),ec)/ target.filename();if(ec)return false;
 auto ri = r.begin(),ti = t.begin();for(;ri != r.end();++ri,++ti)if(ti == t.end()|| *ri != *ti)return false;return true; }
@@ -201,6 +212,27 @@ if(ec)return "cannot completely inspect workspace: "+ec.message();return{}; }
 // names in unrelated nested objects and providers may return multiple calls.
 struct Json{enum Kind{Null,String,Object,Array,Other}kind = Null;std::string value;std::map<std::string,Json> fields;std::vector<Json> items;
 const Json* get(const std::string& key)const{auto it = fields.find(key);return it == fields.end()? nullptr : &it->second; } std::string str()const{return kind == String ? value : "";} };
+static bool json_number_valid(const std::string& token) {
+  size_t pos = 0;
+  auto take = [&](char c) {
+    if (pos == token.size() || token[pos] != c) return false;
+    ++pos;
+    return true;
+  };
+  auto digits = [&] {
+    const auto start = pos;
+    while (pos < token.size() && token[pos] >= '0' && token[pos] <= '9') ++pos;
+    return pos != start;
+  };
+  take('-');
+  if (!take('0') && !digits()) return false;
+  if (take('.') && !digits()) return false;
+  if (take('e') || take('E')) {
+    if (!take('+')) take('-');
+    if (!digits()) return false;
+  }
+  return pos == token.size();
+}
 struct JsonReader{const std::string& s;size_t i = 0;int depth = 0;bool unique_keys=false;void ws(){while(i < s.size()&&(s[i]==' ' || s[i]=='\n' || s[i]=='\r' || s[i]=='\t'))++i;}
 bool string(std::string& out){if(i == s.size()|| s[i++]!= '"')return false;while(i < s.size()){unsigned char c = static_cast<unsigned char>(s[i++]);
   if(c == '"')return true;if(c < 0x20)return false;if(c != '\\'){out += static_cast<char>(c);continue;}if(i == s.size())return false;char e = s[i++];
@@ -221,8 +253,8 @@ bool parse(Json& v){ws();if(i>=s.size()|| ++depth>64)return false;char c=s[i];bo
     if(obj){if(unique_keys&&v.fields.count(key))return false;v.fields[key]=std::move(child);}else v.items.push_back(std::move(child));ws();if(i==s.size())break;if(s[i]==(obj?'}':']')){++i;ok=true;break;} if(s[i++]!=',')break;ws();
   }
   }else{
-  size_t start=i;while(i<s.size()&& s[i]!=',' && s[i]!=']' && s[i]!='}' && s[i]!=' ' && s[i]!='\n' && s[i]!='\r')++i;
-  v.value=s.substr(start,i-start);v.kind=v.value=="null"?Json::Null:Json::Other;ok=v.value=="null" || v.value=="true" || v.value=="false" || (!v.value.empty()&&(v.value[0]=='-' ||(v.value[0]>='0'&&v.value[0]<='9'))); }
+  size_t start=i;while(i<s.size()&& s[i]!=',' && s[i]!=']' && s[i]!='}' && s[i]!=' ' && s[i]!='\n' && s[i]!='\r' && s[i]!='\t')++i;
+  v.value=s.substr(start,i-start);v.kind=v.value=="null"?Json::Null:Json::Other;ok=v.value=="null" || v.value=="true" || v.value=="false" || json_number_valid(v.value); }
   --depth;return ok;
 }
 std::optional<Json> complete(){Json v;if(!parse(v))return{};ws();if(i!=s.size())return{};return v;} };
@@ -505,7 +537,7 @@ static std::vector<CodeBlock> extract_code_blocks(const std::string& markdown){s
     if(open){current.text+=line;current.text+='\n';} }
   if(open)blocks.push_back(current);return blocks; }
 // ---------- tools ----------
-struct ToolResult{int exit_code;std::string output;std::vector<std::string> images;ToolResult(int code=0,std::string text={},std::vector<std::string> pictures={}):exit_code(code),output(std::move(text)),images(std::move(pictures)){} }; class ToolRuntime{public: virtual ~ToolRuntime()= default;virtual std::string name()const = 0;virtual std::string spec_json()const = 0;
+class ToolRuntime{public: virtual ~ToolRuntime()= default;virtual std::string name()const = 0;virtual std::string spec_json()const = 0;
 virtual bool mutates()const{return false;}virtual bool is_shell()const{return false;}
 virtual ToolResult run(const std::string& args,const fs::path& root)= 0;
 virtual ToolResult execute(const std::string& args,const fs::path& root,SandboxMode,const std::function<void()>& tick,bool watch){return run_with_ui(args,root,tick,watch);}virtual ToolResult run_with_ui(const std::string& args,const fs::path& root, const std::function<void()>&,bool){return run(args,root);}
@@ -513,12 +545,16 @@ virtual ToolResult execute(const std::string& args,const fs::path& root,SandboxM
 static std::string one_arg_tool_spec(const char* name,const char* description,const char* argument){ return std::string(R"({"type":"function","name":")")+name+R"(","description":")"+description+
   R"(","parameters":{"type":"object","properties":{")"+argument+R"(":{"type":"string"}},"required":[")"+argument+ R"("],"additionalProperties":false},"strict":true})";
 }
-static ToolResult run_path_tool(const std::string& args,const fs::path& root,std::string(*action)(const fs::path&)){ auto p=json_string_field(args,"path");if(!p)return{2,"ERROR: missing path"};
-fs::path t=root / *p;if(!within_root(root,t)||sensitive_path(t))return{2,"ERROR: path is outside the granted workspace or protected"};if(auto risk=external_hardlink_risk(root))return{126,"DENIED: "+*risk};return{0,action(t)}; }
+static ToolResult run_path_tool(const std::string& args,const fs::path& root,ToolResult(*action)(const fs::path&)){ auto p=json_string_field(args,"path");if(!p)return{2,"ERROR: missing path"};
+fs::path t=root / *p;if(!within_root(root,t)||sensitive_path(t))return{2,"ERROR: path is outside the granted workspace or protected"};if(auto risk=external_hardlink_risk(root))return{126,"DENIED: "+*risk};return action(t); }
 class ReadFileTool final : public ToolRuntime{public: std::string name()const override{return "read_file";}std::string spec_json()const override{
   return one_arg_tool_spec("read_file","Read a UTF-8/text file inside the workspace.","path");
 }
-ToolResult run(const std::string& args,const fs::path& root)override{return run_path_tool(args,root,[](const fs::path& p){return slurp(p);});} };
+ToolResult run(const std::string& args,const fs::path& root)override{return run_path_tool(args,root,[](const fs::path& p)->ToolResult {
+  std::error_code ec;
+  if (!fs::is_regular_file(p, ec)) return {2, "ERROR: not a readable regular file: " + p.string()};
+  return read_file_result(p);
+});} };
 class ListDirTool final : public ToolRuntime{public: std::string name()const override{return "list_dir";}std::string spec_json()const override{
   return one_arg_tool_spec("list_dir","List one directory inside the workspace.","path");
 }
@@ -621,7 +657,7 @@ bool is_shell()const override{return true;}std::string spec_json()const override
 ToolResult execute(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick,bool watch)override{return run_interruptible(args,root,mode,tick,watch);}
 ToolResult run(const std::string& args,const fs::path& root)override{return run_interruptible(args,root,SandboxMode::WorkspaceWrite,{},false); }
 ToolResult run_interruptible(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& on_tick,bool watch_escape){
-  auto c = json_string_field(args,"command");if(!c)return{2,"ERROR: missing command"};if(mode==SandboxMode::WorkspaceWrite) if(auto risk=external_hardlink_risk(root))return{126,"DENIED: "+*risk};
+  auto c = json_string_field(args,"command");if(!c)return{2,"ERROR: missing command"};
   auto command=restricted_shell_command(root,*c,mode); if(!command)return{126,"DENIED: OS shell sandbox unavailable; choose danger-full-access explicitly only if you trust the command"};
   auto r = run_capture_interruptible(*command,200000,on_tick,watch_escape,ProcessPolicy::tool(root,mode==SandboxMode::WorkspaceWrite,mode==SandboxMode::DangerFullAccess));return{r.exit_code,"exit_code=" + std::to_string(r.exit_code)+ "\n" + r.output};
 }
@@ -658,7 +694,6 @@ std::string chat_specs_json()const{
 ToolResult invoke(const FunctionCall& call,const fs::path& root,const RuntimePolicy& policy,const Session& session, const std::function<std::optional<bool>(const std::string&)>& approval_ui ={},
     const std::function<void()>& on_tick ={},bool watch_escape = false)const{
   ToolRuntime* tool = find(call.name);if(!tool)return{2,"ERROR: unknown tool: " + call.name};
-  if(tool->is_shell()&& policy.sandbox==SandboxMode::WorkspaceWrite)if(auto risk=external_hardlink_risk(root))return{126,"DENIED: "+*risk};
   if(tool->is_shell()&& policy.sandbox != SandboxMode::DangerFullAccess && !restricted_shell_command(root,"true",policy.sandbox)) return{126,"DENIED: OS shell sandbox unavailable; restricted shell cannot run here"};
   // The shell may run under the read-only OS sandbox for inspection.
   // Its mutating() marker is conservative for approval, not a reason to
@@ -866,6 +901,7 @@ Portable data (prefix options must precede other options):
   update check|download|stage|status|install|rollback  verified, opt-in updates
 
 Plugin modules (before the command/options):
+  --team-adapter /absolute/catalog.json  enable a declarative team protocol adapter
   --plugin /absolute/plugin.json  enable one isolated_read manifest for CLI
   --plugin-reviewed /absolute/plugin.json SHA256  require the reviewed package fingerprint
   plugin inspect                  show active service owners and replacement layers

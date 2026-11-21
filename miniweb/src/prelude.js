@@ -835,7 +835,11 @@
       var allowedX=/^(auto|scroll)$/.test(style.overflowX)?dx:0,allowedY=/^(auto|scroll)$/.test(style.overflowY)?dy:0;
       if((allowedX&&state[2]>state[4])||(allowedY&&state[3]>state[5])){
         var x=n.scrollLeft,y=n.scrollTop;n.scrollBy(allowedX,allowedY);if(x!==n.scrollLeft||y!==n.scrollTop)return;
-      }n=n.parentElement;
+      }
+      if (/^(auto|scroll|hidden)$/.test(style.overflowX) && style.overscrollBehaviorX !== 'auto') dx = 0;
+      if (/^(auto|scroll|hidden)$/.test(style.overflowY) && style.overscrollBehaviorY !== 'auto') dy = 0;
+      if (!dx && !dy) return;
+      n=n.parentElement;
     }
     var root=document.documentElement,style=getComputedStyle(root);
     root.scrollBy(/^(visible|auto|scroll)$/.test(style.overflowX)?dx:0,/^(visible|auto|scroll)$/.test(style.overflowY)?dy:0);

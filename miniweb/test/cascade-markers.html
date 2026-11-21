@@ -35,3 +35,14 @@ document.getElementById('toggle').onclick = function () {
   document.body.setAttribute('data-marker', getComputedStyle(document.getElementById('suppressed')).listStyleType);
 };
 </script>
+
+<style>
+.probe { position:absolute; left:430px; width:100px; }
+#specific-is.probe, div#specific-not.probe { height:40px; }
+:where(#specific-is):is(#absent,.probe.extra) { height:20px; }
+:where(#specific-not).probe:not(#absent,.excluded.extra) { height:24px; }
+#specific-is { top:30px; }
+#specific-not { top:90px; }
+</style>
+<div id="specific-is" class="probe extra"></div>
+<div id="specific-not" class="probe"></div>

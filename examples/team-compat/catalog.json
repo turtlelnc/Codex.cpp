@@ -1,0 +1,12 @@
+{
+  "adapters": [
+    {
+      "wire_version": 0,
+      "canonical_version": 1,
+      "profile": "codex-http-20261102",
+      "client": true,
+      "server": true,
+      "full_snapshots": true
+    }
+  ]
+}
