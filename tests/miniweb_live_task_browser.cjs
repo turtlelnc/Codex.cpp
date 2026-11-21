@@ -11,7 +11,9 @@ const { once } = require("node:events");
 const helpPanel = `
 <style>
 #scroll-mode { position: fixed; z-index: 4; top: 0; right: 0; width: 72px; height: 24px; background: #8ac8bf; border: 0; }
-#tasks { height: 148px; overflow: auto; overscroll-behavior: auto contain; }
+.app { overscroll-behavior: auto contain; }
+#tasks { height: 148px; overflow: auto; overscroll-behavior: inherit; }
+@media (max-width: 460px) { #tasks { overscroll-behavior: initial; overscroll-behavior-y: inherit; } }
 #task-sticky { position: sticky; top: 0; z-index: 2; height: 22px; background: #abcbee; }
 body { min-height: 150vh; }
 #open-help { position: fixed; right: 12px; bottom: 12px; width: 88px; height: 36px; }

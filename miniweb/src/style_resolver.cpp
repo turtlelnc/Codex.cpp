@@ -332,6 +332,10 @@ bool inherit_prop(ComputedStyle& st, const std::string& p, const ComputedStyle* 
     else if (p == "text-transform") st.text_transform = parent->text_transform;
     else if (p == "transform") {st.translate_x=parent->translate_x;st.translate_y=parent->translate_y;st.has_transform=parent->has_transform;}
     else if (p == "z-index") {st.z_index=parent->z_index;st.z_auto=parent->z_auto;}
+    else if (p == "overscroll-behavior" || p == "overscroll-behavior-x" || p == "overscroll-behavior-y") {
+        if (p != "overscroll-behavior-y") st.overscroll_x = parent->overscroll_x;
+        if (p != "overscroll-behavior-x") st.overscroll_y = parent->overscroll_y;
+    }
     else if (p == "display") st.display = parent->display;
     else if (p == "vertical-align") st.vertical_align=parent->vertical_align;
     else if (p == "border-spacing") {st.border_spacing_x=parent->border_spacing_x;st.border_spacing_y=parent->border_spacing_y;}
