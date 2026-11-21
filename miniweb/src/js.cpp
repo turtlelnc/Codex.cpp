@@ -260,6 +260,16 @@ std::string prop_css(const Node* n, const std::string& prop) {
     if(prop=="overflow"||prop=="overflow-x"||prop=="overflow-y"){
         auto o=overflow_axis(n,prop!="overflow-y");return o==Overflow::Visible?"visible":o==Overflow::Auto?"auto":o==Overflow::Scroll?"scroll":o==Overflow::Clip?"clip":"hidden";
     }
+    if (prop == "overscroll-behavior" || prop == "overscroll-behavior-x" || prop == "overscroll-behavior-y") {
+        const auto css = [](OverscrollBehavior behavior) -> std::string {
+            if (behavior == OverscrollBehavior::Contain) return "contain";
+            if (behavior == OverscrollBehavior::None) return "none";
+            return "auto";
+        };
+        if (prop == "overscroll-behavior-x") return css(st.overscroll_x);
+        if (prop == "overscroll-behavior-y") return css(st.overscroll_y);
+        return st.overscroll_x == st.overscroll_y ? css(st.overscroll_x) : css(st.overscroll_x) + " " + css(st.overscroll_y);
+    }
     if (prop == "z-index") return st.z_auto?"auto":std::to_string(st.z_index);
     if (prop == "flex-direction") {
         switch (st.flex_direction) {

@@ -1,3 +1,4 @@
+#include <tuple>
 #include "css.h"
 #include "util.h"
 #include <algorithm>
@@ -127,20 +128,17 @@ std::vector<Selector> parse_selector_list_impl(const std::string& text) {
     return out;
 }
 
-int max_spec_id(const std::vector<Selector>& sels) {
-    int v = 0;
-    for (auto& s : sels) v = std::max(v, s.spec_id);
-    return v;
-}
-int max_spec_class(const std::vector<Selector>& sels) {
-    int v = 0;
-    for (auto& s : sels) v = std::max(v, s.spec_class);
-    return v;
-}
-int max_spec_tag(const std::vector<Selector>& sels) {
-    int v = 0;
-    for (auto& s : sels) v = std::max(v, s.spec_tag);
-    return v;
+void add_max_specificity(Selector& selector, const std::vector<Selector>& branches) {
+    const auto specificity = [](const Selector& branch) {
+        return std::tie(branch.spec_id, branch.spec_class, branch.spec_tag);
+    };
+    const auto strongest = std::max_element(branches.begin(), branches.end(),
+        [&](const Selector& left, const Selector& right) {
+            return specificity(left) < specificity(right);
+        });
+    selector.spec_id += strongest->spec_id;
+    selector.spec_class += strongest->spec_class;
+    selector.spec_tag += strongest->spec_tag;
 }
 
 bool parse_compound(const std::string& s, size_t& i, CompoundSelector& comp, Selector& sel) {
@@ -221,18 +219,14 @@ bool parse_compound(const std::string& s, size_t& i, CompoundSelector& comp, Sel
             if (name == "not") {
                 auto subs = parse_selector_list_impl(arg);
                 if (subs.empty()) return false;
-                sel.spec_id += max_spec_id(subs);
-                sel.spec_class += max_spec_class(subs);
-                sel.spec_tag += max_spec_tag(subs);
+                add_max_specificity(sel, subs);
                 for (auto& sub : subs) comp.nots.push_back(std::make_shared<Selector>(sub));
                 any = true;
             } else if (name == "is" || name == "matches" || name == "where") {
                 auto subs = parse_selector_list_impl(arg);
                 if (subs.empty()) return false;
                 if (name != "where") {
-                    sel.spec_id += max_spec_id(subs);
-                    sel.spec_class += max_spec_class(subs);
-                    sel.spec_tag += max_spec_tag(subs);
+                    add_max_specificity(sel, subs);
                 }
                 for (auto& sub : subs) comp.anys.push_back(std::make_shared<Selector>(sub));
                 any = true;

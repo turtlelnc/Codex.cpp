@@ -28,10 +28,11 @@ struct TeamConnection {
     return *parsed;
   }
   void negotiate(){using namespace native_web;
+    (void)team_adapters();
     auto response=native_http(origin+"/api/protocol",{}, {"Origin: "+origin},true);require(response.error.empty(),response.error);
     auto description=parse_json(response.body);
     const bool missing=response.status==404||(response.status==400&&description&&text(*description,"error")=="Unknown route");
-    if(missing){require(team_adapter(0,true)!=nullptr,"Server has no protocol handshake; explicitly load the trusted legacy adapter for read-only access");
+    if(missing){require(team_adapter(0,true)!=nullptr,"Server has no protocol handshake; explicitly load the legacy adapter for read-only access");
       auto probe=native_http(origin+"/api/me",{}, {"Origin: "+origin},true);auto me=parse_json(probe.body);
       require(probe.error.empty()&&probe.status==401&&me&&text(*me,"mode")=="server","Legacy server identity does not match the supported profile");
       protocol=0;read_only=true;deltas=false;compatibility=team_adapter(0,true)->profile+" (unverified server semantics; read-only)";return;

@@ -4,7 +4,7 @@ const fs = require("node:fs"),
   http = require("node:http"),
   net = require("node:net"),
   assert = require("node:assert/strict"),
-  { spawn, execFileSync } = require("node:child_process");
+  { spawn, spawnSync, execFileSync } = require("node:child_process");
 const binary = path.resolve(process.argv[2]),
   probeBinary = path.resolve(process.argv[3]),
   compat = path.resolve(process.argv[4]),
@@ -44,13 +44,13 @@ async function stop() {
   }
   service = null;
 }
-async function launch(module, state, executable = binary) {
+async function launch(catalog, state, executable = binary) {
   logs = "";
   const p = await port();
   service = spawn(
     executable,
     [
-      ...(module ? ["--plugin", module] : []),
+      ...(catalog ? ["--team-adapter", catalog] : []),
       "serve",
       "--state-dir",
       state,
@@ -103,14 +103,15 @@ class Client {
     return (await this.call("/api/rpc", { op, ...values }, status)).result;
   }
 }
-async function probe(url, module, request, code = 0, token = "fixture-token") {
+async function probe(url, catalog, request, code = 0, token = "fixture-token") {
   return new Promise((resolve, reject) => {
     let out = "",
       error = "";
     const child = spawn(probeBinary, ["--team-protocol-probe", url, "alice"], {
-      env: { ...env, CODEX_TEST_PROTOCOL_PLUGIN: module || "", CODEX_TEST_TEAM_TOKEN: token },
+      env: { ...env, CODEX_TEST_TEAM_ADAPTER: catalog || "", CODEX_TEST_TEAM_TOKEN: token },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    child.stdin.on("error", (e) => { if (e.code !== "EPIPE") reject(e); });
     child.stdin.end(JSON.stringify(request) + "\n");
     child.stdout.on("data", (b) => (out += b));
     child.stderr.on("data", (b) => (error += b));
@@ -119,7 +120,7 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
       child.kill();
       reject(Error("native negotiation timeout"));
     }, 30000);
-    child.on("exit", (status) => {
+    child.on("close", (status) => {
       clearTimeout(timer);
       try {
         assert.equal(status, code, error + "\n" + out);
@@ -152,6 +153,11 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
     modern.wire = "01";
     await modern.rpc("projects", {}, 400);
     await stop();
+    const duplicate = spawnSync(binary, [
+      "--team-adapter", compat, "--team-adapter", compat, "serve", "--help",
+    ], { env, encoding: "utf8" });
+    assert.equal(duplicate.status, 2, duplicate.stderr);
+    assert.match(duplicate.stderr, /exactly one catalog path/);
     url = await launch(compat, state);
     let older = new Client(url);
     await older.login(token);
@@ -203,13 +209,13 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
     await renamed.rpc("send", { project: "legacy-project", message: "missing-id" }, 400);
     await stop();
     // Illegal maps cannot change core approval/permission semantics, even when
-    // their native module is explicitly loaded.
+    // the adapter is explicitly configured.
     const badPort = await port();
     logs = "";
     service = spawn(
       binary,
       [
-        "--plugin",
+        "--team-adapter",
         bad,
         "serve",
         "--state-dir",
@@ -227,6 +233,16 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
     assert.notEqual(service.exitCode, 0);
     assert.match(logs, /security bindings/);
     await stop();
+    const invalidCatalog = path.join(root, "invalid-catalog.json");
+    for (const [catalog, diagnostic] of [
+      [{ adapters: [], libraries: { linux: "module.so" } }, /Invalid team adapter catalog/],
+      ['{"adapters":[],"adapters":[]}', /Invalid team adapter catalog/],
+      [" ".repeat(64 * 1024 + 1), /oversized team adapter catalog/],
+    ]) {
+      fs.writeFileSync(invalidCatalog, typeof catalog === "string" ? catalog : JSON.stringify(catalog));
+      const error = await probe("http://127.0.0.1:1", invalidCatalog, { op: "projects" }, 2);
+      assert.match(error, diagnostic);
+    }
     if(process.argv[7]){
       const oldBinary=path.resolve(process.argv[7]),oldState=path.join(root,'old-server');
       const oldToken=execFileSync(oldBinary,['serve','--state-dir',oldState,'--add-user','alice'],{env,encoding:'utf8'}).match(/Login token \(save privately\): (\w+)/)[1];
@@ -336,7 +352,7 @@ async function probe(url, module, request, code = 0, token = "fixture-token") {
     assert.equal(packets.at(-1).data.request_id, "immutable-key");
     assert.equal(packets.at(-1).data.scope, "shared");
     console.log(
-      "PASS real protocol handshake, explicit legacy module activation, server-side negotiation rejection, immutable bindings, old-peer read-only mode, failed-handshake no-downgrade/no-credential policy, capability gating and native Plugin request/response translation",
+      "PASS real protocol handshake, explicit legacy catalog activation, server-side negotiation rejection, immutable bindings, old-peer read-only mode, failed-handshake no-downgrade/no-credential policy, capability gating and catalog request/response translation",
     );
   } finally {
     await stop();

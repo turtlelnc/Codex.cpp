@@ -25,48 +25,40 @@ refused. These client restrictions do not repair an old server's vulnerabilities
 
 ## Official legacy adapter
 
-The optional `team-protocol-compat` native module supports the unversioned
+The optional `examples/team-compat/catalog.json` catalog supports the unversioned
 Codex HTTP API profile represented by main `ae7ffc7` / v2026.11.02.1. Its wire ID
-is **0**. It preserves the existing packet fields and forces full snapshots, so
-old clients never need to interpret a newer delta envelope.
+is **0**. It preserves the existing packet fields and forces full snapshots.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target codex-cpp team-protocol-compat --parallel 2
-./build/codex-cpp --plugin "$PWD/build/team-protocol-compat/plugin.json" \
+./build/codex-cpp --team-adapter "$PWD/examples/team-compat/catalog.json" \
   serve --state-dir ./team-state --host 127.0.0.1 --port 9080
 ```
 
-For a multi-config Windows build, use `--config Release`,
-`build/Release/codex-cpp.exe` and
-`build/team-protocol-compat/Release/plugin.json`. Linux fully static musl hosts
-cannot load native DLLs; use the normal glibc/native-plugin build.
+Pass `--team-adapter` before the command with an absolute catalog path. On Windows
+use your `codex-cpp.exe` path and an absolute Windows path. Existing deployments
+using `--plugin …/team-protocol-compat/plugin.json` should switch to this startup
+option. The catalog is JSON data and works with single-file builds on all platforms.
 
-- **Old client → new server:** an administrator explicitly loads the module on
+- **Old client → new server:** an administrator explicitly configures the catalog on
   the server. Legacy requests then pass through the current core authorization
   and mutation checks. Missing approval tokens, task request IDs or fingerprints
   are rejected; the adapter invents none of them.
-- **New client → old server:** explicitly load the module on the client before
+- **New client → old server:** explicitly configure the catalog on the client before
   opening `/team`. Only the recognized missing-endpoint response is eligible for
   legacy fallback, and `/api/me` must identify a hosted service before credentials
   are sent. Because the old server cannot negotiate safety capabilities, this
   connection is **read-only**. It cannot send tasks, approve or write Git/files.
 - A malformed, failed or explicitly incompatible handshake is never treated as a
-  legacy server. There is no automatic module download or activation.
+  legacy server. There is no automatic catalog download or activation.
 
-At least one side must contain this new adapter interface. A module cannot add an
-extension point to an arbitrary old executable that never implemented it. Legacy
-support is for the specified API family, not a promise of arbitrary-version
-interoperability. Native modules remain fully trusted host code. Installation or
-updating a module requires an explicit startup/restart, but not replacement of
-the host executable. Plugins are not hot-loaded over the network.
+At least one side must support this adapter interface. Legacy support covers the
+specified API family. Catalog changes take effect after restarting the process.
 
 ## Extending a codec without replacing the host
 
-Native modules bind `team.protocol.adapters`, replacing `builtin.protocol`, and
-return a catalog when called with `{}`. No credentials, cookies, user packets or
-unfiltered events are passed to this service. The host validates a maximum of 15
-codecs (16 wire IDs including native 1) and applies their declarative maps itself.
+Provide a JSON file (up to 64 KiB) containing an `adapters` array. The Core
+validates up to 15 codecs (16 wire IDs including native 1) and applies their field
+maps. The catalog contains data only and receives no credentials or packets.
 
 ```json
 {"adapters":[{
@@ -95,15 +87,13 @@ or deduplication model needs a supported core contract; a codec cannot assert it
 into existence. A server's claimed capabilities are not cryptographic evidence
 that an untrusted server behaves correctly.
 
-`team-protocol-fixture` and `team-protocol-bad-fixture` are **test-only** build
-targets. The first demonstrates working wire-7 field conversion; the second
-proves that an approval-field map is refused before the server listens. Neither
-fixture is part of the official legacy profile or default build.
+The catalogs in `tests/fixtures/team-adapter*.json` exercise wire-7 field
+conversion and rejection of an approval-field map before the server listens.
 
 ## Verification
 
-`tests/team_protocol_test.cjs` uses actual server/client processes and native
-modules: native/native handshake, server-side absent/unknown version rejection,
+`tests/team_protocol_test.cjs` uses actual server/client processes and JSON
+catalogs to verify the native handshake, absent/unknown version rejection,
 legacy activation, core rejection of missing mutation bindings, no credential
 submission or downgrade on bad handshakes, old-peer/capability read-only gating,
 and real client/server field translation. `webui_quality_test.cjs` also checks

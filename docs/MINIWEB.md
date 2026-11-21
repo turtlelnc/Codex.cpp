@@ -173,7 +173,7 @@ not evidence that arbitrary pages behave like Chromium.
 
 ## Scrolling in persistent sessions
 
-Use `scroll` with viewport `x`, `y` and signed pixel `delta_x`, `delta_y` (each at most 10000). It targets the nearest auto/scroll container under that point, chaining to ancestors when no movement is possible. A cancelable `wheel` event precedes the default action. Example CLI request:
+Use `scroll` with viewport `x`, `y` and signed pixel `delta_x`, `delta_y` (each at most 10000). It targets the nearest auto/scroll container under that point, chaining to ancestors when no movement is possible. The `overscroll-behavior` shorthand and its axis-specific properties can block chaining at a scroll container. `contain` and `none` both stop chaining because MiniWeb has no overscroll animation. A cancelable `wheel` event precedes the default action. Example CLI request:
 
 ```json
 {"operation":"scroll","session":"TOKEN","x":100,"y":200,"delta_x":0,"delta_y":300}

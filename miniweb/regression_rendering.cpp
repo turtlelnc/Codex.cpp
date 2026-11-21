@@ -91,4 +91,22 @@ void check_font_border(const std::filesystem::path& directory) {
         if(pixels[i]!=255||pixels[i+1]!=255||pixels[i+2]!=255)throw std::runtime_error("Zero/hidden/transparent border painted");}
     const auto i=(80*640+130)*4;
     if(pixels[i]!=255||pixels[i+1]!=0||pixels[i+2]!=0)throw std::runtime_error("Border currentColor did not resolve final color");
+    auto check_color = [&](int x, int y, int r, int g, int b) {
+        const auto offset = (y * 640 + x) * 4;
+        if (pixels[offset] != r || pixels[offset+1] != g || pixels[offset+2] != b)
+            throw std::runtime_error("Rounded border pixel mismatch");
+    };
+    check_color(201,141,255,255,255);
+    check_color(206,146,255,0,0);
+    check_color(210,150,255,255,255);
+    check_color(226,142,255,0,0);
+    check_color(226,162,255,255,255);
+    check_color(281,141,255,255,255);
+    check_color(307,142,255,0,0);
+    check_color(330,162,0,128,0);
+    check_color(307,180,0,0,255);
+    check_color(282,162,0,0,0);
+    check_color(307,162,255,255,0);
+    check_color(361,141,255,255,255);
+    check_color(386,142,0,0,255);
 }

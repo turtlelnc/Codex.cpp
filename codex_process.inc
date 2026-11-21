@@ -85,7 +85,8 @@ public:
     auto executable=process_executable(command.front());if(executable.empty()){error="executable not found: "+command.front();return false;}command.front()=executable.string();
     std::error_code ec;scratch=execution.private_dir/random_id("worker");fs::create_directories(scratch/"home",ec);if(ec){error=ec.message();return false;}fs::permissions(scratch,fs::perms::owner_all,fs::perm_options::replace,ec);
     const auto workspace=policy.workspace.empty()?execution.workspace:fs::absolute(policy.workspace);
-    if(!unsafe&&(policy.role==ProcessRole::Tool||policy.role==ProcessRole::Extension||policy.role==ProcessRole::Helper))if(auto risk=external_hardlink_risk(workspace)){error="DENIED: "+*risk;return false;}
+    if((!unsafe&&(policy.role==ProcessRole::Tool||policy.role==ProcessRole::Extension||policy.role==ProcessRole::Helper)) ||
+       (policy.role==ProcessRole::Tool&&policy.writable&&!policy.unsafe))if(auto risk=external_hardlink_risk(workspace)){error="DENIED: "+*risk;return false;}
     const auto cwd=(policy.role==ProcessRole::Frontend||policy.role==ProcessRole::Network||policy.role==ProcessRole::Probe||policy.role==ProcessRole::IsolatedPlugin)?scratch:workspace;
     std::vector<fs::path> reads=system_runtime_paths(),writes={scratch};reads.push_back(executable);reads.insert(reads.end(),policy.reads.begin(),policy.reads.end());
     writes.insert(writes.end(),policy.writes.begin(),policy.writes.end());
