@@ -134,6 +134,11 @@ async function main() {
     const portableAllowed = runPortable();
     assert.equal(portableAllowed.status, 0, portableAllowed.stderr);
     assert.match(portableAllowed.stdout, /selected bytes/);
+    const portableFromEnv = spawnSync(binary,
+      ['plugin', 'isolated-run', library, workspace, 'normal.txt'],
+      {cwd: workspace, env: {...env, CODEX_CPP_PORTABLE_DIR: portable}, encoding: 'utf8', timeout: 12000});
+    assert.equal(portableFromEnv.status, 0, portableFromEnv.stderr);
+    assert.match(portableFromEnv.stdout, /selected bytes/);
     const boundary = run('check.txt');
     assert.equal(boundary.status, 0, boundary.stderr);
     assert.match(boundary.stdout, /boundaries-ok/);
