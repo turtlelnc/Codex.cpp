@@ -6,6 +6,7 @@
 static bool self_test(const fs::path& root){int failed = 0;std::error_code root_ec;fs::create_directories(root,root_ec);
 auto check =[&](bool ok,const char* what){std::cout <<(ok ? "PASS " : "FAIL ")<< what << '\n';if(!ok)++failed; };
 #include "settings_checks.inc"
+#include "plugin_permissions_checks.inc"
 #include "compaction_history_checks.inc"
 {
   const auto metadata=root/"preview-metadata.json";
