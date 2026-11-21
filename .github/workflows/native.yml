@@ -252,6 +252,8 @@ jobs:
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/plugin_browser_test.cjs build/codex-cpp build/plugin-demo/plugin.json
+      - name: Verify isolated plugin approvals in Chromium
+        run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/isolated_plugin_test.cjs build/codex-cpp build/plugin-demo/isolated.json --browser
       - name: Verify Agent plugin Creator workflow
         env:
           CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser

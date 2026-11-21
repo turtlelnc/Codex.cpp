@@ -1049,7 +1049,12 @@ struct App {
                                      options.model};
     if(suggestion_mode)args.insert(args.end(),{"--no-tools","--max-steps","1"});
     if(!session_directory.empty())args.insert(args.end(),{"--session-dir",session_directory.u8string()});
-    for (auto it = plugin_manifests.rbegin(); it != plugin_manifests.rend(); ++it) {
+    if (web_isolated_plugin && !side_mode && !suggestion_mode) {
+      const auto& [manifest, fingerprint] = *web_isolated_plugin;
+      args.insert(args.begin()+1, {"--plugin-reviewed", manifest, fingerprint});
+      args.push_back("--web-plugin-approval");
+    }
+    if (!web_isolated_plugin) for (auto it = plugin_manifests.rbegin(); it != plugin_manifests.rend(); ++it) {
       const auto frozen = plugin_worker_manifests.find(*it);
       if(frozen == plugin_worker_manifests.end())args.insert(args.begin()+1,{"--plugin",*it});
       else args.insert(args.begin()+1,{"--plugin-reviewed",frozen->second,plugin_reviews.at(*it)});

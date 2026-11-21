@@ -880,7 +880,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool list_sessions = false;
+struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool web_plugin_approval = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
@@ -981,6 +981,7 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a=="--design"){o.design=true;continue;}
+  if(a=="--web-plugin-approval"){o.web_plugin_approval=true;continue;}
   if(a=="--no-tools"){o.no_tools=true;continue;}
   if(a == "--json"){o.json = true;continue;}
   if(a == "--wait-quota"){o.wait_quota=true;continue;}if(a == "--quota"){o.quota=true;continue;}
@@ -1162,11 +1163,16 @@ int main(int argc,char** argv){
       if (plugin_manifests.size() != 1)
         throw std::runtime_error("An isolated manifest must be the only plugin manifest");
       const std::string command = argc > 1 ? argv[1] : "";
-      if (command == "web" || command == "serve" || command == "connect" || command == "plugin")
-        throw std::runtime_error("Isolated plugin manifests are supported only by the local CLI Agent");
+      if (command == "serve" || command == "connect" || command == "plugin")
+        throw std::runtime_error("Isolated plugin manifests require the local CLI or local WebUI");
       const auto reviewed = plugin_reviews.find(manifest);
       isolated_manifest = isolated_plugin::read_manifest(path,
           reviewed == plugin_reviews.end() ? "" : reviewed->second);
+      if (command == "web") {
+        if (!sandbox_available())
+          throw std::runtime_error("Isolated WebUI plugin requires an OS sandbox: " + ManagedProcess::backend());
+        web_isolated_plugin.emplace(manifest, isolated_manifest->fingerprint);
+      }
     }
     if (isolated_manifest) {
       plugin_builtins();
@@ -1366,7 +1372,21 @@ if(reasoning_received && !session.record_item("{\"type\":\"codex_reasoning\",\"f
     if (isolated_tool && c.name == isolated_tool->name()) {
       isolated_tool->permissions.set_session(session.id);
       isolated_tool->prompt = {};
-      if (tui && !frontend && turn_policy.approval == ApprovalPolicy::OnRequest)
+      if (opt.json && opt.web_plugin_approval && !opt.no_tools)
+        isolated_tool->prompt = [&](const std::string& identity, const fs::path& root,
+                                    const fs::path& file, const fs::path&) {
+          const auto args = json_dump(plugin_object({
+            {"permission", plugin_string("file.read")},
+            {"plugin_sha256", plugin_string(identity)},
+            {"path", plugin_string((root / file).u8string())}
+          }));
+          session.emit(EventKind::ApprovalRequested, "{\"tool\":\"" + json_escape(c.name) +
+              "\",\"call_id\":\"" + json_escape(c.call_id) + "\",\"arguments\":\"" + json_escape(args) + "\"}");
+          const bool allowed = approve("Plugin file.read: " + args);
+          session.emit(EventKind::ApprovalDecision, std::string("{\"approved\":") + (allowed ? "true}" : "false}"));
+          return allowed ? plugin_permissions::Decision::Once : plugin_permissions::Decision::Deny;
+        };
+      else if (tui && !frontend && turn_policy.approval == ApprovalPolicy::OnRequest)
         isolated_tool->prompt = [&](const std::string& identity, const fs::path& root,
                                     const fs::path& file, const fs::path& directory) {
           using plugin_permissions::Decision;
