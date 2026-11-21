@@ -1,0 +1,26 @@
+{
+  "adapters": [
+    {
+      "wire_version": 0,
+      "canonical_version": 1,
+      "profile": "codex-http-20261102",
+      "client": true,
+      "server": true,
+      "full_snapshots": true
+    },
+    {
+      "wire_version": 7,
+      "canonical_version": 1,
+      "profile": "test-wire-seven",
+      "client": true,
+      "server": true,
+      "full_snapshots": true,
+      "request_renames": {
+        "message": "text"
+      },
+      "response_renames": {
+        "timeline": "history"
+      }
+    }
+  ]
+}

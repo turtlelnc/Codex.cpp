@@ -866,6 +866,7 @@ Portable data (prefix options must precede other options):
   update check|download|stage|status|install|rollback  verified, opt-in updates
 
 Plugin modules (before the command/options):
+  --team-adapter /absolute/catalog.json  enable a declarative team protocol adapter
   --plugin /absolute/plugin.json  load a trusted native/WebUI bundle; repeatable
   --plugin-reviewed /absolute/plugin.json SHA256  verify Creator review and load a private snapshot
   plugin inspect                  show active service owners and replacement layers

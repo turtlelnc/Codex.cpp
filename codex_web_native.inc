@@ -2108,7 +2108,7 @@ struct Service {
       const TeamAdapter* codec=nullptr;auto selected=req.headers.find("x-codex-protocol");
       if(hosted()||selected!=req.headers.end()){
         int wire=selected==req.headers.end()?0:team_wire_version(selected->second);
-        if(wire!=1){codec=team_adapter(wire,false);if(!codec){response(fd,426,obj({{"error",str("Incompatible team protocol; reconnect with a supported client or explicitly install a trusted compatibility adapter")},{"protocol",team_protocol_description(mode())}}));return;}}
+        if(wire!=1){codec=team_adapter(wire,false);if(!codec){response(fd,426,obj({{"error",str("Incompatible team protocol; reconnect with a supported client or explicitly configure a compatibility adapter")},{"protocol",team_protocol_description(mode())}}));return;}}
       }
       auto canonical=team_decode_request(body,codec);
       // Decoding cannot create/move operation, actor, scope, approval, dedup or
