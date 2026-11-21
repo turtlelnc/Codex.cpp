@@ -24,6 +24,10 @@ check(native_web::visible_user_message("<environment_context>\nmetadata\n</envir
 check(native_web::visible_user_message("Workspace root: /tmp\nSandbox policy: read-only\nUser task:\nhello")=="hello","WebUI legacy user text");
 check(native_web::visible_user_message("hello\n\nUser task:\nkeep this")=="hello\n\nUser task:\nkeep this","WebUI preserves literal task markers");
 const std::string sample = R"({"id":"resp_123","output":[{"type":"function_call","call_id":"call_7","name":"read_file","arguments":"{\"path\":\"a.txt\"}"}]})";
+for (const char* malformed : {"1abc", "01", "-01", "-", "1.", "1e", "1e+", "+1", "1e+-2"})
+  check(!parse_json(std::string("{\"value\":") + malformed + "}"), "JSON rejects malformed number");
+for (const char* valid : {"0", "-0", "-12", "1.2", "1E-3", "2e+4"})
+  check(parse_json(std::string("{\"value\":") + valid + "\t}").has_value(), "JSON accepts numbers with tab whitespace");
 std::string parse_err;auto parsed_response=parse_api_response(sample,false,parse_err); check(parsed_response && parsed_response->calls.size()==1 && parsed_response->calls[0].name=="read_file" &&
   parsed_response->calls[0].call_id=="call_7" && json_string_field(parsed_response->calls[0].arguments,"path")==std::optional<std::string>("a.txt"),"Responses function_call parser");
 check(parsed_response && parsed_response->id=="resp_123","response id parser");
@@ -79,6 +83,12 @@ check(router.find("shell")!= nullptr && router.find("nope")== nullptr,"ToolRoute
 check(router.chat_specs_json().find("\"function\"")!= std::string::npos,"chat tool schema generation");fs::path troot = root / ".codex_cpp" / "selftest";
 std::error_code ec;fs::create_directories(troot,ec);std::string err;write_all(troot / "a.txt","hello\n",err); RuntimePolicy p;p.sandbox = SandboxMode::WorkspaceWrite;p.approval = ApprovalPolicy::Never;
 Session dummy;dummy.root = troot;dummy.dir = troot;dummy.id = "selftest";dummy.events_path = troot / "events.jsonl"; FunctionCall read{"read_file","c1",R"({"path":"a.txt"})"};auto rr = router.invoke(read,troot,p,dummy);
+for (const auto& call : std::vector<FunctionCall>{
+    {"read_file","missing-read",R"({"path":"missing.txt"})"},
+    {"list_dir","missing-dir",R"({"path":"missing-dir"})"},
+    {"read_file","read-dir",R"({"path":"."})"},
+    {"list_dir","list-file",R"({"path":"a.txt"})"}})
+  check(router.invoke(call,troot,p,dummy).exit_code == 2, "File tool reports filesystem error via exit code");
 check(rr.exit_code == 0 && rr.output == "hello\n","read_file runtime");FunctionCall wr{"write_file","c2",R"({"path":"b.txt","content":"world\n"})"};
 auto rw = router.invoke(wr,troot,p,dummy);check(rw.exit_code == 0 && slurp(troot / "b.txt")== "world\n","write_file runtime"); FunctionCall escape{"write_file","c3",R"({"path":"../outside.txt","content":"no"})"};
 check(router.invoke(escape,troot,p,dummy).exit_code!=0,"workspace file path guard");FunctionCall shell{"shell","c4",R"({"command":"touch denied.txt"})"};
@@ -110,7 +120,7 @@ R"({"command":"pwd"})"
 auto native_shell=router.invoke(cwd_shell,troot,unrestricted,dummy);if(native_shell.exit_code)std::cerr<<"native shell exit "<<native_shell.exit_code<<": "<<native_shell.output<<'\n';check(native_shell.exit_code==0,"explicit unrestricted shell still runs");
 fs::path guard_file=troot.parent_path()/"hardlink-guard.txt";write_all(guard_file,"guard",err);fs::path alias=troot/"hardlink-guard.txt";
 fs::create_hard_link(guard_file,alias,ec);if(!ec){FunctionCall attack{"shell","hardlink",R"({"command":"printf escaped > hardlink-guard.txt"})"};
-  auto denied=router.invoke(attack,troot,p,dummy);check(denied.exit_code==126 && denied.output.find("hardlink")!=std::string::npos &&
+  auto denied=router.invoke(attack,troot,p,dummy);check(denied.exit_code==126 && (!sandboxed || denied.output.find("hardlink")!=std::string::npos) &&
   slurp(guard_file)=="guard","external hardlink shell refused before execution"); FunctionCall direct_write{"write_file","hardlink-write",R"({"path":"hardlink-guard.txt","content":"escaped"})"};
   check(router.invoke(direct_write,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard","hardlinked write_file target refused");
   FunctionCall patch{"apply_patch","hardlink-patch",R"({"patch":""})"};check(router.invoke(patch,troot,p,dummy).exit_code==126 && slurp(guard_file)=="guard", "hardlinked apply_patch workspace refused");
