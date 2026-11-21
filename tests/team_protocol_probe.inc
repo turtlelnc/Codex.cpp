@@ -3,7 +3,7 @@ static int team_protocol_probe(int argc,char** argv){
   try{
     if(argc!=4)return 2;
     plugin_creator_self=native_web::executable(argv[0]);
-    if(auto module=getenv_or("CODEX_TEST_PROTOCOL_PLUGIN");!module.empty())plugin_manifests.push_back(module);
+    if(auto catalog=getenv_or("CODEX_TEST_TEAM_ADAPTER");!catalog.empty())team_adapter_catalog=fs::u8path(catalog);
     plugin_boot();
     TeamConnection connection;connection.login(argv[2],argv[3],getenv_or("CODEX_TEST_TEAM_TOKEN"));
     std::string raw;std::getline(std::cin,raw);auto input=parse_json(raw);

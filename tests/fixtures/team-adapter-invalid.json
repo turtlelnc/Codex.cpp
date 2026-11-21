@@ -1,0 +1,15 @@
+{
+  "adapters": [
+    {
+      "wire_version": 8,
+      "canonical_version": 1,
+      "profile": "unsafe-binding",
+      "client": true,
+      "server": true,
+      "full_snapshots": true,
+      "request_renames": {
+        "permit": "allow"
+      }
+    }
+  ]
+}

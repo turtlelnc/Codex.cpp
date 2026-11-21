@@ -9,7 +9,6 @@ static void plugin_builtins(){static const bool initialized=[](){auto& r=plugin_
   r.mount({"builtin.journal",{},{{"journal.append",{},{}},{"journal.replace",{},{}}}});
   r.mount({"builtin.tools",{},{{"tool.execute",{},{}}}});
   r.mount({"builtin.web",{},{}});
-  r.mount({"builtin.protocol",{},{{"team.protocol.adapters",{},{}}}});
   return true;}();(void)initialized;
 }
 static std::string plugin_inspect(){plugin_builtins();std::string out="[";for(const auto& service:plugin_runtime().inspect()){
@@ -33,8 +32,15 @@ static std::map<std::string,std::string> plugin_reviews;
 // Reviewed WebUI workers inherit the parent's immutable bundle, never the
 // original writable workspace path. Legacy --plugin retains manual trust.
 static std::map<std::string,std::string> plugin_worker_manifests;
+static fs::path team_adapter_catalog;
 static void plugin_arguments(int& argc,char**& argv,std::vector<char*>& storage){
-  int i=1;while(i<argc && (std::string(argv[i])=="--plugin"||std::string(argv[i])=="--plugin-reviewed")){
+  int i=1;while(i<argc && (std::string(argv[i])=="--plugin"||std::string(argv[i])=="--plugin-reviewed"||std::string(argv[i])=="--team-adapter")){
+    if(std::string(argv[i])=="--team-adapter"){
+      if(i+1>=argc||!team_adapter_catalog.empty())throw std::runtime_error("--team-adapter requires exactly one catalog path");
+      auto path=fs::u8path(argv[i+1]);
+      if(!path.is_absolute())throw std::runtime_error("--team-adapter requires an absolute catalog path");
+      team_adapter_catalog=std::move(path);i+=2;continue;
+    }
     const bool reviewed=std::string(argv[i])=="--plugin-reviewed";
     if(i+1>=argc)throw std::runtime_error("--plugin requires an absolute manifest path");auto path=fs::u8path(argv[i+1]);
     if(!path.is_absolute())throw std::runtime_error("--plugin requires an absolute manifest path");
