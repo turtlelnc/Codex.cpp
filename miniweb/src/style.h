@@ -38,6 +38,7 @@ enum class Position { Static, Relative, Absolute, Fixed, Sticky };
 enum class TextAlign { Left, Right, Center, Justify };
 enum class WhiteSpace { Normal, Pre, Nowrap, PreWrap };
 enum class Overflow { Visible, Hidden, Auto, Scroll, Clip };
+enum class OverscrollBehavior { Auto, Contain, None };
 enum class FlexDirection { Row, RowReverse, Column, ColumnReverse };
 enum class FlexWrap { NoWrap, Wrap, WrapReverse };
 enum class Justify { FlexStart, FlexEnd, Center, SpaceBetween, SpaceAround, SpaceEvenly };
@@ -106,6 +107,7 @@ struct ComputedStyle {
     float opacity = 1.0f;
     Overflow overflow = Overflow::Visible;
     Overflow overflow_x = Overflow::Visible, overflow_y = Overflow::Visible;
+    OverscrollBehavior overscroll_x = OverscrollBehavior::Auto, overscroll_y = OverscrollBehavior::Auto;
     ObjectFit object_fit = ObjectFit::Fill;
 
     FlexDirection flex_direction = FlexDirection::Row;

@@ -401,6 +401,7 @@ const wait = async (fn) => {
       await require('./miniweb_observers_browser.cjs')(browser,path.resolve(process.argv[3]));
 
       await require('./miniweb_cascade_browser.cjs')(browser,path.resolve(process.argv[3]),binary);
+      await require("./miniweb_live_task_browser.cjs")(browser, binary);
       await page.setViewportSize({ width: 1280, height: 720 });
       const net = require('net'),
         probe = net.createServer();
