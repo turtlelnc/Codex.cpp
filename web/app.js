@@ -714,7 +714,7 @@ function creatorReviewCard(data, probe) {
   const status = data.kind === 'native'
     ? !data.built ? '等待构建 · 未启用' : probed ? '隔离加载测试通过 · 功能仍待验证 · 未启用' : '静态结构检查通过 · 尚未测试原生加载'
     : '静态结构检查通过 · 界面行为尚未验证 · 未启用';
-  node.append(el('p', data.enabled ? status.replace('未启用', '同 ID 模组已加载，更改需重启') : status), el('p', data.kind === 'native' ? '原生插件拥有宿主权限；请审阅源代码和实际功能，再手动重启启用。多人服务由管理员配置。' : '网页插件可访问当前会话；请审阅并验证界面，再手动重启启用。多人服务由管理员配置。'));
+  node.append(el('p', data.enabled ? status.replace('未启用', '同 ID 模组已加载，更改需重启') : status), el('p', data.isolated_read ? '此工具在独立沙箱中运行。读取文件仍需 Core 授权。' : data.kind === 'native' ? '原生插件拥有宿主权限；请审阅源代码和实际功能，再手动重启启用。多人服务由管理员配置。' : '网页插件可访问当前会话；请审阅并验证界面，再手动重启启用。多人服务由管理员配置。'));
   if (data.review_sha256) node.append(el('p', '审阅指纹 ' + data.review_sha256.slice(0, 16) + '… · 启动时校验 · 不代表安全审查或启用授权'));
   const actions = el('div', undefined, 'creator-actions');
   const inspect = el('button', '查看清单'); inspect.type = 'button';
@@ -1177,11 +1177,12 @@ function buildChat(snap, wasBusy = false) {
       const status = toolStatus(row, snap, toolEvents);
       const awaiting = status === 'approval';
       matched ||= awaiting;
-      const node = cached(key, [row, status], () =>
+      const args = awaiting ? (pending.arguments ?? row.args) : row.args;
+      const node = cached(key, [row, status, args], () =>
         toolCard(
           row.id,
           row.name,
-          row.args,
+          args,
           row.output,
           awaiting,
           status,

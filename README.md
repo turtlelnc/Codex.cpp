@@ -395,6 +395,17 @@ Core 检查并打开选定文件，拒绝目录穿越、链接和受保护路径
 `plugin check` 输出审核摘要，Core 校验后使用同一次读取捕获的库字节。
 清单模式的授权绑定包审核摘要，两种清单参数共享同一套权限。
 
+本地 WebUI 也可使用隔离清单。启动时会检查 OS 沙箱，后续 Agent 进程
+每次启动都会验证相同的包指纹。WebUI 审批只授权一次文件读取，已有的
+Core 文件授权仍适用。
+
+```sh
+codex-cpp --plugin-reviewed /absolute/isolated.json SHA256 web --root /absolute/workspace
+```
+
+该入口适用于本地 WebUI，团队服务器、侧聊和后台建议不加载这个插件。
+
+
 构建 `plugin-demo` 后，可用其输出目录中的 `isolated.json` 测试
 迁移后的 `plugin_status`，它在获得许可后统计选定文件的字节数。
 旧版服务覆盖、WebUI 脚本、插件附带 MCP 和前端仍沿用原有信任模式，

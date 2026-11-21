@@ -33,6 +33,7 @@ static std::map<std::string,std::string> plugin_reviews;
 // original writable workspace path. Legacy --plugin retains manual trust.
 static std::map<std::string,std::string> plugin_worker_manifests;
 static fs::path team_adapter_catalog;
+static std::optional<std::pair<std::string,std::string>> web_isolated_plugin;
 static void plugin_arguments(int& argc,char**& argv,std::vector<char*>& storage){
   bool seen_team_adapter=false;
   int i=1;while(i<argc && (std::string(argv[i])=="--plugin"||std::string(argv[i])=="--plugin-reviewed"||std::string(argv[i])=="--team-adapter")){

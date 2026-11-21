@@ -150,6 +150,104 @@ async function main() {
     assert.match(tools.find(item => item.tool_call_id === 'timeout').content, /timed out/);
     assert.match(tools.find(item => item.tool_call_id === 'success').content, /selected bytes/);
     fs.writeFileSync(grants, '[]');
+    requests = 0;
+    history = null;
+    const reservePort = require('node:net').createServer();
+    await new Promise(resolve => reservePort.listen(0, '127.0.0.1', resolve));
+    const port = reservePort.address().port;
+    await new Promise(resolve => reservePort.close(resolve));
+    const url = 'http://127.0.0.1:' + port;
+    const web = spawn(binary, ['--plugin-reviewed', manifest, fingerprint, 'web',
+      '--root', workspace, '--port', String(port), '--provider', 'custom', '--api', 'chat',
+      '--base-url', 'http://127.0.0.1:' + server.address().port, '--model', 'fixture', '--no-api-key'],
+      {cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe']});
+    let logs = '', cookie = '', csrf = '';
+    web.stdout.on('data', chunk => logs += chunk);
+    web.stderr.on('data', chunk => logs += chunk);
+    const closed = new Promise(resolve => web.once('close', resolve));
+    async function waitWeb(check) {
+      for (let i = 0; i < 300; i++) {
+        if (web.exitCode !== null) throw Error(logs);
+        const value = await check();
+        if (value) return value;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
+      throw Error('Web plugin timeout: ' + logs);
+    }
+    async function webRequest(route, data) {
+      const response = await fetch(url + route, {
+        method: data ? 'POST' : 'GET',
+        headers: {Origin: url, Cookie: cookie, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+        body: data ? JSON.stringify(data) : undefined
+      });
+      const result = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(result));
+      if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+      if (result.csrf) csrf = result.csrf;
+      return result.result;
+    }
+    const rpc = (op, args) => webRequest('/api/rpc', {op, ...args});
+    let browser, page;
+    try {
+      await waitWeb(async () => {
+        try { await webRequest('/api/me'); return true; }
+        catch (e) { if (e instanceof TypeError) return false; throw e; }
+      });
+      if (process.argv.includes('--browser')) {
+        const {chromium} = require('playwright');
+        browser = await chromium.launch({
+          ...(fs.existsSync('/usr/bin/chromium') ? {executablePath: '/usr/bin/chromium'} : {}),
+          args: ['--no-sandbox'],
+        });
+        page = await browser.newPage();
+        await page.goto(url);
+        await page.locator('#prompt').fill('Test WebUI isolated plugin');
+        await page.locator('#send').click();
+      } else {
+        await rpc('send', {text: 'Test WebUI isolated plugin', request_id: 'isolated-web-test'});
+      }
+      let previousApproval;
+      for (const [file, allow] of [['crash.txt', true], ['wait.txt', false], ['normal.txt', true]]) {
+        const pending = await waitWeb(async () => {
+          const {pending} = await rpc('snapshot');
+          return pending?.call_id && pending.call_id !== previousApproval ? pending : null;
+        });
+        const details = JSON.parse(pending.arguments);
+        assert.equal(details.permission, 'file.read');
+        assert.equal(details.plugin_sha256, fingerprint);
+        assert.equal(details.path, path.join(fs.realpathSync(workspace), file));
+        previousApproval = pending.call_id;
+        if (page) {
+          const card = page.locator('.tool[data-state="approval"]').filter({hasText: file});
+          await card.getByText(details.plugin_sha256, {exact: false}).waitFor();
+          await card.getByRole('button', {name: allow ? '允许' : '拒绝', exact: true}).click();
+        } else {
+          await rpc('approve', {approval: pending.call_id, allow});
+        }
+      }
+      await waitWeb(async () => !(await rpc('snapshot')).busy);
+      assert(offered && history, 'WebUI did not finish its isolated plugin turn');
+      const webTools = history.filter(item => item.role === 'tool');
+      assert.match(webTools.find(item => item.tool_call_id === 'crash').content, /worker failed/);
+      assert.match(webTools.find(item => item.tool_call_id === 'timeout').content, /not authorized/);
+      assert.match(webTools.find(item => item.tool_call_id === 'success').content, /selected bytes/);
+      assert.deepEqual(JSON.parse(fs.readFileSync(grants, 'utf8')), [], 'Web approvals are one-time');
+      const original = fs.readFileSync(manifest);
+      try {
+        const modelRequests = requests;
+        fs.appendFileSync(manifest, '\n');
+        await rpc('send', {text: 'Reject the changed package', request_id: 'changed-plugin-test'});
+        await waitWeb(async () => !(await rpc('snapshot')).busy);
+        assert.equal(requests, modelRequests, 'A changed package must fail before the model is called');
+      } finally {
+        fs.writeFileSync(manifest, original);
+      }
+    } finally {
+      if (browser) await browser.close();
+      web.kill();
+      await closed;
+    }
+    fs.writeFileSync(grants, '[]');
     assert.equal(run('normal.txt').status, 126, 'revoked persistent grant must not be reused');
     const audit = fs.readFileSync(path.join(storage, 'audit.json'), 'utf8');
     assert.match(audit, /"event":"use"/);
