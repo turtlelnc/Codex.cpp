@@ -3,7 +3,58 @@
 #include <sys/resource.h>
 #endif
 
+#if defined(__linux__)
+#include <linux/audit.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <cstddef>
+#endif
+
 namespace isolated_plugin {
+#if defined(__linux__)
+static bool restrict_process_creation() {
+#if defined(__x86_64__) && !defined(__ILP32__)
+  constexpr unsigned architecture = AUDIT_ARCH_X86_64;
+#elif defined(__aarch64__)
+  constexpr unsigned architecture = AUDIT_ARCH_AARCH64;
+#else
+  return false;
+#endif
+#if (defined(__x86_64__) && !defined(__ILP32__)) || defined(__aarch64__)
+  constexpr unsigned denied = SECCOMP_RET_ERRNO | EPERM;
+  sock_filter instructions[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, architecture, 1, 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
+#if defined(__x86_64__)
+    // Reject the alternate x32 syscall ABI before comparing syscall numbers.
+    BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, denied),
+#endif
+#ifdef SYS_fork
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_fork, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, denied),
+#endif
+#ifdef SYS_vfork
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_vfork, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, denied),
+#endif
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, denied),
+    // clone3 is 435 on the supported ABIs, including with older libc headers.
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 435, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, denied),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  sock_fprog program{static_cast<unsigned short>(sizeof instructions / sizeof instructions[0]), instructions};
+  return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0 &&
+         prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) == 0;
+#endif
+}
+#endif
 constexpr size_t input_limit = 64 * 1024;
 constexpr size_t output_limit = 64 * 1024;
 
@@ -15,7 +66,7 @@ static int worker(int argc, char** argv) {
       setrlimit(RLIMIT_CORE, &core)) return 2;
 #if defined(__linux__)
   const rlimit memory{512ull * 1024 * 1024, 512ull * 1024 * 1024};
-  if (setrlimit(RLIMIT_AS, &memory)) return 2;
+  if (setrlimit(RLIMIT_AS, &memory) || !restrict_process_creation()) return 2;
 #endif
   void* library = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
   if (!library) return 3;

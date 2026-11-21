@@ -115,6 +115,17 @@ async function main() {
     const normal = run('normal.txt');
     assert.equal(normal.status, 0, normal.stderr);
     assert.match(normal.stdout, /selected bytes/);
+    const portable = path.join(root, 'portable');
+    const runPortable = () => spawnSync(binary, ['--portable-dir', portable,
+      'plugin', 'isolated-run', library, workspace, 'normal.txt'],
+      {cwd: workspace, env, encoding: 'utf8', timeout: 12000});
+    const portableDenied = runPortable();
+    assert.equal(portableDenied.status, 126, portableDenied.stderr);
+    const portableGrants = path.join(portable, 'user', 'isolated-plugin-permissions', 'grants.json');
+    fs.writeFileSync(portableGrants, JSON.stringify([grant]));
+    const portableAllowed = runPortable();
+    assert.equal(portableAllowed.status, 0, portableAllowed.stderr);
+    assert.match(portableAllowed.stdout, /selected bytes/);
     const boundary = run('check.txt');
     assert.equal(boundary.status, 0, boundary.stderr);
     assert.match(boundary.stdout, /boundaries-ok/);

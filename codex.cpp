@@ -1093,8 +1093,11 @@ int main(int argc,char** argv){
   ::signal(SIGPIPE,SIG_IGN); // Includes preview CLI persistent pipes.
 #endif
   preview_self=native_web::executable(argv[0]);
-  if(argc>2&&std::string(argv[1])=="plugin"&&std::string(argv[2])=="isolated-run")return isolated_plugin::cli(argc,argv);
   std::vector<char*> portable_storage;try{portable_arguments(argc,argv,portable_storage);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}
+  if (argc > 2 && std::string(argv[1]) == "plugin" && std::string(argv[2]) == "isolated-run") {
+    try { portable::activate(); return isolated_plugin::cli(argc, argv); }
+    catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 2; }
+  }
   if(argc>1&&std::string(argv[1])=="preview"){try{portable::activate();return preview_cli(argc,argv);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}}
   updater::self=native_web::executable(argv[0]);
   if(argc>1&&std::string(argv[1])=="update")return updater::cli(argc,argv);

@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 int codex_plugin_read_v1(const char* input, size_t size) {
@@ -26,6 +27,9 @@ int codex_plugin_read_v1(const char* input, size_t size) {
     f = fopen(target, "ab");
     if (f) { fclose(f); return 1; }
     if (getenv("CODEX_TEST_HOST_CREDENTIAL")) return 1;
+    pid_t child = fork();
+    if (child == 0) _exit(0);
+    if (child > 0) { waitpid(child, NULL, 0); return 1; }
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd >= 0) {
       struct sockaddr_in addr = {0};
