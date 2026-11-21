@@ -30,6 +30,14 @@ async function main() {
     const compiled = spawnSync('cc', [process.platform === 'darwin' ? '-dynamiclib' : '-shared',
       '-fPIC', 'tests/fixtures/isolated_plugin.c', '-o', library], {encoding: 'utf8'});
     assert.equal(compiled.status, 0, compiled.stderr);
+    for (const overlappingRoot of ['/usr/share', '/usr']) {
+      const denied = spawnSync(binary,
+        ['plugin', 'isolated-run', library, overlappingRoot, 'unselected.txt'],
+        {cwd: workspace, env, encoding: 'utf8', timeout: 12000});
+      assert.equal(denied.status, 126, denied.stderr);
+      assert.match(denied.stderr, /workspace overlaps a system runtime read grant/);
+    }
+
     const manifest = path.join(root, 'isolated.json');
     const platform = process.platform === 'darwin' ? 'macos' : 'linux';
     fs.writeFileSync(manifest, JSON.stringify({api: 1, id: 'creator-isolated-fixture',

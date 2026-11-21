@@ -181,6 +181,7 @@ public:
       if (!write_all(library, library_, error)) return {2, error};
       ProcessPolicy policy;
       policy.role = ProcessRole::IsolatedPlugin;
+      policy.workspace = workspace;
       policy.no_fork = true;
       policy.reads.push_back(library);
 
