@@ -845,7 +845,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store;RuntimePolicy policy;bool json = false;bool list_sessions = false;
+struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;int max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
@@ -866,8 +866,8 @@ Portable data (prefix options must precede other options):
   update check|download|stage|status|install|rollback  verified, opt-in updates
 
 Plugin modules (before the command/options):
-  --plugin /absolute/plugin.json  load a trusted native/WebUI bundle; repeatable
-  --plugin-reviewed /absolute/plugin.json SHA256  verify Creator review and load a private snapshot
+  --plugin /absolute/plugin.json  load a manifest (isolated_read for the isolated CLI pilot)
+  --plugin-reviewed /absolute/plugin.json SHA256  require the reviewed package fingerprint
   plugin inspect                  show active service owners and replacement layers
   plugin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
   plugin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
@@ -911,6 +911,7 @@ Agent options:
   --design                      enable Design instructions and review
   --no-tools                    discussion-only mode; reject tool calls
   --max-steps N                 agent step limit (default: 64)
+  --isolated-plugin ABSOLUTE_LIBRARY  enable the isolated read-only plugin tool
   --mcp-config PATH             trusted MCP stdio server configuration JSON
   --image PATH                  attach an image to the next prompt (repeatable)
   -h, --help
@@ -940,6 +941,7 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "-h" || a == "--help"){print_help();std::exit(0);}if(a == "--root" && i + 1 < argc){o.root = argv[++i];continue;}
   if(a == "--frontend" && i+1<argc){o.frontend=argv[++i];o.interactive=true;continue;}if(a=="--unsafe-execution"){o.unsafe_execution=true;continue;}
   if(a == "--session-dir" && i + 1 < argc){o.session_store=fs::absolute(fs::u8path(argv[++i]));continue;}
+  if(a == "--isolated-plugin"){if(i+1==argc){err="Missing isolated plugin library";return std::nullopt;}o.isolated_plugin_library=fs::u8path(argv[++i]);continue;}
   if(a == "--mcp-config" && i + 1 < argc){o.mcp_config = argv[++i];continue;}if(a == "--image" && i + 1 < argc){o.images.emplace_back(argv[++i]);continue;}
   if(a == "--resume"){if(i+1>=argc || std::string(argv[i+1]).rfind("-",0)==0){err="--resume requires a session ID; use --list-sessions or interactive /resume";return{};}o.resume = argv[++i];continue;}if(a == "--list-models"){o.list_models = true;continue;}if(a == "--list-sessions"){o.list_sessions = true;continue;}
   if(a=="--design"){o.design=true;continue;}
@@ -1058,6 +1060,8 @@ static void print_plain_banner(const Options& opt,const ApiClient& api){std::cou
 #include "codex_plugin_creator.inc"
 #include "codex_preview.inc"
 #include "codex_portable.inc"
+#include "codex_plugin_permissions.inc"
+#include "codex_plugin_isolated.inc"
 #include "codex_update.inc"
 #include "codex_local_web.inc"
 #include "codex_settings_tui.inc"
@@ -1081,6 +1085,7 @@ int main(int argc,char** argv){
   std::vector<std::string> utf8_arguments;for(int i=0;i<wide_count;++i)utf8_arguments.push_back(fs::path(wide_args[i]).u8string());LocalFree(wide_args);
   std::vector<char*> utf8_pointers;for(auto& value:utf8_arguments)utf8_pointers.push_back(value.data());utf8_pointers.push_back(nullptr);argc=wide_count;argv=utf8_pointers.data();
 #endif
+  if(argc>1&&std::string(argv[1])=="--isolated-plugin-worker")return isolated_plugin::worker(argc,argv);
   if(argc>1&&std::string(argv[1])=="--miniweb-worker")return codex_miniweb_worker(argc,argv);
   if(argc>1&&std::string(argv[1])=="--miniweb-session-worker")return codex_miniweb_session_worker(argc,argv);
 #if !defined(_WIN32)
@@ -1088,6 +1093,10 @@ int main(int argc,char** argv){
 #endif
   preview_self=native_web::executable(argv[0]);
   std::vector<char*> portable_storage;try{portable_arguments(argc,argv,portable_storage);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}
+  if (argc > 2 && std::string(argv[1]) == "plugin" && std::string(argv[2]) == "isolated-run") {
+    try { portable::activate(); return isolated_plugin::cli(argc, argv); }
+    catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 2; }
+  }
   if(argc>1&&std::string(argv[1])=="preview"){try{portable::activate();return preview_cli(argc,argv);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}}
   updater::self=native_web::executable(argv[0]);
   if(argc>1&&std::string(argv[1])=="update")return updater::cli(argc,argv);
@@ -1098,7 +1107,36 @@ int main(int argc,char** argv){
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
   std::vector<char*> plugin_arguments_storage;
-  try{plugin_arguments(argc,argv,plugin_arguments_storage);plugin_creator_self=native_web::executable(argv[0]);plugin_boot();portable::activate();
+  std::optional<isolated_plugin::ManifestModule> isolated_manifest;
+  try {
+    plugin_arguments(argc,argv,plugin_arguments_storage);
+    plugin_creator_self=native_web::executable(argv[0]);
+    if (!plugin_manifests.empty()) {
+      for (int i = 1; i < argc && std::string_view(argv[i]) != "--"; ++i)
+        if (std::string_view(argv[i]) == "--isolated-plugin")
+          throw std::runtime_error("Choose one isolated plugin entry point");
+    }
+    for (const auto& manifest : plugin_manifests) {
+      const auto path = fs::u8path(manifest);
+      const auto definition = plugin_json(creator_read(fs::canonical(path.parent_path()),
+                                                       path.filename().u8string(), 65536));
+      if (!definition || definition->kind != Json::Object)
+        throw std::runtime_error("Invalid plugin manifest");
+      if (!definition->get("isolated_read")) continue;
+      if (plugin_manifests.size() != 1)
+        throw std::runtime_error("An isolated manifest must be the only plugin manifest");
+      const std::string command = argc > 1 ? argv[1] : "";
+      if (command == "web" || command == "serve" || command == "connect" || command == "plugin")
+        throw std::runtime_error("Isolated plugin manifests are supported only by the local CLI Agent");
+      const auto reviewed = plugin_reviews.find(manifest);
+      isolated_manifest = isolated_plugin::read_manifest(path,
+          reviewed == plugin_reviews.end() ? "" : reviewed->second);
+    }
+    if (isolated_manifest) {
+      plugin_builtins();
+      plugin_runtime().freeze();
+    } else plugin_boot();
+    portable::activate();
     if(argc>1 && std::string(argv[1])=="plugin"){
       if(argc==3 && std::string(argv[2])=="inspect"){std::cout<<plugin_inspect()<<'\n';return 0;}
       return plugin_creator_cli(argc,argv);
@@ -1128,6 +1166,22 @@ Session session;if(!init_session(session,opt.root,opt.json,opt.resume,err)){std:
 if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p){return p.enabled&&p.manifest.get("ui");}))router.add<PluginUiTool>();router.add<ReadFileTool>();router.add<ListDirTool>();router.add<ReadSkillTool>();router.add<WriteFileTool>();router.add<ShellTool>();router.add<ApplyPatchTool>();
 router.add<GitReadTool>();router.add<GitWriteTool>();
 router.add<PluginScaffoldTool>();router.add<PluginCheckTool>();router.add<PluginBuildTool>();router.add<PluginTestTool>();
+isolated_plugin::ReadTool* isolated_tool = nullptr;
+if (isolated_manifest || !opt.isolated_plugin_library.empty()) {
+  try {
+    if (isolated_manifest && !opt.isolated_plugin_library.empty())
+      throw std::runtime_error("Choose one isolated plugin entry point");
+    auto tool = isolated_manifest
+        ? std::make_unique<isolated_plugin::ReadTool>(std::move(*isolated_manifest), opt.root)
+        : std::make_unique<isolated_plugin::ReadTool>(opt.isolated_plugin_library, opt.root);
+    if (router.find(tool->name()) || tool->name() == "preview_session" ||
+        tool->name() == "preview_screenshot" || tool->name() == "design_review" || tool->name() == "plugin_ui")
+      throw std::runtime_error("Isolated plugin name conflicts with a built-in tool");
+    isolated_tool = tool.get();
+    router.add_dynamic(std::move(tool));
+  }
+  catch (const std::exception& e) { std::cerr << "Isolated plugin: " << e.what() << '\n'; return 2; }
+}
 for(const auto& tool:plugin_tools)router.add_dynamic(std::make_unique<PluginTool>(tool));
 std::vector<std::shared_ptr<McpServer>> mcp_servers;fs::path mcp_config=opt.mcp_config.empty() ? fs::path(getenv_or("CODEX_CPP_HOME",getenv_or("HOME")+"/.codex-cpp"))/"mcp.json" : opt.mcp_config;
 std::string mcp_report=load_mcp_tools(mcp_config,opt.root,router,mcp_servers);if(!mcp_report.empty()&& mcp_servers.empty()&& fs::exists(mcp_config)) std::cerr<<"[mcp] "<<mcp_report;
@@ -1273,6 +1327,23 @@ if(reasoning_received && !session.record_item("{\"type\":\"codex_reasoning\",\"f
     auto save_observations=[&](){for(const auto& observation:tool_observations)if(!session.record_item(observation)){err="could not save tool images";return false;}tool_observations.clear();return true;};
     for(const FunctionCall& c:response->calls){ session.emit(EventKind::ToolRequested,"{\"step\":" + std::to_string(step)+ ",\"tool\":\"" + json_escape(c.name)+ "\",\"call_id\":\"" + json_escape(c.call_id)+ "\"}");
     if(!opt.json){if(tui){tui->add_tool(c.name,c.arguments);if(c.name == "apply_patch"){auto p = json_string_field(c.arguments,"patch");if(p)tui->add_diff(*p);}tui->render("running tool...");}else std::cout << "[tool " << step << "] " << c.name << '\n';}
+    if (isolated_tool && c.name == isolated_tool->name()) {
+      isolated_tool->permissions.set_session(session.id);
+      isolated_tool->prompt = {};
+      if (tui && !frontend && turn_policy.approval == ApprovalPolicy::OnRequest)
+        isolated_tool->prompt = [&](const std::string& identity, const fs::path& root,
+                                    const fs::path& file, const fs::path& directory) {
+          using plugin_permissions::Decision;
+          const auto body = "Plugin SHA-256 " + identity + "\nRead file " +
+              safe_terminal_text(json_escape((root / file).u8string())) + "\nDirectory scope " +
+              safe_terminal_text(json_escape((root / directory).u8string()));
+          const int choice = tui->settings_menu("Plugin file.read permission", body,
+              {"Deny", "Allow once", "Allow file this session", "Allow directory this session",
+               "Always allow this file", "Always allow this directory"}, true);
+          if (choice < 1 || choice > 5) return Decision::Deny;
+          return static_cast<Decision>(choice);
+        };
+    }
     ToolResult r = router.invoke(c,opt.root,turn_policy,session, tui ? std::function<std::optional<bool>(const std::string&)>([&](const std::string& msg)->std::optional<bool>{return tui->approval(msg);})
       : std::function<std::optional<bool>(const std::string&)>{}, [&](){if(tui)tui->render("running tool...");},bool(tui));
 #if !defined(_WIN32)
@@ -1328,7 +1399,7 @@ if(frontend){frontend->state=[&](){const auto transcript=session.transcript.size
     return "{\"session_id\":\""+json_escape(session.id)+"\",\"model\":\""+json_escape(api.model)+"\",\"workspace\":\""+json_escape(opt.root.string())+"\",\"busy\":"+(frontend->busy?"true":"false")+",\"isolated\":"+(execution.unsafe?"false":"true")+",\"transcript\":\""+json_escape(transcript)+"\",\"columns\":"+std::to_string(terminal_columns())+",\"rows\":"+std::to_string(terminal_rows()>2?terminal_rows()-2:0)+"}";};
   frontend->dispatch=[&](const std::string& method,const Json& params)->std::string{
     if(method=="session.list"){std::string out="[";for(const auto& id:session_ids(opt.root)){if(out.size()>1)out+=",";out+="\""+json_escape(id)+"\"";}return out+"]";}
-    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why,&session))throw std::runtime_error(why);session=std::move(next);frontend->actions.clear();frontend->steering.clear();project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
+    if(method=="session.create"||method=="session.resume"){std::optional<std::string> id;if(method=="session.resume"){id=plugin_string(params,"id");if(id->empty())throw std::runtime_error("missing session id");}Session next;std::string why;if(!init_session(next,opt.root,opt.json,id,why,&session))throw std::runtime_error(why);session=std::move(next);if(isolated_tool)isolated_tool->permissions.set_session(session.id);frontend->actions.clear();frontend->steering.clear();project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();tui->reset_transcript();plugins.event("session.started",opt.root);return frontend->state();}
     if(method=="model.select"){const auto model=plugin_string(params,"model");if(model.empty()||model.size()>128||safe_terminal_text(model)!=model)throw std::runtime_error("invalid model");const auto effort=plugin_string(params,"effort");if(!effort.empty()&&effort!="none"&&effort!="minimal"&&effort!="low"&&effort!="medium"&&effort!="high"&&effort!="xhigh"&&effort!="max"&&effort!="ultra")throw std::runtime_error("invalid reasoning effort");api.model=model;api.reasoning_effort=effort;tui->set_model(api.model,api.reasoning_effort);return frontend->state();}
     if(method=="model.list"){std::string why;auto models=read_models(api,why);if(!models)throw std::runtime_error(why);std::string out="[";for(const auto& model:*models){if(out.size()>1)out+=",";out+="\""+json_escape(model.id)+"\"";}return out+"]";}
     const std::map<std::string,std::string> files={{"fs.read","read_file"},{"fs.list","list_dir"},{"fs.write","write_file"}};auto file=files.find(method);if(file!=files.end()){
@@ -1365,7 +1436,7 @@ if(!interactive)return 0;std::vector<std::string> input_history;for(;;){std::str
   quota_status_visible=false;if(tui)tui->set_status_details("");std::string token = slash_command_token(line);std::string args = command_arguments(line);
   auto say =[&](const std::string& text,bool is_error=false){if(tui){if(is_error)tui->add_error(text);else tui->add_system(text);tui->render();}
   else{std::cout << text;if(text.empty()|| text.back()!='\n')std::cout << '\n';} }; auto fresh_session =[&]()->bool{Session next;std::string local_err;
-  if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
+  if(!init_session(next,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);return false;} session = std::move(next);if(isolated_tool)isolated_tool->permissions.set_session(session.id);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear();
   if(tui){tui->set_thread_name("");tui->reset_transcript();}plugins.event("session.started",opt.root);return true; }; if(token!="/quit"&&local_web.paused&&!local_web.running()){
     local_web.stop();std::string why;Session refreshed;
     if(!init_session(refreshed,opt.root,opt.json,session.id,why,&session)){say("Cannot resume terminal session: "+why,true);continue;}
@@ -1470,6 +1541,16 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   if(token=="/update"){
     try{auto words=split_words(args);if(words.empty()||words[0]=="status")say(update_job.report());else if((words[0]=="check"||words[0]=="download")&&words.size()<=2)say(update_job.start(words.size()==2?words[1]:"latest",words[0]=="download"));else if(words[0]=="install"&&words.size()==1){if(local_web.running())throw std::runtime_error("Use /web stop before installing an update");auto info=updater::status();if(plugin_string(info,"status")!="ready")throw std::runtime_error("No verified update ready");const auto question="Install "+plugin_string(info,"tag")+" ("+plugin_text(info,"sha256").substr(0,12)+") and exit? Backup and portable data are retained.";bool confirmed=tui?tui->choose(question,{"Cancel","Install and exit"})==1:approve(question,false);if(confirmed){updater::schedule(false);say("Installer scheduled; exiting to release files and data locks.");break;}}else say("Usage: /update check|download [TAG] | status | install",true);}catch(const std::exception& e){say(e.what(),true);}continue;
   }
+  if(token=="/plugin-permissions"){
+    try {
+      if (!isolated_tool) say("Enable an isolated plugin to manage its permissions.");
+      else {
+        isolated_tool->permissions.set_session(session.id);
+        say(isolated_tool->permissions.manage(args));
+      }
+    } catch (const std::exception& e) { say(e.what(),true); }
+    continue;
+  }
   if(token=="/plugin"){std::string report;for(const auto& service:plugin_runtime().inspect())report+=service.name+" -> "+service.owner+"\n";say(report);continue;}
   if(token=="/plugins"){const auto space=args.find(' ');const auto action=args.substr(0,space);const auto value=space==std::string::npos?std::string():trim(args.substr(space+1));
     if(args.empty()||action=="list")say(plugins.list()+"\n/plugins info ID | install PATH | update PATH | check PATH | enable ID | disable ID | config ID KEY VALUE | reset ID KEY | open ID | uninstall ID");
@@ -1536,7 +1617,7 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   if(token == "/resume"){std::string id=args;
   if(id.empty()&& tui){auto ids=session_ids(opt.root);if(ids.empty()){say("No saved sessions.");continue;}int c=tui->choose("Resume a saved chat",ids,0);if(c<0)continue;id=ids[static_cast<size_t>(c)];}
   if(id.empty()){say("Usage: /resume SESSION_ID");continue;}Session resumed;std::string local_err; if(!init_session(resumed,opt.root,opt.json,id,local_err,&session)){say(local_err,true);continue;}
-  session=std::move(resumed);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
+  session=std::move(resumed);if(isolated_tool)isolated_tool->permissions.set_session(session.id);project_memory=load_project_memory(opt.root);last_assistant.clear();pending_mentions.clear();pending_images.clear(); if(tui){tui->set_thread_name("");tui->reset_transcript();}
   say("Resumed " + id + " (" + std::to_string(session.transcript.size())+ " transcript bytes)");continue; }
   if(token == "/fork"){const std::string old=session.id;const auto prior_items=session.items;
   Session forked;std::string local_err;if(!init_session(forked,opt.root,opt.json,std::nullopt,local_err)){say(local_err,true);continue;}
@@ -1545,7 +1626,7 @@ if(token == "/quit")break;if(token == "/help"){std::ostringstream h;for(const au
   if(copy_error){say("Could not fork full session journal: "+copy_error.message(),true);continue;}
   forked.items=prior_items;forked.estimated_tokens=session.estimated_tokens;
   if(fs::exists(session.transcript_path))fs::copy_file(session.transcript_path,forked.transcript_path,fs::copy_options::overwrite_existing,copy_error);
-  if(copy_error){say("Could not copy full session transcript: "+copy_error.message(),true);continue;}forked.transcript=transcript_tail(forked.transcript_path);forked.append_transcript("\n[forked session]\n");session=std::move(forked);project_memory=load_project_memory(opt.root);
+  if(copy_error){say("Could not copy full session transcript: "+copy_error.message(),true);continue;}forked.transcript=transcript_tail(forked.transcript_path);forked.append_transcript("\n[forked session]\n");session=std::move(forked);if(isolated_tool)isolated_tool->permissions.set_session(session.id);project_memory=load_project_memory(opt.root);
   if(tui){tui->set_thread_name("fork");tui->reset_transcript();} say("Forked " + old + " → " + session.id);continue; }
   if(token == "/archive"){std::string local_err;if(!archive_session_files(session,local_err)){say(local_err,true);continue;} say("Archived session " + session.id);break; }
   if(token == "/delete"){bool ok=false;if(tui)ok=tui->choose("Permanently delete this session?",{"Cancel","Delete permanently"},0)==1;
