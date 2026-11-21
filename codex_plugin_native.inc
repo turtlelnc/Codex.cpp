@@ -103,8 +103,8 @@ static void plugin_load_manifest(const fs::path& path){
   plugin_runtime().mount(std::move(module));
   plugin_tools.insert(plugin_tools.end(),tools.begin(),tools.end());if(web)plugin_web_modules.push_back(*web);
 }
-static void plugin_boot(){
-  if (!plugin_manifests.empty())
+static void plugin_boot(bool isolated_manifest = false){
+  if (!isolated_manifest && !plugin_manifests.empty())
     throw std::runtime_error("Legacy --plugin and --plugin-reviewed execution is disabled. Use --isolated-plugin with a supported module.");
   plugin_builtins();
   plugin_runtime().freeze();

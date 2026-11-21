@@ -52,8 +52,27 @@ static int worker(int argc, char** argv) {
 #endif
 }
 
+struct ManifestModule {
+  std::string name, bytes, fingerprint;
+};
+
+static ManifestModule read_manifest(const fs::path& path, const std::string& reviewed) {
+  std::map<std::string,std::string> captured;
+  const auto report = creator_check(path.parent_path(), path.u8string(), &captured, true);
+  const auto manifest = plugin_json(captured.at(path.filename().u8string()));
+  const auto tool = manifest ? manifest->get("isolated_read") : nullptr;
+  if (!tool)
+    throw std::runtime_error("Legacy plugin execution is disabled. Migrate to an isolated_read manifest.");
+  const auto fingerprint = plugin_text(report, "review_sha256");
+  if (!reviewed.empty() && fingerprint != reviewed)
+    throw std::runtime_error("Isolated plugin review mismatch");
+  if (!plugin_flag(report, "built")) throw std::runtime_error("Isolated plugin library is missing");
+  return {tool->str(), std::move(captured.at(plugin_text(report, "library"))), fingerprint};
+}
+
 class ReadTool final : public ToolRuntime {
   std::string library_, identity_;
+  std::string tool_name_ = "isolated_plugin_read";
 public:
   plugin_permissions::FileRead permissions;
   plugin_permissions::Prompt prompt;
@@ -65,9 +84,12 @@ public:
     library_ = creator_read(parent, library.filename().u8string(), 32 * 1024 * 1024);
     identity_ = native_web::digest(library_);
   }
-  std::string name() const override { return "isolated_plugin_read"; }
+  ReadTool(ManifestModule module, const fs::path& workspace)
+      : library_(std::move(module.bytes)), identity_(std::move(module.fingerprint)),
+        tool_name_(std::move(module.name)), permissions(workspace) {}
+  std::string name() const override { return tool_name_; }
   std::string spec_json() const override {
-    return one_arg_tool_spec("isolated_plugin_read",
+    return one_arg_tool_spec(tool_name_.c_str(),
         "Send one workspace file (up to 64 KiB) to the explicitly enabled isolated plugin.", "path");
   }
   ToolResult run(const std::string& args, const fs::path& root) override {

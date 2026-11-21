@@ -866,7 +866,8 @@ Portable data (prefix options must precede other options):
   update check|download|stage|status|install|rollback  verified, opt-in updates
 
 Plugin modules (before the command/options):
-  Legacy --plugin and --plugin-reviewed runtime loading is disabled.
+  --plugin /absolute/plugin.json  enable one isolated_read manifest for CLI
+  --plugin-reviewed /absolute/plugin.json SHA256  require the reviewed package fingerprint
   plugin inspect                  show active service owners and replacement layers
   plugin scaffold PATH ID [native|web]  create a plugin starter in the current workspace
   plugin check|build|test PATH     review, sandbox-build or isolate-probe a plugin
@@ -1104,7 +1105,22 @@ int main(int argc,char** argv){
   if(argc>1&&std::string(argv[1])=="--native-agent-git")return native_web::agent_git_main(argc,argv);
   if(argc>1&&std::string(argv[1])=="--native-git-command")return native_web::git_command_main(argc,argv);
   std::vector<char*> plugin_arguments_storage;
-  try{plugin_arguments(argc,argv,plugin_arguments_storage);plugin_creator_self=native_web::executable(argv[0]);plugin_boot();portable::activate();
+  std::optional<isolated_plugin::ManifestModule> isolated_manifest;
+  try {
+    plugin_arguments(argc,argv,plugin_arguments_storage);
+    plugin_creator_self=native_web::executable(argv[0]);
+    if (!plugin_manifests.empty()) {
+      if (plugin_manifests.size() != 1) throw std::runtime_error("Only one isolated plugin manifest is supported");
+      const std::string command = argc > 1 ? argv[1] : "";
+      if (command == "web" || command == "serve" || command == "connect" || command == "plugin")
+        throw std::runtime_error("Isolated plugin manifests are supported only by the local CLI Agent");
+      const auto& manifest = plugin_manifests.front();
+      const auto reviewed = plugin_reviews.find(manifest);
+      isolated_manifest = isolated_plugin::read_manifest(fs::u8path(manifest),
+          reviewed == plugin_reviews.end() ? "" : reviewed->second);
+    }
+    plugin_boot(isolated_manifest.has_value());
+    portable::activate();
     if(argc>1 && std::string(argv[1])=="plugin"){
       if(argc==3 && std::string(argv[2])=="inspect"){std::cout<<plugin_inspect()<<'\n';return 0;}
       return plugin_creator_cli(argc,argv);
@@ -1135,9 +1151,16 @@ if(std::any_of(plugins.entries.begin(),plugins.entries.end(),[](const Plugin& p)
 router.add<GitReadTool>();router.add<GitWriteTool>();
 router.add<PluginScaffoldTool>();router.add<PluginCheckTool>();router.add<PluginBuildTool>();router.add<PluginTestTool>();
 isolated_plugin::ReadTool* isolated_tool = nullptr;
-if (!opt.isolated_plugin_library.empty()) {
+if (isolated_manifest || !opt.isolated_plugin_library.empty()) {
   try {
-    auto tool = std::make_unique<isolated_plugin::ReadTool>(opt.isolated_plugin_library, opt.root);
+    if (isolated_manifest && !opt.isolated_plugin_library.empty())
+      throw std::runtime_error("Choose one isolated plugin entry point");
+    auto tool = isolated_manifest
+        ? std::make_unique<isolated_plugin::ReadTool>(std::move(*isolated_manifest), opt.root)
+        : std::make_unique<isolated_plugin::ReadTool>(opt.isolated_plugin_library, opt.root);
+    if (router.find(tool->name()) || tool->name() == "preview_session" ||
+        tool->name() == "preview_screenshot" || tool->name() == "design_review" || tool->name() == "plugin_ui")
+      throw std::runtime_error("Isolated plugin name conflicts with a built-in tool");
     isolated_tool = tool.get();
     router.add_dynamic(std::move(tool));
   }

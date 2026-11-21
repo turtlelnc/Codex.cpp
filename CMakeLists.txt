@@ -116,6 +116,7 @@ if(APPLE)
 endif()
 add_custom_command(TARGET plugin-demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/plugin.json $<TARGET_FILE_DIR:plugin-demo>/plugin.json
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/isolated.json $<TARGET_FILE_DIR:plugin-demo>/isolated.json
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/examples/plugin/client.js $<TARGET_FILE_DIR:plugin-demo>/client.js)
 
 # Explicit protocol codecs remain optional native modules; the default host is

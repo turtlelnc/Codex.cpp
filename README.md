@@ -389,7 +389,13 @@ Core 检查并打开选定文件，拒绝目录穿越、链接和受保护路径
 当前协议只支持对选定文件的一次读取请求，终端、网络、常驻状态及签名
 发布者身份还不属于试点。现有进程内原生插件使用单独的信任模式。
 
-旧版 `--plugin` 和 `--plugin-reviewed` 的运行时入口已停用。
-安装目录中的旧原生服务、WebUI 脚本、插件附带 MCP 和第三方前端也不能启用。
-声明式元数据、静态检查和包导入仍可用，Creator 的原生 ABI 探测由隔离子进程执行。
-旧版服务覆盖、前端和团队协议兼容插件需要迁移到各自的隔离接口后才能恢复运行。
+本地 CLI Agent 也接受 `--plugin /absolute/isolated.json` 和
+`--plugin-reviewed /absolute/isolated.json SHA256`。清单沿用 API 1 的
+`id` 和平台 `libraries` 字段，并用 `isolated_read` 声明一个工具名。
+`plugin check` 输出审核摘要，Core 校验后使用同一次读取捕获的库字节。
+清单模式的授权绑定包审核摘要，两种清单参数共享同一套权限。
+
+构建 `plugin-demo` 后，可用其输出目录中的 `isolated.json` 测试
+迁移后的 `plugin_status`，它在获得许可后统计选定文件的字节数。
+旧版服务覆盖、WebUI 脚本、插件附带 MCP 和前端仍需迁移到对应隔离接口。
+Creator 的旧原生 ABI 探测继续在隔离子进程中运行。静态检查和包导入仍可用。
