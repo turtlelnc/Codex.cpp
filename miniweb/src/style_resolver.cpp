@@ -277,6 +277,9 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
             else if (util::ends_with(p,"-color")) b.current_color=true;
         }
     }
+    else if (p == "overscroll-behavior") st.overscroll_x = st.overscroll_y = OverscrollBehavior::Auto;
+    else if (p == "overscroll-behavior-x") st.overscroll_x = OverscrollBehavior::Auto;
+    else if (p == "overscroll-behavior-y") st.overscroll_y = OverscrollBehavior::Auto;
     else if (p == "overflow") st.overflow = st.overflow_x = st.overflow_y = Overflow::Visible;
     else if (p == "overflow-x") {st.overflow_x=Overflow::Visible;st.overflow=st.overflow_y==Overflow::Visible?Overflow::Visible:Overflow::Hidden;}
     else if (p == "overflow-y") {st.overflow_y=Overflow::Visible;st.overflow=st.overflow_x==Overflow::Visible?Overflow::Visible:Overflow::Hidden;}
@@ -1023,6 +1026,20 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
             if(p!="overflow-y")st.overflow_x=parse(tokens[0]);
             if(p!="overflow-x")st.overflow_y=parse(p=="overflow"&&tokens.size()>1?tokens[1]:tokens[0]);
             st.overflow=st.overflow_x==Overflow::Visible&&st.overflow_y==Overflow::Visible?Overflow::Visible:Overflow::Hidden;
+        }
+    } else if (p == "overscroll-behavior" || p == "overscroll-behavior-x" || p == "overscroll-behavior-y") {
+        const auto tokens = util::split_ws(vl);
+        if (!tokens.empty() && tokens.size() <= (p == "overscroll-behavior" ? 2u : 1u) &&
+            std::all_of(tokens.begin(), tokens.end(), [](const std::string& token) {
+                return token == "auto" || token == "contain" || token == "none";
+            })) {
+            const auto parse = [](const std::string& token) {
+                if (token == "contain") return OverscrollBehavior::Contain;
+                if (token == "none") return OverscrollBehavior::None;
+                return OverscrollBehavior::Auto;
+            };
+            if (p != "overscroll-behavior-y") st.overscroll_x = parse(tokens.front());
+            if (p != "overscroll-behavior-x") st.overscroll_y = parse(tokens.back());
         }
     } else if (p == "box-sizing") st.box_sizing_border = vl == "border-box";
     else if (p == "border-radius") {
