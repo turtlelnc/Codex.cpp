@@ -171,6 +171,9 @@ module.exports.borders = async function compareBorders(page, fixture, miniPNG) {
             [10, 140],
             [70, 140],
             [130, 140],
+            [201, 141], [206, 146], [210, 150], [226, 142], [226, 162], [281, 141],
+            [307, 142], [330, 162], [307, 180], [282, 162],
+            [307, 162], [361, 141], [386, 142],
           ].map(([x, y]) => Array.from(ctx.getImageData(x, y, 1, 1).data)),
         );
       }
