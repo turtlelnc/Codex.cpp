@@ -148,6 +148,67 @@ void Canvas::fill_linear_gradient(const RectF& r, const Gradient& g, float opaci
 
 void Canvas::draw_border(const RectF& r, const ComputedStyle& st, float opacity) {
     float l = border_left(st), rr = border_right(st), t = border_top(st), b = border_bottom(st);
+    const float radius = std::min({st.border_radius, r.w / 2, r.h / 2});
+    if (radius > 0.5f && opacity > 0) {
+        const float widths[]{t, rr, b, l};
+        const RectF inner{r.x + l, r.y + t, r.w - l - rr, r.h - t - b};
+        auto contains = [&](const RectF& box, float x, float y, bool inset) {
+            if (x < box.x || y < box.y || x >= box.x + box.w || y >= box.y + box.h)
+                return false;
+            for (int v = 0; v < 2; ++v) for (int h = 0; h < 2; ++h) {
+                const float rx = radius - (inset ? (h == 0 ? l : rr) : 0);
+                const float ry = radius - (inset ? (v == 0 ? t : b) : 0);
+                if (rx <= 0 || ry <= 0) continue;
+                const float dx = h == 0 ? box.x + rx - x : x - (box.right() - rx);
+                const float dy = v == 0 ? box.y + ry - y : y - (box.bottom() - ry);
+                if (dx > 0 && dy > 0 && (dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) > 1)
+                    return false;
+            }
+            return true;
+        };
+        const auto& clip = clips_.back();
+        const auto pixel_limit = [](float coordinate, int dimension) {
+            return static_cast<int>(std::clamp(coordinate, 0.f, float(dimension)));
+        };
+        const int x0 = pixel_limit(std::floor(std::max(r.x, clip.x)), w_);
+        const int x1 = pixel_limit(std::ceil(std::min(r.right(), clip.right())), w_);
+        const int y0 = pixel_limit(std::floor(std::max(r.y, clip.y)), h_);
+        const int y1 = pixel_limit(std::ceil(std::min(r.bottom(), clip.bottom())), h_);
+        for (int y = y0; y < y1; ++y) {
+            const bool inner_row = y >= inner.y && y + 1 <= inner.bottom();
+            const bool near_corner = y < r.y + radius || y + 1 > r.bottom() - radius;
+            // Skip the solid interior of each scanline. Only the ring and
+            // corner neighborhoods require coverage samples.
+            const float skip_from = near_corner ? std::max(inner.x, r.x + radius) : inner.x;
+            const float skip_to = near_corner ? std::min(inner.right(), r.right() - radius) : inner.right();
+            for (int x = x0; x < x1; ++x) {
+                if (inner_row && x >= skip_from && x + 1 <= skip_to) {
+                    x = std::min(x1, pixel_limit(std::floor(skip_to), w_)) - 1;
+                    continue;
+                }
+                unsigned alpha = 0, red = 0, green = 0, blue = 0;
+                for (float dy : {0.25f, 0.75f}) for (float dx : {0.25f, 0.75f}) {
+                    const float px = x + dx, py = y + dy;
+                    if (!contains(r, px, py, false) || contains(inner, px, py, true)) continue;
+                    const float distances[]{py - r.y, r.right() - px, r.bottom() - py, px - r.x};
+                    int side = -1;
+                    for (int k = 0; k < 4; ++k) {
+                        if (widths[k] > 0 && (side < 0 ||
+                            distances[k] * widths[side] < distances[side] * widths[k])) side = k;
+                    }
+                    if (side < 0) continue;
+                    const auto color = st.border[side].color;
+                    alpha += color.a;
+                    red += color.r * color.a;
+                    green += color.g * color.a;
+                    blue += color.b * color.a;
+                }
+                if (alpha) blend_at(x, y, Color{uint8_t(red / alpha), uint8_t(green / alpha),
+                    uint8_t(blue / alpha), 255}, opacity * (alpha / 1020.f));
+            }
+        }
+        return;
+    }
     if (l > 0) fill_rect(RectF{r.x, r.y, l, r.h}, st.border[3].color, opacity);
     if (rr > 0) fill_rect(RectF{r.x + r.w - rr, r.y, rr, r.h}, st.border[1].color, opacity);
     if (t > 0) fill_rect(RectF{r.x + l, r.y, r.w - l - rr, t}, st.border[0].color, opacity);
