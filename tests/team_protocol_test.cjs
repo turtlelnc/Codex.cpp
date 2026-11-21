@@ -4,7 +4,7 @@ const fs = require("node:fs"),
   http = require("node:http"),
   net = require("node:net"),
   assert = require("node:assert/strict"),
-  { spawn, execFileSync } = require("node:child_process");
+  { spawn, spawnSync, execFileSync } = require("node:child_process");
 const binary = path.resolve(process.argv[2]),
   probeBinary = path.resolve(process.argv[3]),
   compat = path.resolve(process.argv[4]),
@@ -153,6 +153,11 @@ async function probe(url, catalog, request, code = 0, token = "fixture-token") {
     modern.wire = "01";
     await modern.rpc("projects", {}, 400);
     await stop();
+    const duplicate = spawnSync(binary, [
+      "--team-adapter", compat, "--team-adapter", compat, "serve", "--help",
+    ], { env, encoding: "utf8" });
+    assert.equal(duplicate.status, 2, duplicate.stderr);
+    assert.match(duplicate.stderr, /exactly one catalog path/);
     url = await launch(compat, state);
     let older = new Client(url);
     await older.login(token);
