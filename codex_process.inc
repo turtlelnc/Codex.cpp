@@ -1,6 +1,6 @@
 #include "codex_resources.h"
 // The only OS process launcher. Child policy is chosen by trusted host code, never RPC.
-enum class ProcessRole{Probe,Helper,Tool,Extension,Frontend,Network,Clipboard};
+enum class ProcessRole{Probe,Helper,Tool,Extension,Frontend,Network,Clipboard,IsolatedPlugin};
 // Inherited reviewed snapshots may belong to the parent WebUI process rather
 // than this worker's execution context. Workspace grants must not expose them.
 static std::vector<fs::path> process_protected_paths;
@@ -76,13 +76,26 @@ public:
   }
   bool start(std::vector<std::string> command,const ProcessPolicy& policy,std::string& error,bool merge_stderr=false){
     if(command.empty()){error="empty process command";return false;}if(execution.workspace.empty())execution.initialize(fs::current_path());
-    const bool unsafe=execution.unsafe||policy.unsafe;if(policy.role!=ProcessRole::Probe&&!unsafe&&!sandbox_available()){error="DENIED: "+backend()+" sandbox unavailable: "+sandbox_failure+"; no automatic unsafe fallback";return false;}
+    const bool unsafe=execution.unsafe||policy.unsafe;
+    if (unsafe && policy.role == ProcessRole::IsolatedPlugin) {
+      error = "Isolated plugin requires an OS sandbox";
+      return false;
+    }
+    if(policy.role!=ProcessRole::Probe&&!unsafe&&!sandbox_available()){error="DENIED: "+backend()+" sandbox unavailable: "+sandbox_failure+"; no automatic unsafe fallback";return false;}
     auto executable=process_executable(command.front());if(executable.empty()){error="executable not found: "+command.front();return false;}command.front()=executable.string();
     std::error_code ec;scratch=execution.private_dir/random_id("worker");fs::create_directories(scratch/"home",ec);if(ec){error=ec.message();return false;}fs::permissions(scratch,fs::perms::owner_all,fs::perm_options::replace,ec);
     const auto workspace=policy.workspace.empty()?execution.workspace:fs::absolute(policy.workspace);
     if((!unsafe&&(policy.role==ProcessRole::Tool||policy.role==ProcessRole::Extension||policy.role==ProcessRole::Helper)) ||
        (policy.role==ProcessRole::Tool&&policy.writable&&!policy.unsafe))if(auto risk=external_hardlink_risk(workspace)){error="DENIED: "+*risk;return false;}
-    const auto cwd=(policy.role==ProcessRole::Frontend||policy.role==ProcessRole::Network||policy.role==ProcessRole::Probe)?scratch:workspace;
+    if (policy.role == ProcessRole::IsolatedPlugin) {
+      for (const auto& grant : system_runtime_paths()) {
+        if (within_root(grant, workspace) || within_root(workspace, grant)) {
+          error = "Isolated plugin workspace overlaps a system runtime read grant";
+          return false;
+        }
+      }
+    }
+    const auto cwd=(policy.role==ProcessRole::Frontend||policy.role==ProcessRole::Network||policy.role==ProcessRole::Probe||policy.role==ProcessRole::IsolatedPlugin)?scratch:workspace;
     std::vector<fs::path> reads=system_runtime_paths(),writes={scratch};reads.push_back(executable);reads.insert(reads.end(),policy.reads.begin(),policy.reads.end());
     writes.insert(writes.end(),policy.writes.begin(),policy.writes.end());
     if(policy.role==ProcessRole::Tool||policy.role==ProcessRole::Extension||policy.role==ProcessRole::Helper){reads.push_back(workspace);if(policy.writable)writes.push_back(workspace);}
@@ -108,6 +121,9 @@ public:
       if(policy.role!=ProcessRole::Network){
         profile+="(deny file-read* file-write* (require-all (subpath "+quote(execution.private_dir.string())+") (require-not (subpath "+quote(scratch.string())+"))";
         for(const auto& path:policy.writes)if(within_root(execution.private_dir,path))profile+=" (require-not (subpath "+quote(fs::weakly_canonical(path).string())+"))";
+        if (policy.role == ProcessRole::IsolatedPlugin)
+          for (const auto& path : policy.reads)
+            profile += " (require-not (literal " + quote(fs::canonical(path).string()) + "))";
         profile+="))";
       }
       for(const auto& path:policy.denies)profile+="(deny file-read* file-write* (subpath "+quote(fs::weakly_canonical(path).string())+"))";

@@ -1,5 +1,4 @@
-// Explicit startup-only native modules. The loader is never reachable by RPC or
-// model tool calls. A module is trusted application code, not a sandboxed tool.
+// Legacy native ABI loader used only by the isolated Creator worker.
 #include "plugin/native.h"
 #if !defined(_WIN32)
 #include <dlfcn.h>
@@ -104,8 +103,12 @@ static void plugin_load_manifest(const fs::path& path){
   plugin_runtime().mount(std::move(module));
   plugin_tools.insert(plugin_tools.end(),tools.begin(),tools.end());if(web)plugin_web_modules.push_back(*web);
 }
-static void plugin_load_reviewed(const fs::path& path,const std::string& fingerprint);
-static void plugin_boot(){plugin_builtins();for(const auto& path:plugin_manifests){auto review=plugin_reviews.find(path);if(review!=plugin_reviews.end())plugin_load_reviewed(fs::u8path(path),review->second);else plugin_load_reviewed(fs::u8path(path),{});}plugin_runtime().freeze();}
+static void plugin_boot(bool isolated_manifest = false){
+  if (!isolated_manifest && !plugin_manifests.empty())
+    throw std::runtime_error("Legacy --plugin and --plugin-reviewed execution is disabled. Use --isolated-plugin with a supported module.");
+  plugin_builtins();
+  plugin_runtime().freeze();
+}
 class PluginTool final:public ToolRuntime{
   PluginToolDefinition definition_;
 public:explicit PluginTool(PluginToolDefinition definition):definition_(std::move(definition)){}

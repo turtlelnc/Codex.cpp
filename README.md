@@ -357,3 +357,45 @@ WebUI 的「设置」与 TUI 的 `/settings` 共用本地偏好、提供商和�
 ### 实验性内嵌页面预览
 
 `codex-cpp preview shot index.html -o preview.png --width 1280 --height 800` 使用同一可执行文件内的 MiniWeb 生成截图，不依赖 Chromium、Python 或 Node.js。Agent 可用 `preview_screenshot` 获取图片并回传支持视觉的模型。它只读取工作区本地资源，禁止网络，需要可用的 OS 沙箱；Windows 当前明确拒绝执行。CSS/DOM 仅支持部分能力，不能作为真实浏览器兼容性验收。预览会附带能力报告，指出本次渲染中忽略或仅近似实现的 CSS 属性、结构性布局构造和缺失的 JS API；`--report FILE` 可导出完整 JSON。完整边界、命令和已知缺口见 [MiniWeb 文档](docs/MINIWEB.md)。
+
+### 只读隔离插件试点
+
+用 `--isolated-plugin /absolute/path/to/module.so` 为本地 CLI Agent
+启用 `isolated_plugin_read`。Linux 使用共享库，macOS 可使用 dylib。
+[插件 ABI](plugin/isolated.h) 提供 `codex_plugin_read_v2`。插件通过
+`read_selected` 向 Core 申请本次工具调用选定的一个文件。v1 库由
+隔离子进程的适配器提出相同请求。
+
+启用插件后读取权限默认为空。TUI 在 `on-request` 策略下展示由
+Core 生成的授权提示，默认拒绝。用户可以授权一次，或将指定文件或
+其所在目录授权给当前会话或持久保存。授权绑定模块 SHA-256 和
+工作区。模块字节变更后需要重新授权。无人值守调用只使用已有授权。
+
+在交互终端使用 `/plugin-permissions list` 查看授权，
+`/plugin-permissions revoke GRANT_ID` 撤销，或
+`/plugin-permissions audit` 查看最近 256 条申请、决定、读取和撤销记录。
+审计记录路径和模块摘要，不保存文件内容。撤销阻止后续读取，已交付的
+字节无法收回。权限状态保存在工作区之外的 Codex.cpp 配置目录。
+
+可以用 CLI 验证持久授权，无需模型连接。
+
+```sh
+codex-cpp plugin isolated-run /absolute/module.so /absolute/workspace relative-file.txt
+```
+
+Core 检查并打开选定文件，拒绝目录穿越、链接和受保护路径。输入与
+输出各限 64 KiB。子进程使用私有临时目录、只读模块副本和系统运行时文件，
+不挂载工作区。网络保持由 OS 沙箱隔离。Windows 或禁用 OS 沙箱时拒绝执行。
+当前协议只支持对选定文件的一次读取请求，终端、网络、常驻状态及签名
+发布者身份还不属于试点。现有进程内原生插件使用单独的信任模式。
+
+本地 CLI Agent 也接受 `--plugin /absolute/isolated.json` 和
+`--plugin-reviewed /absolute/isolated.json SHA256`。清单沿用 API 1 的
+`id` 和平台 `libraries` 字段，并用 `isolated_read` 声明一个工具名。
+`plugin check` 输出审核摘要，Core 校验后使用同一次读取捕获的库字节。
+清单模式的授权绑定包审核摘要，两种清单参数共享同一套权限。
+
+构建 `plugin-demo` 后，可用其输出目录中的 `isolated.json` 测试
+迁移后的 `plugin_status`，它在获得许可后统计选定文件的字节数。
+旧版服务覆盖、WebUI 脚本、插件附带 MCP 和前端仍需迁移到对应隔离接口。
+Creator 的旧原生 ABI 探测继续在隔离子进程中运行。静态检查和包导入仍可用。

@@ -61,12 +61,18 @@ jobs:
         run: ./build/plugin-runtime-test
       - if: runner.os == 'Windows'
         run: ./build/Release/plugin-runtime-test.exe
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Verify isolated plugin policy before legacy compatibility tests
+        shell: bash
+        run: |
+          binary=build/codex-cpp
+          if [ "$RUNNER_OS" = Windows ]; then binary=build/Release/codex-cpp.exe; fi
+          node tests/isolated_plugin_test.cjs "$binary" build/plugin-demo/isolated.json
       - if: runner.os != 'Windows'
         run: node tests/plugin_integration.cjs build/codex-cpp build/plugin-demo/plugin.json
       - if: runner.os == 'Windows'
         run: node tests/plugin_integration.cjs build/Release/codex-cpp.exe build/plugin-demo/Release/plugin.json
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Verify portable profile and executable update lifecycle
         shell: bash
         run: |
