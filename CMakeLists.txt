@@ -116,6 +116,9 @@ if(APPLE)
 endif()
 add_library(plugin-demo-isolated MODULE EXCLUDE_FROM_ALL examples/plugin/isolated.cpp)
 target_compile_features(plugin-demo-isolated PRIVATE cxx_std_17)
+if(WIN32)
+  target_sources(plugin-demo-isolated PRIVATE examples/plugin/isolated.def)
+endif()
 set_target_properties(plugin-demo-isolated PROPERTIES PREFIX ""
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/plugin-demo"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/plugin-demo")
