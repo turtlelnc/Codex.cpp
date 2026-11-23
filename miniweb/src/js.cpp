@@ -293,6 +293,12 @@ std::string prop_css(const Node* n, const std::string& prop) {
             case TextAlign::Justify: return "justify";
         }
     }
+    if (prop == "overflow-wrap") {
+        if (st.overflow_wrap == OverflowWrap::Anywhere) return "anywhere";
+        if (st.overflow_wrap == OverflowWrap::BreakWord) return "break-word";
+        return "normal";
+    }
+    if (prop == "word-break") return st.word_break_legacy ? "break-word" : "normal";
     if (prop == "white-space") {
         switch (st.white_space) {
             case WhiteSpace::Normal: return "normal";

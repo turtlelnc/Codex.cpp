@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -26,6 +27,8 @@ public:
     bool any_font() const { return !faces_.empty(); }
 
     float text_width(const std::string& utf8, const ComputedStyle& style);
+    // Fits a UTF-8 prefix, consuming at least one code point for nonempty input.
+    float fit_text(std::string_view text, const ComputedStyle& style, float max_width, size_t& consumed);
     float ascent(const ComputedStyle& style);
     float descent(const ComputedStyle& style);
     float normal_line_height(const ComputedStyle& style);

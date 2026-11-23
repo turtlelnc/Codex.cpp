@@ -187,3 +187,18 @@ module.exports.borders = async function compareBorders(page, fixture, miniPNG) {
     'Border pixels differ from Chromium',
   );
 };
+
+module.exports.textWrap = async function compareTextWrap(page, probe) {
+  const { spawnSync } = require("node:child_process");
+  const fixture = path.resolve("miniweb/test/text-wrap.html");
+  const ids = ["normal", "anywhere", "break-word", "legacy", "pre", "pre-wrap", "nowrap", "unicode"];
+  const render = spawnSync(probe, ["--geometry", fixture, "640", ids.join(",")],
+    { encoding: "utf8", timeout: 10000 });
+  assert.equal(render.status, 0, render.stderr);
+  const native = JSON.parse(render.stdout);
+  await page.setViewportSize({ width: 640, height: 320 });
+  await page.setContent(fs.readFileSync(fixture, "utf8"));
+  const heights = await page.evaluate(ids => ids.map(id => document.getElementById(id).getBoundingClientRect().height), ids);
+  assert.deepEqual(heights, [24, 72, 72, 72, 24, 96, 24, 72]);
+  assert.deepEqual(ids.map(id => native[id][3]), heights, "Long text wrapping differs from Chromium");
+};

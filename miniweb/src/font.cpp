@@ -1,3 +1,4 @@
+#include <limits>
 #include "font.h"
 #include "canvas.h"
 #include "stb_truetype.h"
@@ -350,19 +351,27 @@ const GlyphBitmap* FontManager::get_glyph(uint32_t cp, float px_size, const Comp
 }
 
 float FontManager::text_width(const std::string& utf8, const ComputedStyle& style) {
-    if (utf8.empty()) return 0;
+    size_t consumed = 0;
+    return fit_text(utf8, style, std::numeric_limits<float>::infinity(), consumed);
+}
+
+float FontManager::fit_text(std::string_view utf8, const ComputedStyle& style, float max_width, size_t& consumed) {
+    consumed = 0;
     float x = 0;
     int prev_face = -1;
     uint32_t prev_cp = 0;
     size_t i = 0;
     while (i < utf8.size()) {
         uint32_t cp = 0;
-        i = util::utf8_next(utf8, i, &cp);
+        const size_t next = util::utf8_next(utf8, i, &cp);
+        const float previous_width = x;
         cp = normalize_cp(cp);
         const GlyphBitmap* g = get_glyph(cp, style.font_size, style);
         if (!g) {
             x += style.font_size * 0.55f;
             prev_face = -1;
+            if (i && x > max_width) return previous_width;
+            consumed = i = next;
             continue;
         }
         int face_idx = face_for(cp, style);
@@ -373,6 +382,8 @@ float FontManager::text_width(const std::string& utf8, const ComputedStyle& styl
         x += g->advance;
         x += style.letter_spacing;
         if (style.font_weight >= 600 && face_idx >= 0 && !faces_[face_idx]->bold) x += 0.4f;
+        if (i && x > max_width) return previous_width;
+        consumed = i = next;
         prev_face = face_idx;
         prev_cp = cp;
     }

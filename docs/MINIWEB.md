@@ -32,6 +32,8 @@ DOM replacement preserves existing sibling order and rejects ancestor cycles. Sc
 
 Direct flex text now forms layout-only anonymous items (including mixed, column and wrapped text); whitespace-only runs do not create items, and the DOM remains unchanged across layouts. Visibility hides the current box rather than suppressing explicitly visible descendants, in both painting and hit testing. Font shorthand retains px/%/em/rem line-height units. These cases have pixel, repeated-layout, ASan and Chromium comparison regressions.
 
+Long tokens honor `overflow-wrap: anywhere`, `overflow-wrap: break-word` and the legacy `word-break: break-word`. The renderer preserves `pre` and `nowrap` behavior. Emergency breaks preserve UTF-8 code points. Full Unicode line breaking and grapheme clustering are outside this implementation.
+
 Font-size uses the CSS em square for rasterization, advances, kerning and vertical metrics. Glyph caches preserve fractional sizes (glyph sizes/bitmaps are limited to 4096px). Border widths retain specified values independently of none/solid style, shorthands reset omitted fields, transparent borders occupy space, and currentColor resolves after the cascade. Regressions compare text extents and border pixels with Chromium; glyph antialiasing and full font/shaping compatibility remain outside this guarantee.
 
 ## Basic table layout
