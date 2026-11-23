@@ -36,7 +36,8 @@ std::shared_ptr<Image> ImageCache::get(const std::string& url) {
             img->intrinsic_w = (int)std::lround(iw);
             img->intrinsic_h = (int)std::lround(ih);
             check_decoded_budget(rendered->rgba.size());
-            img->rgba = std::move(rendered->rgba);
+            // render_svg retains the raster in its content-keyed cache.
+            img->rgba = rendered->rgba;
             decoded_bytes_ += img->rgba.size();
             img->ok = true;
         }

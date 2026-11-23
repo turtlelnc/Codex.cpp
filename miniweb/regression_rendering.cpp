@@ -109,4 +109,8 @@ void check_font_border(const std::filesystem::path& directory) {
     check_color(307,162,255,255,0);
     check_color(361,141,255,255,255);
     check_color(386,142,0,0,255);
+    if (!engine.load((directory/"shared-svg.html").u8string(), &error) || !engine.render(false))
+        throw std::runtime_error(error);
+    check_color(10,5,25,105,179);
+    check_color(10,20,25,105,179);
 }
