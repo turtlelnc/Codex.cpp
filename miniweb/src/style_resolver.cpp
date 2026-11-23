@@ -220,6 +220,7 @@ float parse_float_value(const std::string& s, float def = 0) {
 bool is_inherited_prop(const std::string& p) {
     return p == "color" || p == "font-family" || p == "font-size" || p == "font-weight" ||
            p == "font-style" || p == "line-height" || p == "text-align" || p == "white-space" ||
+           p == "overflow-wrap" || p == "word-break" ||
            p == "list-style" || p == "list-style-type" || p == "border-spacing" || p == "visibility" || p == "letter-spacing" || p == "text-transform" ||
            util::starts_with(p, "font") || util::starts_with(p, "text-");
 }
@@ -250,6 +251,8 @@ void reset_prop(ComputedStyle& st, const std::string& p) {
     else if (p == "line-height") st.line_height = Length{};
     else if (p == "text-align") st.text_align = TextAlign::Left;
     else if (p == "white-space") st.white_space = WhiteSpace::Normal;
+    else if (p == "overflow-wrap") st.overflow_wrap = OverflowWrap::Normal;
+    else if (p == "word-break") st.word_break_legacy = false;
     else if (p == "list-style" || p == "list-style-type") st.list_marker = true;
     else if (p == "visibility") st.visibility = Visibility::Visible;
     else if (p == "opacity") st.opacity = 1;
@@ -326,6 +329,8 @@ bool inherit_prop(ComputedStyle& st, const std::string& p, const ComputedStyle* 
     else if (p == "line-height") st.line_height = parent->line_height;
     else if (p == "text-align") st.text_align = parent->text_align;
     else if (p == "white-space") st.white_space = parent->white_space;
+    else if (p == "overflow-wrap") st.overflow_wrap = parent->overflow_wrap;
+    else if (p == "word-break") st.word_break_legacy = parent->word_break_legacy;
     else if (p == "list-style" || p == "list-style-type") st.list_marker = parent->list_marker;
     else if (p == "visibility") st.visibility = parent->visibility;
     else if (p == "letter-spacing") st.letter_spacing = parent->letter_spacing;
@@ -996,6 +1001,12 @@ void apply_property(ComputedStyle& st, const std::string& prop, const std::strin
         else if (vl == "right" || vl == "end") st.text_align = TextAlign::Right;
         else if (vl == "justify") st.text_align = TextAlign::Justify;
         else st.text_align = TextAlign::Left;
+    } else if (p == "overflow-wrap") {
+        if (vl == "anywhere") st.overflow_wrap = OverflowWrap::Anywhere;
+        else if (vl == "break-word") st.overflow_wrap = OverflowWrap::BreakWord;
+        else if (vl == "normal") st.overflow_wrap = OverflowWrap::Normal;
+    } else if (p == "word-break" && (vl == "break-word" || vl == "normal")) {
+        st.word_break_legacy = vl == "break-word";
     } else if (p == "white-space") {
         if (vl == "pre") st.white_space = WhiteSpace::Pre;
         else if (vl == "nowrap") st.white_space = WhiteSpace::Nowrap;

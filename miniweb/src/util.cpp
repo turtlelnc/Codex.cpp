@@ -758,7 +758,7 @@ std::string format_float(float v, int decimals) {
     return s;
 }
 
-size_t utf8_next(const std::string& s, size_t i, uint32_t* cp) {
+size_t utf8_next(std::string_view s, size_t i, uint32_t* cp) {
     if (i >= s.size()) { *cp = 0; return i; }
     unsigned char c = (unsigned char)s[i];
     if (c < 0x80) { *cp = c; return i + 1; }

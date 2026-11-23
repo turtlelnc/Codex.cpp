@@ -816,8 +816,23 @@ float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& 
         }
         if (pending && !line.empty()) add_pending_space();
         else if (line.empty()) pending = false;
-        line.push_back({t, line_w});
-        line_w += t.w;
+        if (t.kind == Token::Word && wrap_allowed && t.wrap && t.w > content_w + 0.5f &&
+            (t.style->overflow_wrap != OverflowWrap::Normal || t.style->word_break_legacy)) {
+            const auto text = std::move(t.text);
+            std::string_view remaining(text);
+            while (!remaining.empty()) {
+                size_t consumed = 0;
+                t.w = fonts.fit_text(remaining, *t.style, content_w + 0.5f, consumed);
+                t.text.assign(remaining.substr(0, consumed));
+                line.push_back({t, line_w});
+                line_w += t.w;
+                remaining.remove_prefix(consumed);
+                if (!remaining.empty()) finish_line(false);
+            }
+        } else {
+            line.push_back({t, line_w});
+            line_w += t.w;
+        }
     }
     finish_line(false);
     return line_y;
@@ -1170,7 +1185,19 @@ float LayoutEngine::minimum_width(Node* node,float basis,int depth) {
         if (node->style.white_space==WhiteSpace::Nowrap || node->style.white_space==WhiteSpace::Pre)
             return fonts.text_width(collapse_text(node->data,node->style),node->style);
         std::vector<Token> tokens;append_text_tokens(node,tokens);float width=0;
-        for (const auto& token:tokens) if(token.kind==Token::Word) width=std::max(width,token.w);
+        for (const auto& token : tokens) {
+            if (token.kind != Token::Word) continue;
+            if (node->style.overflow_wrap != OverflowWrap::Anywhere && !node->style.word_break_legacy) {
+                width = std::max(width, token.w);
+                continue;
+            }
+            for (size_t start = 0; start < token.text.size();) {
+                uint32_t cp = 0;
+                const size_t end = util::utf8_next(token.text, start, &cp);
+                width = std::max(width, fonts.text_width(token.text.substr(start, end - start), node->style));
+                start = end;
+            }
+        }
         return width;
     }
     if (!node->is_element()) return 0;

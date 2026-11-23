@@ -65,6 +65,15 @@ void check_text_visibility(const std::filesystem::path& directory) {
         if(doc->layout_nodes.size()!=anonymous_nodes||doc->arena.size()!=nodes)
             throw std::runtime_error("Anonymous boxes accumulated between layouts");
     }
+    if (!engine.load((directory/"text-wrap.html").u8string(), &error) || !engine.render(false))
+        throw std::runtime_error(error);
+    for (const auto& [id, expected] : std::vector<std::pair<const char*, float>>{
+        {"normal", 24}, {"anywhere", 72}, {"break-word", 72}, {"legacy", 72},
+        {"pre", 24}, {"pre-wrap", 96}, {"nowrap", 24}, {"unicode", 72}}) {
+        const auto* box = engine.document()->get_element_by_id(id);
+        if (!box || std::abs(box->layout.content_h - expected) > 0.01f)
+            throw std::runtime_error(std::string("Long text wrapping mismatch: ") + id);
+    }
 }
 
 void check_font_border(const std::filesystem::path& directory) {

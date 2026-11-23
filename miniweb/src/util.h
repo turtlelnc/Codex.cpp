@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct Color {
@@ -75,7 +76,7 @@ const char* color_name(uint32_t rgb);
 // UTF-8 helpers
 std::vector<uint32_t> utf8_decode(const std::string& s);
 std::string utf8_encode(uint32_t cp);
-size_t utf8_next(const std::string& s, size_t i, uint32_t* cp);
+size_t utf8_next(std::string_view s, size_t i, uint32_t* cp);
 bool is_cjk(uint32_t cp);
 bool is_space_cp(uint32_t cp);
 

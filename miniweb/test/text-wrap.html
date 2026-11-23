@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+body { margin: 0; font: 16px/24px monospace; }
+.sample { width: 52px; }
+.anywhere { overflow-wrap: anywhere; }
+.break-word { overflow-wrap: break-word; }
+.legacy { word-break: break-word; }
+.pre { white-space: pre; }
+.pre-wrap { white-space: pre-wrap; }
+.nowrap { white-space: nowrap; }
+</style>
+<div id="normal" class="sample">abcdefghijklmno</div>
+<div id="anywhere" class="sample anywhere"><span>abcdefghijklmno</span></div>
+<div id="break-word" class="sample break-word">abcdefghijklmno</div>
+<div id="legacy" class="sample legacy">abcdefghijklmno</div>
+<div id="pre" class="sample anywhere pre">abcdefghijklmno</div>
+<div id="pre-wrap" class="sample anywhere pre-wrap">abcdefghijklmno
+abc</div>
+<div id="nowrap" class="sample anywhere nowrap">abcdefghijklmno</div>
+<div id="unicode" class="sample anywhere">ééééééééééééééé</div>

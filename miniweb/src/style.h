@@ -36,6 +36,7 @@ struct GridTrack {
 };
 enum class Position { Static, Relative, Absolute, Fixed, Sticky };
 enum class TextAlign { Left, Right, Center, Justify };
+enum class OverflowWrap { Normal, BreakWord, Anywhere };
 enum class WhiteSpace { Normal, Pre, Nowrap, PreWrap };
 enum class Overflow { Visible, Hidden, Auto, Scroll, Clip };
 enum class OverscrollBehavior { Auto, Contain, None };
@@ -97,6 +98,8 @@ struct ComputedStyle {
     Length line_height; // Auto == normal
     TextAlign text_align = TextAlign::Left;
     WhiteSpace white_space = WhiteSpace::Normal;
+    OverflowWrap overflow_wrap = OverflowWrap::Normal;
+    bool word_break_legacy = false;
     TextTransform text_transform = TextTransform::None;
     bool list_marker = true; // Supported list-style-type subset: disc / none.
     float letter_spacing = 0;
@@ -158,6 +161,8 @@ inline ComputedStyle inherited_style(const ComputedStyle& parent) {
     st.line_height = parent.line_height;
     st.text_align = parent.text_align;
     st.white_space = parent.white_space;
+    st.overflow_wrap = parent.overflow_wrap;
+    st.word_break_legacy = parent.word_break_legacy;
     st.visibility = parent.visibility;
     st.letter_spacing = parent.letter_spacing;
     st.text_transform = parent.text_transform;
