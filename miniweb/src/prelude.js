@@ -400,6 +400,15 @@
         this.appendChild(typeof n === 'string' ? document.createTextNode(n) : n);
       }
     }
+    replaceChildren(...items) {
+      const children = items.map(item => item instanceof Node ? item : document.createTextNode(String(item)));
+      for (const child of children) {
+        const nodes = child.__fragment ? child.childNodes : [child];
+        if (nodes.some(node => node.contains(this))) throw new Error('Cannot insert an ancestor');
+      }
+      this.textContent = '';
+      for (const child of children) this.appendChild(child);
+    }
     prepend() {
       var first = this.firstChild;
       for (var i = 0; i < arguments.length; i++) {

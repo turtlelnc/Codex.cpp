@@ -8,7 +8,7 @@ const fixture = `<script>
 window.fetch = async function(url, options) {
   const replies = {
     status: {workspace: '/offline/project'},
-    snapshot: {timeline: [], events: [], messages: [], sessions: [], models: []},
+    snapshot: {timeline: [{k: 'user', text: 'Review settings'}], events: [], messages: [], sessions: [], models: []},
     files: {files: []}
   };
   let reply;
@@ -49,7 +49,7 @@ module.exports = async function compareSettings(browser, probe, binary) {
     assert.equal(await page.evaluate(() => document.activeElement.id), 'settings-button');
 
     const ids = ['settings-button', 'workspace-settings', 'settings-model',
-      'settings-panel-general', 'settings-panel-model', 'workspace-settings-close'];
+      'settings-panel-general', 'settings-panel-model', 'workspace-settings-close', 'notice'];
     const actions = [];
     function state() {
       const run = spawnSync(probe, ['--geometry', index, '1280', ids.join(','), actions.join(';')],
@@ -66,6 +66,7 @@ module.exports = async function compareSettings(browser, probe, binary) {
     }
     const initial = state();
     assert.equal(initial['workspace-settings'][2], 0);
+    assert.equal(initial.notice[3], 0, 'WebUI should initialize without an error banner');
     const opened = click('settings-button', initial);
     assert(opened['settings-panel-general'][3] > 0);
     const model = click('settings-model', opened);
