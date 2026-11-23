@@ -49,6 +49,8 @@ textarea { width: 220px; height: 60px; border: 1px solid #999999; padding: 3px; 
 select { height: 24px; border: 1px solid #999999; background: #ffffff; padding: 1px 4px; }
 img { display: inline-block; }
 svg, canvas { display: inline-block; }
+dialog:not([open]) { display: none; }
+dialog[open] { display: block; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; background: white; }
 [hidden] { display: none !important; }
 )CSS";
 

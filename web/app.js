@@ -48,9 +48,9 @@ async function http(path, body, wire = 1) {
     headers: {'Content-Type': 'application/json', 'X-CSRF-Token': state.user?.csrf || '', 'X-Codex-Protocol': String(wire)},
     body: JSON.stringify(body),
   };
-  const controller = new AbortController();
-  options.signal = controller.signal;
-  const timeout = setTimeout(() => controller.abort(), 35000);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  if (controller) options.signal = controller.signal;
+  const timeout = controller ? setTimeout(() => controller.abort(), 35000) : null;
   let response, data;
   try {
     response = await fetch(path, options);
@@ -58,7 +58,7 @@ async function http(path, body, wire = 1) {
   } catch (error) {
     if (generation !== state.generation) throw Error(STALE);
     const failure=error.name === 'AbortError' ? Error('请求超时，请检查连接后重试') : error;failure.network=true;throw failure;
-  } finally { clearTimeout(timeout); }
+  } finally { if (timeout !== null) clearTimeout(timeout); }
   if (generation !== state.generation) throw Error(STALE);
   if (response.status === 401) { $('workspace').hidden = true; $('host-login').hidden = false; throw new Error('请登录服务器工作区'); }
   if (!response.ok) {const failure=new Error(data.error || '请求失败');failure.network=[408,429,500,502,503,504].includes(response.status);throw failure;}
@@ -806,7 +806,7 @@ function userBubbleBuiltin(text) {
 // Only new text animates, with at most 16 groups per update.
 const streamReducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const streamSegmenter =
-  typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  typeof globalThis.Intl?.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
 function streamMarkup(text) {
   const body = markdown(text),
     walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
