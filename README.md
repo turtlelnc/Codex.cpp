@@ -407,6 +407,8 @@ codex-cpp --plugin-reviewed /absolute/isolated.json SHA256 web --root /absolute/
 
 
 构建 `plugin-demo` 后，可用其输出目录中的 `isolated.json` 测试
-迁移后的 `plugin_status`，它在获得许可后统计选定文件的字节数。
+迁移后的 `plugin_status`。隔离清单指向独立的 `plugin-demo-isolated` 库，
+获准后统计选定文件的字节数。可用 CLI 的 `/plugin-permissions revoke GRANT_ID`
+撤销持久授权，随后 WebUI 会在下次读取时再次请求许可。
 旧版服务覆盖、WebUI 脚本、插件附带 MCP 和前端仍沿用原有信任模式，
 不可与隔离清单混用。只对完全信任的插件使用旧版入口。

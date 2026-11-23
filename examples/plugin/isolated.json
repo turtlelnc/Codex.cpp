@@ -1,6 +1,6 @@
 {
   "api": 1,
   "id": "demo-plugin",
-  "libraries": {"linux": "plugin-demo.so", "macos": "plugin-demo.dylib", "windows": "plugin-demo.dll"},
+  "libraries": {"linux": "plugin-demo-isolated.so", "macos": "plugin-demo-isolated.dylib", "windows": "plugin-demo-isolated.dll"},
   "isolated_read": "plugin_status"
 }
