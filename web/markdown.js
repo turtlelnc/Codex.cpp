@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const entities = new Map(),
-    decoder = new DOMParser();
+    decoder = document.createElement('textarea');
   function unescape(text) {
     return String(text || '').replace(
       /&(?:#[xX][0-9a-fA-F]{1,8}|#[0-9]{1,10}|[A-Za-z][A-Za-z0-9]{1,31});/g,
@@ -10,7 +10,8 @@
         if (!entities.has(value)) {
           if (entities.size >= 512) entities.clear();
           // Only a matched entity is parsed, never model-provided markup.
-          entities.set(value, decoder.parseFromString(value, 'text/html').body.textContent);
+          decoder.innerHTML = value;
+          entities.set(value, decoder.textContent);
         }
         return entities.get(value);
       },

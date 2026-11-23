@@ -272,3 +272,7 @@ and dynamic style changes. `getComputedStyle().listStyleType` reports this subse
 Inside positioning remains an explicitly reported approximation; custom images,
 other marker shapes, counters and general `display:list-item` layout remain
 unsupported. These fixes do not establish complete CSS or browser equivalence.
+
+### Offline WebUI settings acceptance
+
+The browser regression opens the real settings markup and scripts, switches to the Model and Context tab, and verifies close and focus restoration. Its temporary copy uses relative asset URLs and an in-memory fixture for the startup API. It neither connects to a Codex server nor writes preferences. Basic modal dialog visibility, focus and Escape are supported. MiniWeb does not implement the full HTML top layer or CSS backdrop.

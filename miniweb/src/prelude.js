@@ -400,6 +400,15 @@
         this.appendChild(typeof n === 'string' ? document.createTextNode(n) : n);
       }
     }
+    replaceChildren(...items) {
+      const children = items.map(item => item instanceof Node ? item : document.createTextNode(String(item)));
+      for (const child of children) {
+        const nodes = child.__fragment ? child.childNodes : [child];
+        if (nodes.some(node => node.contains(this))) throw new Error('Cannot insert an ancestor');
+      }
+      this.textContent = '';
+      for (const child of children) this.appendChild(child);
+    }
     prepend() {
       var first = this.firstChild;
       for (var i = 0; i < arguments.length; i++) {
@@ -597,6 +606,47 @@
     getSelection() { N.unsupported('document.getSelection', 'selection API is not implemented'); return { rangeCount: 0, toString: function () { return ''; }, removeAllRanges: function () {} }; }
   }
 
+  const modalDialogs = [];
+  function currentModal() {
+    while (modalDialogs.length) {
+      const dialog = modalDialogs[modalDialogs.length - 1];
+      if (dialog.open && dialog.isConnected) return dialog;
+      modalDialogs.pop();
+    }
+    return null;
+  }
+  function inModal(node) {
+    const dialog = currentModal();
+    return !dialog || node === dialog || dialog.contains(node);
+  }
+  class HTMLDialogElement extends Element {
+    get open() { return this.hasAttribute('open'); }
+    set open(value) { this.toggleAttribute('open', !!value); }
+    showModal() {
+      if (this.open && modalDialogs.includes(this)) return;
+      if (this.open || !this.isConnected) throw new Error('Cannot open dialog modally');
+      this.__dialogOpener = document.activeElement;
+      this.open = true;
+      modalDialogs.push(this);
+      const controls = this.querySelectorAll('button,input,textarea,select,a,[tabindex]');
+      const target = controls.find(node => node.hasAttribute('autofocus') && focusable(node)) || controls.find(focusable);
+      focusControl(target || this, true);
+    }
+    close(value) {
+      if (!this.open) return;
+      if (value !== undefined) this.returnValue = String(value);
+      this.open = false;
+      const index = modalDialogs.lastIndexOf(this);
+      if (index >= 0) modalDialogs.splice(index, 1);
+      const opener = this.__dialogOpener;
+      this.__dialogOpener = null;
+      if (index >= 0 && (!activeControl || this.contains(activeControl) || activeControl === this))
+        focusControl(opener && focusable(opener) ? opener : null, true);
+      this.dispatchEvent(new Event('close'));
+    }
+  }
+  globalThis.HTMLDialogElement = HTMLDialogElement;
+
   function wrap(id) {
     id = id | 0;
     if (id <= 0) return null;
@@ -605,7 +655,7 @@
     var type = N.nodeType(id);
     var n;
     if (type === 9) n = document;
-    else if (type === 1) n = new Element(id);
+    else if (type === 1) n = N.tagName(id) === 'dialog' ? new HTMLDialogElement(id) : new Element(id);
     else if (type === 3) n = new Text(id);
     else if (type === 8) n = new Comment(id);
     else n = new Node(id);
@@ -1509,7 +1559,7 @@
     return !!(n && n.isConnected && getComputedStyle(n).visibility !== 'hidden');
   }
   function focusable(n) {
-    return enabled(n) && n.type !== 'hidden' && (/^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
+    return enabled(n) && inModal(n) && n.type !== 'hidden' && (n === currentModal() || /^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
   }
   function forgetDetachedFocus() {
     if(activeControl && N.focusControl()!==activeControl.__id) {
@@ -1598,6 +1648,7 @@
     return !!n && !formDisabled(n);
   }
   function activate(n, x, y, pointer) {
+    if (pointer && !inModal(n)) return false;
     if (!activatable(n) || (pointer && !enabled(n))) return false;
     if (pointer) {
       var down = n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
@@ -1672,7 +1723,10 @@
     var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
     var n = document.activeElement;
     if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift })) && enabled(n)) {
-      if (key === 'Tab') {
+      if (key === 'Escape' && currentModal()) {
+        const dialog = currentModal();
+        if (dialog.dispatchEvent(new Event('cancel', {cancelable:true}))) dialog.close();
+      } else if (key === 'Tab') {
         var list = document.querySelectorAll('input,textarea,button,select,a,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
         list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });
         if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next===activeControl && next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
