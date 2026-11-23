@@ -92,6 +92,7 @@ void check_font_border(const std::filesystem::path& directory) {
     const auto i=(80*640+130)*4;
     if(pixels[i]!=255||pixels[i+1]!=0||pixels[i+2]!=0)throw std::runtime_error("Border currentColor did not resolve final color");
     auto check_color = [&](int x, int y, int r, int g, int b) {
+        const auto& pixels = engine.canvas()->pixels();
         const auto offset = (y * 640 + x) * 4;
         if (pixels[offset] != r || pixels[offset+1] != g || pixels[offset+2] != b)
             throw std::runtime_error("Rounded border pixel mismatch");
