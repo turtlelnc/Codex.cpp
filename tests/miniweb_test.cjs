@@ -248,6 +248,10 @@ const wait = async (fn) => {
     assert.notEqual(r.status, 0, '33 distinct decoded images exceed the 128 MiB cache budget');
     assert.match(r.stderr, /decoded image cache budget exceeded/);
     assert(!fs.existsSync(path.join(project, 'memory.png')));
+    let computerWorkflow;
+    fs.writeFileSync(path.join(project, 'computer.html'),
+      '<button id="target" style="width:200px;height:100px">Before</button>' +
+      '<script>document.getElementById("target").onclick=function(){this.textContent="After"}</script>');
     // Resume protocol must contain an image, not just a printed screenshot filename.
     provider = http.createServer(async (req, res) => {
       let raw = '';
@@ -255,6 +259,17 @@ const wait = async (fn) => {
       const body = JSON.parse(raw);
       requests.push(body);
       res.setHeader('Content-Type', 'application/json');
+      if (computerWorkflow) {
+        try {
+          const message = computerWorkflow(body);
+          res.end(JSON.stringify({choices: [{message}]}));
+        } catch (error) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({error: {message: String(error.stack)}}));
+        }
+        return;
+      }
+
       const imageRequest = (body.messages || body.input || []).some(
         (m) =>
           Array.isArray(m.content) &&
@@ -352,6 +367,62 @@ const wait = async (fn) => {
       .map(JSON.parse);
     assert(stored.some((r) => r.type === 'codex_tool_image'));
     assert.equal(stored.filter((r) => r.role === 'user').length, 1);
+    let stage = 0, token;
+    computerWorkflow = body => {
+      const result = body.messages.findLast(message => message.role === 'tool')?.content || '';
+      const call = (name, args) => ({
+        role: 'assistant', content: null,
+        tool_calls: [{id: 'computer-' + stage, type: 'function',
+          function: {name, arguments: JSON.stringify(args)}}]
+      });
+      const action = (operation, fields, name = 'computer_use') =>
+        call(name, {operation, session: token || '', path: '', value: '', x: 0, y: 0,
+          width: 320, height: 240, wait_ms: 0, delta_x: 0, delta_y: 0, ...fields});
+      switch (stage++) {
+        case 0:
+          assert(body.tools.some(tool => tool.function.name === 'computer_use'));
+          assert(!body.tools.some(tool => tool.function.name === 'preview_session'));
+          return call('read_skill', {name: 'miniweb-computer-use'});
+        case 1:
+          assert.match(result, /Observe before acting/);
+          return action('open', {path: 'computer.html'});
+        case 2:
+          token = result.match(/Opened preview session ([^. ]+)\./)?.[1];
+          assert(token, result);
+          return action('click', {x: 20, y: 20}, 'preview_session');
+        case 3:
+          assert.match(result, /action completed: click/);
+          return action('inspect', {value: 'target'});
+        case 4:
+          assert.match(result, /"text":"After"/);
+          assert.match(result, /"center_hit":true/);
+          return action('screenshot');
+        case 5:
+          assert(body.messages.some(message => Array.isArray(message.content) &&
+            message.content.some(part => part.type === 'image_url' &&
+              part.image_url.url.startsWith('data:image/png;base64,'))));
+          return action('close');
+        case 6:
+          assert.match(result, /Preview session closed/);
+          return {role: 'assistant', content: 'COMPUTER_USE_VERIFIED'};
+        default:
+          throw Error('Unexpected Computer Use request');
+      }
+    };
+    app = spawn(binary, ['--provider', 'custom', '--api', 'chat',
+      '--base-url', 'http://127.0.0.1:' + provider.address().port,
+      '--no-api-key', '--model', 'vision-fixture', '--json', '--max-steps', '9',
+      'Verify the local page using Computer Use'], {cwd: project, env});
+    let computerLog = '';
+    app.stdout.on('data', chunk => computerLog += chunk);
+    app.stderr.on('data', chunk => computerLog += chunk);
+    const computerExit = await new Promise(resolve => app.once('close', resolve));
+    computerWorkflow = null;
+    assert.equal(computerExit, 0, computerLog);
+    assert.equal(stage, 7, computerLog);
+    assert.match(computerLog, /COMPUTER_USE_VERIFIED/);
+    console.log('PASS Agent Computer Use skill, shared legacy session, inspection, and screenshot');
+
     if (process.argv.includes('--browser')) {
       const { chromium } = require('playwright');
       browser = await chromium.launch({

@@ -12,7 +12,7 @@ codex-cpp preview shot index.html -o mobile.png --width 390 --height 844
 codex-cpp preview shot index.html -o clicked.png --click 100,150
 ```
 
-The Agent tool `preview_screenshot` returns a PNG observation for vision-capable models. Each call reloads the document, runs scripts and replays up to 16 clicks in order. Calls do not share a browser session, cookies or storage. The one-shot tool does not accept keyboard input or scrolling; use `preview_session` below for bounded persistent form interaction. Neither tool provides full-page capture. TUI receives textual tool results; WebUI provides collapsed image results, retained after reload. The image uses ordinary provider context/input tokens; no independent model call is added.
+The Agent tool `preview_screenshot` returns a PNG observation for vision-capable models. Each call reloads the document, runs scripts and replays up to 16 clicks in order. Calls do not share a browser session, cookies or storage. The one-shot tool does not accept keyboard input or scrolling; use `computer_use` below for bounded persistent form interaction. Neither tool provides full-page capture. TUI receives textual tool results; WebUI provides collapsed image results, retained after reload. The image uses ordinary provider context/input tokens; no independent model call is added.
 
 Image observations are stored as `codex_tool_image` records, separate from human messages. Recent images survive context compaction. In a multi-tool round, every tool result is recorded before images are sent to the provider, preserving Chat/Responses continuation ordering. Older executables cannot continue journals containing these new records; keep an updated runtime when moving or resuming these sessions.
 
@@ -82,7 +82,11 @@ Core source lives in `miniweb/src/`. QuickJS-ng, stb and NanoSVG retain their bu
 
 ## Persistent interaction sessions
 
-`preview_session` adds a real, process-local page session alongside the unchanged
+The Agent can read the built-in `miniweb-computer-use` skill for the observe, act
+and verify workflow. Previously recorded `preview_session` calls use the same
+session backend. The terminal interface remains `codex-cpp preview session`.
+
+`computer_use` gives the Agent a process-local MiniWeb page session alongside the unchanged
 `preview_screenshot`. Call `open` with a workspace HTML path, retain the returned
 opaque token, then use `click`, `type`, `key`, `wait`, `screenshot` and `close`.
 Opening loads the page once. Later screenshots keep the same DOM, QuickJS heap,
