@@ -64,8 +64,9 @@ async function main() {
     fs.linkSync(path.join(root, 'outside.txt'), path.join(workspace, 'hardlinked.txt'));
 
     let toolName = 'fixture_read';
+    let fixtureTurn = '';
     const call = (id, file) => ({
-      id, type: 'function', function: {name: toolName, arguments: JSON.stringify({path: file})}
+      id: id + fixtureTurn, type: 'function', function: {name: toolName, arguments: JSON.stringify({path: file})}
     });
     let requests = 0, history, offered;
     server = http.createServer(async (req, res) => {
@@ -128,6 +129,7 @@ async function main() {
     }
     fs.writeFileSync(grants, JSON.stringify([{...grant, plugin: fingerprint}]));
     async function runAgent(flags) {
+      fixtureTurn = '';
       requests = 0;
       history = null;
       offered = false;
@@ -152,85 +154,109 @@ async function main() {
     fs.writeFileSync(grants, '[]');
     requests = 0;
     history = null;
-    const reservePort = require('node:net').createServer();
-    await new Promise(resolve => reservePort.listen(0, '127.0.0.1', resolve));
-    const port = reservePort.address().port;
-    await new Promise(resolve => reservePort.close(resolve));
-    const url = 'http://127.0.0.1:' + port;
-    const web = spawn(binary, ['--plugin-reviewed', manifest, fingerprint, 'web',
-      '--root', workspace, '--port', String(port), '--provider', 'custom', '--api', 'chat',
-      '--base-url', 'http://127.0.0.1:' + server.address().port, '--model', 'fixture', '--no-api-key'],
-      {cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe']});
-    let logs = '', cookie = '', csrf = '';
-    web.stdout.on('data', chunk => logs += chunk);
-    web.stderr.on('data', chunk => logs += chunk);
-    const closed = new Promise(resolve => web.once('close', resolve));
-    async function waitWeb(check) {
-      for (let i = 0; i < 300; i++) {
-        if (web.exitCode !== null) throw Error(logs);
-        const value = await check();
-        if (value) return value;
-        await new Promise(resolve => setTimeout(resolve, 40));
-      }
-      throw Error('Web plugin timeout: ' + logs);
-    }
-    async function webRequest(route, data) {
-      const response = await fetch(url + route, {
-        method: data ? 'POST' : 'GET',
-        headers: {Origin: url, Cookie: cookie, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
-        body: data ? JSON.stringify(data) : undefined
-      });
-      const result = await response.json();
-      assert.equal(response.status, 200, JSON.stringify(result));
-      if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
-      if (result.csrf) csrf = result.csrf;
-      return result.result;
-    }
-    const rpc = (op, args) => webRequest('/api/rpc', {op, ...args});
-    let browser, page;
-    try {
-      await waitWeb(async () => {
-        try { await webRequest('/api/me'); return true; }
-        catch (e) { if (e instanceof TypeError) return false; throw e; }
-      });
-      if (process.argv.includes('--browser')) {
-        const {chromium} = require('playwright');
-        browser = await chromium.launch({
-          ...(fs.existsSync('/usr/bin/chromium') ? {executablePath: '/usr/bin/chromium'} : {}),
-          args: ['--no-sandbox'],
-        });
-        page = await browser.newPage();
-        await page.goto(url);
-        await page.locator('#prompt').fill('Test WebUI isolated plugin');
-        await page.locator('#send').click();
-      } else {
-        await rpc('send', {text: 'Test WebUI isolated plugin', request_id: 'isolated-web-test'});
-      }
-      let previousApproval;
-      for (const [file, allow] of [['crash.txt', true], ['wait.txt', false], ['normal.txt', true]]) {
-        const pending = await waitWeb(async () => {
-          const {pending} = await rpc('snapshot');
-          return pending?.call_id && pending.call_id !== previousApproval ? pending : null;
-        });
-        const details = JSON.parse(pending.arguments);
-        assert.equal(details.permission, 'file.read');
-        assert.equal(details.plugin_sha256, fingerprint);
-        assert.equal(details.path, path.join(fs.realpathSync(workspace), file));
-        previousApproval = pending.call_id;
-        if (page) {
-          const card = page.locator('.tool[data-state="approval"]').filter({hasText: file});
-          await card.getByText(details.plugin_sha256, {exact: false}).waitFor();
-          await card.getByRole('button', {name: allow ? '允许' : '拒绝', exact: true}).click();
-        } else {
-          await rpc('approve', {approval: pending.call_id, allow});
+    async function withWeb(manifestPath, digest, exercise) {
+      const reservePort = require('node:net').createServer();
+      await new Promise(resolve => reservePort.listen(0, '127.0.0.1', resolve));
+      const port = reservePort.address().port;
+      await new Promise(resolve => reservePort.close(resolve));
+      const url = 'http://127.0.0.1:' + port;
+      const web = spawn(binary, ['--plugin-reviewed', manifestPath, digest, 'web',
+        '--root', workspace, '--port', String(port), '--provider', 'custom', '--api', 'chat',
+        '--base-url', 'http://127.0.0.1:' + server.address().port, '--model', 'fixture', '--no-api-key'],
+        {cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe']});
+      let logs = '', cookie = '', csrf = '';
+      web.stdout.on('data', chunk => logs += chunk);
+      web.stderr.on('data', chunk => logs += chunk);
+      const closed = new Promise(resolve => web.once('close', resolve));
+      async function waitWeb(check) {
+        for (let i = 0; i < 300; i++) {
+          if (web.exitCode !== null) throw Error(logs);
+          const value = await check();
+          if (value) return value;
+          await new Promise(resolve => setTimeout(resolve, 40));
         }
+        throw Error('Web plugin timeout: ' + logs);
       }
-      await waitWeb(async () => !(await rpc('snapshot')).busy);
-      assert(offered && history, 'WebUI did not finish its isolated plugin turn');
-      const webTools = history.filter(item => item.role === 'tool');
-      assert.match(webTools.find(item => item.tool_call_id === 'crash').content, /worker failed/);
-      assert.match(webTools.find(item => item.tool_call_id === 'timeout').content, /not authorized/);
-      assert.match(webTools.find(item => item.tool_call_id === 'success').content, /selected bytes/);
+      async function webRequest(route, data) {
+        const response = await fetch(url + route, {
+          method: data ? 'POST' : 'GET',
+          headers: {Origin: url, Cookie: cookie, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+          body: data ? JSON.stringify(data) : undefined
+        });
+        const result = await response.json();
+        assert.equal(response.status, 200, JSON.stringify(result));
+        if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+        if (result.csrf) csrf = result.csrf;
+        return result.result;
+      }
+      const rpc = (op, args) => webRequest('/api/rpc', {op, ...args});
+      let browser, page;
+      try {
+        await waitWeb(async () => {
+          try { await webRequest('/api/me'); return true; }
+          catch (e) { if (e instanceof TypeError) return false; throw e; }
+        });
+        if (process.argv.includes('--browser')) {
+          const {chromium} = require('playwright');
+          browser = await chromium.launch({
+            ...(fs.existsSync('/usr/bin/chromium') ? {executablePath: '/usr/bin/chromium'} : {}),
+            args: ['--no-sandbox'],
+          });
+          page = await browser.newPage();
+          await page.goto(url);
+        }
+        async function send(id) {
+          fixtureTurn = '-' + id;
+          requests = 0;
+          history = null;
+          offered = false;
+          if (page) {
+            await page.locator('#prompt').fill('Test WebUI isolated plugin ' + id);
+            await page.locator('#send:not(.stop)').click();
+          } else {
+            await rpc('send', {text: 'Test WebUI isolated plugin ' + id, request_id: id});
+          }
+        }
+        async function finish() {
+          await waitWeb(async () => !(await rpc('snapshot')).busy);
+          assert(offered && history, 'WebUI did not finish its isolated plugin turn');
+          return history.filter(item => item.role === 'tool');
+        }
+        let previousApproval;
+        async function decide(file, allow) {
+          const pending = await waitWeb(async () => {
+            const {pending} = await rpc('snapshot');
+            return pending?.call_id && pending.call_id !== previousApproval ? pending : null;
+          });
+          const details = JSON.parse(pending.arguments);
+          assert.equal(details.permission, 'file.read');
+          assert.equal(details.plugin_sha256, digest);
+          assert.equal(details.path, path.join(fs.realpathSync(workspace), file));
+          previousApproval = pending.call_id;
+          if (page) {
+            const card = page.locator('.tool[data-state="approval"]').filter({hasText: file});
+            await card.getByText(details.plugin_sha256, {exact: false}).waitFor();
+            await card.getByRole('button', {name: allow ? '允许' : '拒绝', exact: true}).click();
+          } else {
+            await rpc('approve', {approval: pending.call_id, allow});
+          }
+        }
+        await exercise({send, decide, finish, rpc, waitWeb});
+      } finally {
+        if (browser) await browser.close();
+        web.kill();
+        await closed;
+      }
+    }
+    await withWeb(manifest, fingerprint, async ({send, decide, finish, rpc, waitWeb}) => {
+      await send('isolated-web-test');
+      await decide('crash.txt', true);
+      await decide('wait.txt', false);
+      await decide('normal.txt', true);
+      const webTools = await finish();
+      assert.match(webTools.find(item => item.tool_call_id.startsWith('crash-')).content, /worker failed/);
+      assert.match(webTools.find(item => item.tool_call_id.startsWith('timeout-')).content, /not authorized/);
+      assert.match(webTools.find(item => item.tool_call_id.startsWith('success-')).content, /selected bytes/);
       assert.deepEqual(JSON.parse(fs.readFileSync(grants, 'utf8')), [], 'Web approvals are one-time');
       const original = fs.readFileSync(manifest);
       try {
@@ -242,11 +268,7 @@ async function main() {
       } finally {
         fs.writeFileSync(manifest, original);
       }
-    } finally {
-      if (browser) await browser.close();
-      web.kill();
-      await closed;
-    }
+    });
     fs.writeFileSync(grants, '[]');
     assert.equal(run('normal.txt').status, 126, 'revoked persistent grant must not be reused');
     const audit = fs.readFileSync(path.join(storage, 'audit.json'), 'utf8');
@@ -266,6 +288,29 @@ async function main() {
       fs.writeFileSync(grants, JSON.stringify([{...grant, plugin: digest}]));
       results = await runAgent(['--plugin', demo]);
       assert.match(results[0].content, /Isolated Plugin tool is active.*14 bytes/);
+      await withWeb(demo, digest, async ({send, finish, decide}) => {
+        await send('demo-existing-grant');
+        assert.match((await finish()).at(-1).content, /Selected file: 14 bytes/);
+
+        const revoked = spawnSync(binary, ['--plugin-reviewed', demo, digest,
+          '--root', workspace, '--provider', 'custom', '--api', 'chat',
+          '--base-url', 'http://127.0.0.1:' + server.address().port, '--model', 'fixture',
+          '--no-api-key', '--ui', 'plain', '-i'],
+          {cwd: workspace, env, input: '/plugin-permissions revoke fixture\n/quit\n',
+            encoding: 'utf8', timeout: 12000});
+        assert.equal(revoked.status, 0, revoked.stderr);
+        assert.match(revoked.stdout, /Plugin permission revoked/);
+
+        await send('demo-revoked');
+        await decide('normal.txt', false);
+        assert.match((await finish()).at(-1).content, /not authorized/);
+        await send('demo-allow-once');
+        await decide('normal.txt', true);
+        assert.match((await finish()).at(-1).content, /Selected file: 14 bytes/);
+        await send('demo-reprompt');
+        await decide('normal.txt', false);
+        assert.match((await finish()).at(-1).content, /not authorized/);
+      });
     }
     console.log('PASS isolated plugin input, boundary enforcement, and Agent recovery after crash and timeout');
   } finally {
