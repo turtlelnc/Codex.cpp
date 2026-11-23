@@ -270,7 +270,7 @@ std::string Engine::inspect(const std::string& element_id) {
                     ",\"label\":" + quote(bounded(util::trim(label), 64)) +
                     ",\"id\":" + quote(bounded(item.attr("id"), 64)) +
                     ",\"focused\":" + (&item == focus ? "true" : "false") +
-                    ",\"disabled\":" + (item.has_attr("disabled") || item.attr("aria-disabled") == "true" ? "true" : "false");
+                    ",\"disabled\":" + (item.form_disabled() || item.attr("aria-disabled") == "true" ? "true" : "false");
                 if (item.is_element("input") && (type == "checkbox" || type == "radio"))
                     controls += std::string(",\"checked\":") +
                         ((item.checked_dirty ? item.checked_value : item.has_attr("checked")) ? "true" : "false");

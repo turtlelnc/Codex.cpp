@@ -255,6 +255,11 @@ const wait = async (fn) => {
         <button>Save task</button>
         <button type="button" disabled>Unavailable</button>
         <button type="button" hidden>Hidden control</button>
+        <fieldset disabled>
+          <legend><button type="button">First legend</button></legend>
+          <button type="button">Inherited disabled</button>
+          <legend><button type="button">Second legend</button></legend>
+        </fieldset>
       </form>
       <p role="status">Waiting for a task</p>
       <script>
@@ -414,6 +419,9 @@ const wait = async (fn) => {
           assert.equal(overview.truncated, false);
           assert(!overview.controls.some(control => control.label === 'Hidden control'));
           assert.equal(overview.controls.find(control => control.label === 'Unavailable')?.disabled, true);
+          for (const [label, disabled] of [['First legend', false], ['Inherited disabled', true], ['Second legend', true]]) {
+            assert.equal(overview.controls.find(control => control.label === label)?.disabled, disabled, label);
+          }
           assert(overview.controls.every(control => control.id === ''));
           const input = overview.controls.find(control => control.tag === 'input' && control.label === 'Task');
           assert(input);

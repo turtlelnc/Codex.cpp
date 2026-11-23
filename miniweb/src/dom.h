@@ -80,6 +80,7 @@ struct Node {
     std::string outer_html() const;
     std::string inner_text() const;
 
+    bool form_disabled() const;
     Node* closest(const char* tag_name) const;
     Node* link_ancestor() const;
     std::string href() const;

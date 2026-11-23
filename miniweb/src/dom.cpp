@@ -237,6 +237,36 @@ std::string Node::inner_text() const {
     return out;
 }
 
+bool Node::form_disabled() const {
+    for (const Node* ancestor = this; ancestor && ancestor->is_element(); ancestor = ancestor->parent) {
+        if (!ancestor->has_attr("disabled")) continue;
+        if (ancestor->is_element("fieldset")) {
+            const Node* legend = nullptr;
+            for (const auto* child : ancestor->children) {
+                if (child->is_element("legend")) {
+                    legend = child;
+                    break;
+                }
+            }
+            if (legend) {
+                bool inside_legend = false;
+                for (const Node* node = this; node != ancestor; node = node->parent) {
+                    if (node == legend) {
+                        inside_legend = true;
+                        break;
+                    }
+                }
+                if (inside_legend) continue;
+            }
+            return true;
+        }
+        if (ancestor->is_element("input") || ancestor->is_element("button") ||
+            ancestor->is_element("select") || ancestor->is_element("textarea") ||
+            ancestor->is_element("option") || ancestor->is_element("optgroup")) return true;
+    }
+    return false;
+}
+
 Node* Node::closest(const char* tag_name) const {
     for (Node* n = const_cast<Node*>(this); n; n = n->parent) {
         if (n->is_element(tag_name)) return n;
