@@ -223,24 +223,31 @@ const wait = async (fn) => {
     );
     assert(Date.now() - started < 30000, 'worker CPU/time limit not enforced');
     assert(!fs.existsSync(path.join(project, 'busy.png')));
-    if (process.platform === 'darwin') {
-      // Exercise the resident watchdog with many distinct decoded-image cache entries.
-      const chunk = (name, data) => {
-        const type = Buffer.from(name), bytes = Buffer.concat([type, data]);
-        let crc = 0xffffffff;
-        for (const b of bytes) { crc ^= b; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
-        const head = Buffer.alloc(4), tail = Buffer.alloc(4); head.writeUInt32BE(data.length); tail.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
-        return Buffer.concat([head, bytes, tail]);
-      };
-      const header = Buffer.alloc(13); header.writeUInt32BE(1024, 0); header.writeUInt32BE(1024, 4); header[8] = 8; header[9] = 6;
-      const largePng = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', require('zlib').deflateSync(Buffer.alloc(4097 * 1024))), chunk('IEND', Buffer.alloc(0))]);
-      for (let i = 0; i < 250; i++) fs.writeFileSync(path.join(project, 'large-' + i + '.png'), largePng);
-      fs.writeFileSync(path.join(project, 'memory.html'), '<body>' + Array.from({ length: 250 }, (_, i) => '<img style="width:1px;height:1px" src="large-' + i + '.png">').join('') + '</body>');
-      r = shot('memory.html', ['-o', 'memory.png']);
-      assert.notEqual(r.status, 0, 'resident memory watchdog must terminate the renderer');
-      assert.match(r.stderr, /resident memory limit exceeded/);
-      assert(!fs.existsSync(path.join(project, 'memory.png')));
-    }
+    // Compressed input size and resident memory depend on encoding and the OS.
+    // Verify the worker's decoded-cache limit directly on every sandboxed platform.
+    const chunk = (name, data) => {
+      const type = Buffer.from(name), bytes = Buffer.concat([type, data]);
+      let crc = 0xffffffff;
+      for (const b of bytes) { crc ^= b; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
+      const head = Buffer.alloc(4), tail = Buffer.alloc(4); head.writeUInt32BE(data.length); tail.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+      return Buffer.concat([head, bytes, tail]);
+    };
+    const header = Buffer.alloc(13); header.writeUInt32BE(1024, 0); header.writeUInt32BE(1024, 4); header[8] = 8; header[9] = 6;
+    const largePng = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', require('zlib').deflateSync(Buffer.alloc(4097 * 1024))), chunk('IEND', Buffer.alloc(0))]);
+    const imagePage = (count, shared = false) => '<body>' + Array.from({length: count}, (_, i) =>
+      '<img style="width:1px;height:1px" src="large-' + (shared ? 0 : i) + '.png">').join('') + '</body>';
+    for (let i = 0; i < 33; i++) fs.writeFileSync(path.join(project, 'large-' + i + '.png'), largePng);
+    fs.writeFileSync(path.join(project, 'shared-images.html'), imagePage(33, true));
+    r = shot('shared-images.html', ['-o', 'shared-images.png']);
+    assert.equal(r.status, 0, r.stderr);
+    fs.writeFileSync(path.join(project, 'image-limit.html'), imagePage(32));
+    r = shot('image-limit.html', ['-o', 'image-limit.png']);
+    assert.equal(r.status, 0, r.stderr);
+    fs.writeFileSync(path.join(project, 'memory.html'), imagePage(33));
+    r = shot('memory.html', ['-o', 'memory.png']);
+    assert.notEqual(r.status, 0, '33 distinct decoded images exceed the 128 MiB cache budget');
+    assert.match(r.stderr, /decoded image cache budget exceeded/);
+    assert(!fs.existsSync(path.join(project, 'memory.png')));
     // Resume protocol must contain an image, not just a printed screenshot filename.
     provider = http.createServer(async (req, res) => {
       let raw = '';
