@@ -129,9 +129,18 @@ Read its token from `output`, then send, for example:
 ```json
 {"operation":"key","session":"TOKEN","value":"Tab"}
 {"operation":"type","session":"TOKEN","value":"Hello"}
+{"operation":"inspect","session":"TOKEN","value":"result"}
 {"operation":"screenshot","session":"TOKEN"}
 {"operation":"close","session":"TOKEN"}
 ```
+
+Inspect accepts an exact element ID of up to 128 UTF-8 bytes. It reports
+the current focus ID and document scroll offsets, plus the requested element's
+viewport rectangle, center hit-test, scroll offsets and bounded DOM text. A missing
+element returns null. Live input values are omitted. The result is page data,
+and renderer diagnostics appear in the optional diagnostics field. Use inspect before a click to
+find its coordinates, and after a submit to check the result before capturing
+a screenshot.
 
 All lines must belong to the same running process; separate CLI invocations cannot
 share tokens. CLI fields not used by an operation may be omitted. The strict Agent
