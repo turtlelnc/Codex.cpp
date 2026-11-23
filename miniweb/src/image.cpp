@@ -3,7 +3,13 @@
 #include "util.h"
 #include "stb_image.h"
 #include "svg.h"
-#include <cstring>
+#include <stdexcept>
+
+void ImageCache::check_decoded_budget(size_t bytes) const {
+    constexpr size_t limit = 128 * 1024 * 1024;
+    if (bytes > limit - decoded_bytes_)
+        throw std::runtime_error("Preview decoded image cache budget exceeded");
+}
 
 std::shared_ptr<Image> ImageCache::get(const std::string& url) {
     auto it = cache_.find(url);
@@ -29,13 +35,16 @@ std::shared_ptr<Image> ImageCache::get(const std::string& url) {
             img->h = rendered->h;
             img->intrinsic_w = (int)std::lround(iw);
             img->intrinsic_h = (int)std::lround(ih);
-            img->rgba = rendered->rgba;
+            check_decoded_budget(rendered->rgba.size());
+            img->rgba = std::move(rendered->rgba);
+            decoded_bytes_ += img->rgba.size();
             img->ok = true;
         }
         return img;
     }
     int w = 0, h = 0, n = 0;
     if(!stbi_info_from_memory(reinterpret_cast<const stbi_uc*>(r.data.data()),static_cast<int>(r.data.size()),&w,&h,&n)||w<=0||h<=0||w>4096||h>4096||static_cast<uint64_t>(w)*h>8*1024*1024){util::warn("image dimensions exceed preview limits");return img;}
+    check_decoded_budget(static_cast<size_t>(w) * h * 4);
     unsigned char* data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(r.data.data()),
                                                 (int)r.data.size(), &w, &h, &n, 4);
     if (!data || w <= 0 || h <= 0) {
@@ -48,6 +57,7 @@ std::shared_ptr<Image> ImageCache::get(const std::string& url) {
     img->intrinsic_w = w;
     img->intrinsic_h = h;
     img->rgba.assign(data, data + (size_t)w * h * 4);
+    decoded_bytes_ += img->rgba.size();
     img->ok = true;
     stbi_image_free(data);
     return img;
