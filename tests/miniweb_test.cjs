@@ -249,9 +249,22 @@ const wait = async (fn) => {
     assert.match(r.stderr, /decoded image cache budget exceeded/);
     assert(!fs.existsSync(path.join(project, 'memory.png')));
     let computerWorkflow;
-    fs.writeFileSync(path.join(project, 'computer.html'),
-      '<button id="target" style="width:200px;height:100px">Before</button>' +
-      '<script>document.getElementById("target").onclick=function(){this.textContent="After"}</script>');
+    fs.writeFileSync(path.join(project, 'computer.html'), `
+      <form>
+        <label>Task <input name="task" placeholder="Enter a task"></label>
+        <button>Save task</button>
+        <button type="button" disabled>Unavailable</button>
+        <button type="button" hidden>Hidden control</button>
+      </form>
+      <p role="status">Waiting for a task</p>
+      <script>
+        document.querySelector("form").onsubmit = function(event) {
+          event.preventDefault();
+          document.querySelector("[role=status]").textContent =
+            "Saved: " + document.querySelector("input").value;
+        };
+      </script>
+    `);
     // Resume protocol must contain an image, not just a printed screenshot filename.
     provider = http.createServer(async (req, res) => {
       let raw = '';
@@ -370,6 +383,8 @@ const wait = async (fn) => {
     let stage = 0, token;
     computerWorkflow = body => {
       const result = body.messages.findLast(message => message.role === 'tool')?.content || '';
+      assert(!body.messages.some(message => Array.isArray(message.content) &&
+        message.content.some(part => part.type === 'image_url')));
       const call = (name, args) => ({
         role: 'assistant', content: null,
         tool_calls: [{id: 'computer-' + stage, type: 'function',
@@ -378,6 +393,9 @@ const wait = async (fn) => {
       const action = (operation, fields, name = 'computer_use') =>
         call(name, {operation, session: token || '', path: '', value: '', x: 0, y: 0,
           width: 320, height: 240, wait_ms: 0, delta_x: 0, delta_y: 0, ...fields});
+      function point([x, y, w, h]) {
+        return {x: Math.floor(x + w / 2), y: Math.floor(y + h / 2)};
+      }
       switch (stage++) {
         case 0:
           assert(body.tools.some(tool => tool.function.name === 'computer_use'));
@@ -389,20 +407,39 @@ const wait = async (fn) => {
         case 2:
           token = result.match(/Opened preview session ([^. ]+)\./)?.[1];
           assert(token, result);
-          return action('click', {x: 20, y: 20}, 'preview_session');
-        case 3:
-          assert.match(result, /action completed: click/);
-          return action('inspect', {value: 'target'});
+          return action('inspect');
+        case 3: {
+          const overview = JSON.parse(result);
+          assert.deepEqual(overview.status, ['Waiting for a task']);
+          assert.equal(overview.truncated, false);
+          assert(!overview.controls.some(control => control.label === 'Hidden control'));
+          assert.equal(overview.controls.find(control => control.label === 'Unavailable')?.disabled, true);
+          assert(overview.controls.every(control => control.id === ''));
+          const input = overview.controls.find(control => control.tag === 'input' && control.label === 'Task');
+          assert(input);
+          return action('click', point(input.rect), 'preview_session');
+        }
         case 4:
-          assert.match(result, /"text":"After"/);
-          assert.match(result, /"center_hit":true/);
-          return action('screenshot');
+          assert.match(result, /action completed: click/);
+          return action('type', {value: 'Review CSS'});
         case 5:
-          assert(body.messages.some(message => Array.isArray(message.content) &&
-            message.content.some(part => part.type === 'image_url' &&
-              part.image_url.url.startsWith('data:image/png;base64,'))));
+          assert.match(result, /action completed: type/);
+          return action('inspect');
+        case 6: {
+          const overview = JSON.parse(result);
+          assert.equal(overview.controls.find(control => control.tag === 'input')?.focused, true);
+          assert(!result.includes('Review CSS'), 'Inspection must not expose live input values');
+          const saveButton = overview.controls.find(control => control.label === 'Save task');
+          assert(saveButton && !saveButton.disabled);
+          return action('click', point(saveButton.rect));
+        }
+        case 7:
+          assert.match(result, /action completed: click/);
+          return action('inspect');
+        case 8:
+          assert.deepEqual(JSON.parse(result).status, ['Saved: Review CSS']);
           return action('close');
-        case 6:
+        case 9:
           assert.match(result, /Preview session closed/);
           return {role: 'assistant', content: 'COMPUTER_USE_VERIFIED'};
         default:
@@ -411,7 +448,7 @@ const wait = async (fn) => {
     };
     app = spawn(binary, ['--provider', 'custom', '--api', 'chat',
       '--base-url', 'http://127.0.0.1:' + provider.address().port,
-      '--no-api-key', '--model', 'vision-fixture', '--json', '--max-steps', '9',
+      '--no-api-key', '--model', 'vision-fixture', '--json', '--max-steps', '12',
       'Verify the local page using Computer Use'], {cwd: project, env});
     let computerLog = '';
     app.stdout.on('data', chunk => computerLog += chunk);
@@ -419,9 +456,9 @@ const wait = async (fn) => {
     const computerExit = await new Promise(resolve => app.once('close', resolve));
     computerWorkflow = null;
     assert.equal(computerExit, 0, computerLog);
-    assert.equal(stage, 7, computerLog);
+    assert.equal(stage, 10, computerLog);
     assert.match(computerLog, /COMPUTER_USE_VERIFIED/);
-    console.log('PASS Agent Computer Use skill, shared legacy session, inspection, and screenshot');
+    console.log('PASS text-only Agent Computer Use locates controls, submits, and verifies feedback without element IDs');
 
     if (process.argv.includes('--browser')) {
       const { chromium } = require('playwright');

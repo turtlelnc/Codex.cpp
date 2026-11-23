@@ -138,6 +138,13 @@ Read its token from `output`, then send, for example:
 {"operation":"close","session":"TOKEN"}
 ```
 
+With an empty value, inspect lists up to 12 native controls whose centers are
+reachable in the viewport, plus up to four centered status/alert messages or
+output elements. Labels use aria-label, a wrapping label, button/link text or
+a placeholder. This is a bounded page observation, not an accessibility tree.
+If the result is truncated or the target is outside the viewport, scroll and
+inspect again.
+
 Inspect accepts an exact element ID of up to 128 UTF-8 bytes. It reports
 the current focus ID and document scroll offsets, plus the requested element's
 viewport rectangle, center hit-test, scroll offsets and bounded DOM text. A missing
