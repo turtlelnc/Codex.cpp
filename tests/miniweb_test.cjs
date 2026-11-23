@@ -248,6 +248,28 @@ const wait = async (fn) => {
     assert.notEqual(r.status, 0, '33 distinct decoded images exceed the 128 MiB cache budget');
     assert.match(r.stderr, /decoded image cache budget exceeded/);
     assert(!fs.existsSync(path.join(project, 'memory.png')));
+    let computerWorkflow;
+    fs.writeFileSync(path.join(project, 'computer.html'), `
+      <form>
+        <label>Task <input name="task" placeholder="Enter a task"></label>
+        <button>Save task</button>
+        <button type="button" disabled>Unavailable</button>
+        <button type="button" hidden>Hidden control</button>
+        <fieldset disabled>
+          <legend><button type="button">First legend</button></legend>
+          <button type="button">Inherited disabled</button>
+          <legend><button type="button">Second legend</button></legend>
+        </fieldset>
+      </form>
+      <p role="status">Waiting for a task</p>
+      <script>
+        document.querySelector("form").onsubmit = function(event) {
+          event.preventDefault();
+          document.querySelector("[role=status]").textContent =
+            "Saved: " + document.querySelector("input").value;
+        };
+      </script>
+    `);
     // Resume protocol must contain an image, not just a printed screenshot filename.
     provider = http.createServer(async (req, res) => {
       let raw = '';
@@ -255,6 +277,17 @@ const wait = async (fn) => {
       const body = JSON.parse(raw);
       requests.push(body);
       res.setHeader('Content-Type', 'application/json');
+      if (computerWorkflow) {
+        try {
+          const message = computerWorkflow(body);
+          res.end(JSON.stringify({choices: [{message}]}));
+        } catch (error) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({error: {message: String(error.stack)}}));
+        }
+        return;
+      }
+
       const imageRequest = (body.messages || body.input || []).some(
         (m) =>
           Array.isArray(m.content) &&
@@ -352,6 +385,89 @@ const wait = async (fn) => {
       .map(JSON.parse);
     assert(stored.some((r) => r.type === 'codex_tool_image'));
     assert.equal(stored.filter((r) => r.role === 'user').length, 1);
+    let stage = 0, token;
+    computerWorkflow = body => {
+      const result = body.messages.findLast(message => message.role === 'tool')?.content || '';
+      assert(!body.messages.some(message => Array.isArray(message.content) &&
+        message.content.some(part => part.type === 'image_url')));
+      const call = (name, args) => ({
+        role: 'assistant', content: null,
+        tool_calls: [{id: 'computer-' + stage, type: 'function',
+          function: {name, arguments: JSON.stringify(args)}}]
+      });
+      const action = (operation, fields, name = 'computer_use') =>
+        call(name, {operation, session: token || '', path: '', value: '', x: 0, y: 0,
+          width: 320, height: 240, wait_ms: 0, delta_x: 0, delta_y: 0, ...fields});
+      function point([x, y, w, h]) {
+        return {x: Math.floor(x + w / 2), y: Math.floor(y + h / 2)};
+      }
+      switch (stage++) {
+        case 0:
+          assert(body.tools.some(tool => tool.function.name === 'computer_use'));
+          assert(!body.tools.some(tool => tool.function.name === 'preview_session'));
+          return call('read_skill', {name: 'miniweb-computer-use'});
+        case 1:
+          assert.match(result, /Observe before acting/);
+          return action('open', {path: 'computer.html'});
+        case 2:
+          token = result.match(/Opened preview session ([^. ]+)\./)?.[1];
+          assert(token, result);
+          return action('inspect');
+        case 3: {
+          const overview = JSON.parse(result);
+          assert.deepEqual(overview.status, ['Waiting for a task']);
+          assert.equal(overview.truncated, false);
+          assert(!overview.controls.some(control => control.label === 'Hidden control'));
+          assert.equal(overview.controls.find(control => control.label === 'Unavailable')?.disabled, true);
+          for (const [label, disabled] of [['First legend', false], ['Inherited disabled', true], ['Second legend', true]]) {
+            assert.equal(overview.controls.find(control => control.label === label)?.disabled, disabled, label);
+          }
+          assert(overview.controls.every(control => control.id === ''));
+          const input = overview.controls.find(control => control.tag === 'input' && control.label === 'Task');
+          assert(input);
+          return action('click', point(input.rect), 'preview_session');
+        }
+        case 4:
+          assert.match(result, /action completed: click/);
+          return action('type', {value: 'Review CSS'});
+        case 5:
+          assert.match(result, /action completed: type/);
+          return action('inspect');
+        case 6: {
+          const overview = JSON.parse(result);
+          assert.equal(overview.controls.find(control => control.tag === 'input')?.focused, true);
+          assert(!result.includes('Review CSS'), 'Inspection must not expose live input values');
+          const saveButton = overview.controls.find(control => control.label === 'Save task');
+          assert(saveButton && !saveButton.disabled);
+          return action('click', point(saveButton.rect));
+        }
+        case 7:
+          assert.match(result, /action completed: click/);
+          return action('inspect');
+        case 8:
+          assert.deepEqual(JSON.parse(result).status, ['Saved: Review CSS']);
+          return action('close');
+        case 9:
+          assert.match(result, /Preview session closed/);
+          return {role: 'assistant', content: 'COMPUTER_USE_VERIFIED'};
+        default:
+          throw Error('Unexpected Computer Use request');
+      }
+    };
+    app = spawn(binary, ['--provider', 'custom', '--api', 'chat',
+      '--base-url', 'http://127.0.0.1:' + provider.address().port,
+      '--no-api-key', '--model', 'vision-fixture', '--json', '--max-steps', '12',
+      'Verify the local page using Computer Use'], {cwd: project, env});
+    let computerLog = '';
+    app.stdout.on('data', chunk => computerLog += chunk);
+    app.stderr.on('data', chunk => computerLog += chunk);
+    const computerExit = await new Promise(resolve => app.once('close', resolve));
+    computerWorkflow = null;
+    assert.equal(computerExit, 0, computerLog);
+    assert.equal(stage, 10, computerLog);
+    assert.match(computerLog, /COMPUTER_USE_VERIFIED/);
+    console.log('PASS text-only Agent Computer Use locates controls, submits, and verifies feedback without element IDs');
+
     if (process.argv.includes('--browser')) {
       const { chromium } = require('playwright');
       browser = await chromium.launch({

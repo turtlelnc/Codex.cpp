@@ -486,6 +486,10 @@ JSValue js_control_value(JSContext* ctx, JSValueConst, int argc, JSValueConst* a
     return str_val(ctx, n->control_dirty ? n->control_value : n->is_element("textarea") ? n->text_content() : n->attr("value"));
 }
 
+JSValue js_form_disabled(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    const auto* node = argc ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
+    return JS_NewBool(ctx, node && node->form_disabled());
+}
 JSValue js_focus_control(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto* b = bridge(ctx); if (!b) return JS_UNDEFINED;
     if(!argc)return JS_NewInt32(ctx,b->doc->focused_id);
@@ -899,6 +903,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("mutations", 0, js_mutations),
     bridge_function("observerTurn", 0, js_observer_turn),
     bridge_function("resizeMetrics", 1, js_resize_metrics),
+    bridge_function("formDisabled", 1, js_form_disabled),
     bridge_function("focusControl", 1, js_focus_control),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),

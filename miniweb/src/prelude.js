@@ -1501,18 +1501,7 @@
   // User interaction defaults live here, separate from synthetic dispatchEvent.
   var activeControl = null;
   var focusRevision = 0;
-  function formDisabled(n) {
-    for(var p=n;p && p.nodeType===1;p=p.parentElement) {
-      if(!p.hasAttribute('disabled'))continue;
-      if(p.tagName==='FIELDSET') {
-        var legend=p.children.find(function(c){return c.tagName==='LEGEND';});
-        if(legend && legend.contains(n))continue;
-        return true;
-      }
-      if(/^(INPUT|BUTTON|SELECT|TEXTAREA|OPTION|OPTGROUP)$/.test(p.tagName))return true;
-    }
-    return false;
-  }
+  function formDisabled(n) { return n && N.formDisabled(n.__id); }
   function enabled(n) {
     if(!n || formDisabled(n))return false;
     for (var p = n; p && p.nodeType === 1; p = p.parentElement)

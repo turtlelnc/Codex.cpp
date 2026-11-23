@@ -225,20 +225,74 @@ std::string Engine::inspect(const std::string& element_id) {
     const auto* focus = active > 0 && static_cast<size_t>(active) < doc_->id_map.size()
         ? doc_->id_map[active] : nullptr;
     out += ",\"focused_id\":" + quote(focus ? bounded(focus->attr("id"), 128) : "");
+    auto center = [&](const Node* node, const RectF& rect) {
+        const float x = rect.x + rect.w / 2, y = rect.y + rect.h / 2;
+        auto* hit = rect.w > 0 && rect.h > 0 && x >= 0 && y >= 0 && x < viewport_w_ && y < viewport_h_
+            ? hit_test(doc_->html, 0, 0, x, y) : nullptr;
+        while (hit && hit != node) hit = hit->parent;
+        return hit != nullptr;
+    };
+    auto rectangle = [&](const RectF& rect) {
+        return "[" + number(rect.x) + "," + number(rect.y) + "," + number(rect.w) + "," + number(rect.h) + "]";
+    };
+    if (element_id.empty()) {
+        std::string controls, status;
+        size_t control_count = 0, status_count = 0, hit_tests = 0;
+        bool truncated = false;
+        for (const auto& item : doc_->arena) {
+            if (!item.is_element()) continue;
+            const std::string type = util::to_lower(item.attr("type"));
+            const auto role = item.attr("role");
+            const bool control = item.is_element("button") || item.is_element("textarea") ||
+                item.is_element("select") || (item.is_element("input") && type != "hidden") ||
+                (item.is_element("a") && item.has_attr("href"));
+            const bool result = item.is_element("output") || role == "status" || role == "alert";
+            if (!control && !result) continue;
+            const auto rect = item.client_rect();
+            if (rect.w <= 0 || rect.h <= 0 || rect.x + rect.w / 2 < 0 || rect.y + rect.h / 2 < 0 ||
+                rect.x + rect.w / 2 >= viewport_w_ || rect.y + rect.h / 2 >= viewport_h_) continue;
+            if (hit_tests++ == 64) {
+                truncated = true;
+                break;
+            }
+            if (!center(&item, rect)) continue;
+            if (control && control_count < 12) {
+                auto label = item.attr("aria-label");
+                if (label.empty()) {
+                    if (const auto* parent = item.closest("label")) label = parent->text_content();
+                    else if (item.is_element("button") || item.is_element("a")) label = item.text_content();
+                    else if (item.is_element("input") && (type == "submit" || type == "button" || type == "reset"))
+                        label = item.attr("value");
+                    else label = item.attr("placeholder");
+                }
+                if (control_count++) controls += ',';
+                controls += "{\"tag\":" + quote(item.tag) + ",\"type\":" + quote(bounded(type, 24)) +
+                    ",\"label\":" + quote(bounded(util::trim(label), 64)) +
+                    ",\"id\":" + quote(bounded(item.attr("id"), 64)) +
+                    ",\"focused\":" + (&item == focus ? "true" : "false") +
+                    ",\"disabled\":" + (item.form_disabled() || item.attr("aria-disabled") == "true" ? "true" : "false");
+                if (item.is_element("input") && (type == "checkbox" || type == "radio"))
+                    controls += std::string(",\"checked\":") +
+                        ((item.checked_dirty ? item.checked_value : item.has_attr("checked")) ? "true" : "false");
+                controls += ",\"rect\":" + rectangle(rect) + "}";
+            } else if (control) truncated = true;
+            if (result && !control && status_count < 4) {
+                if (status_count++) status += ',';
+                status += quote(bounded(util::trim(item.text_content()), 128));
+            } else if (result && !control) truncated = true;
+        }
+        return out + ",\"controls\":[" + controls + "],\"status\":[" + status +
+            "],\"truncated\":" + (truncated ? "true}" : "false}");
+    }
     const auto* node = doc_->get_element_by_id(element_id);
     if (!node) return out + ",\"element\":null}";
     const auto rect = node->client_rect();
-    const float x = rect.x + rect.w / 2, y = rect.y + rect.h / 2;
-    auto* hit = rect.w > 0 && rect.h > 0 && x >= 0 && y >= 0 && x < viewport_w_ && y < viewport_h_
-        ? hit_test(doc_->html, 0, 0, x, y) : nullptr;
-    while (hit && hit != node) hit = hit->parent;
     // Return only bounded DOM text. Live input values are deliberately omitted.
     std::string label = node->is_element("input") || node->is_element("textarea") ? "" : node->text_content();
     return out + ",\"element\":{\"tag\":" + quote(node->tag) +
-        ",\"text\":" + quote(bounded(std::move(label), 512)) + ",\"center_hit\":" + (hit ? "true" : "false") +
+        ",\"text\":" + quote(bounded(std::move(label), 512)) + ",\"center_hit\":" + (center(node, rect) ? "true" : "false") +
         ",\"scroll_x\":" + number(node->scroll_x) + ",\"scroll_y\":" + number(node->scroll_y) +
-        ",\"rect\":[" + number(rect.x) + "," + number(rect.y) + "," +
-        number(rect.w) + "," + number(rect.h) + "]}}";
+        ",\"rect\":" + rectangle(rect) + "}}";
 }
 
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
