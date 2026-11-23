@@ -202,6 +202,45 @@ bool Engine::scroll(float x,float y,float dx,float dy) {
     return interact("__mwScroll("+std::to_string(target?target->id:0)+","+util::format_float(dx,2)+","+util::format_float(dy,2)+");");
 }
 
+std::string Engine::inspect(const std::string& element_id) {
+    ensure_layout();
+    auto quote = [](const std::string& value) {
+        return "\"" + diag::detail::json_escape(value) + "\"";
+    };
+    auto bounded = [](std::string value, size_t limit) {
+        size_t end = 0;
+        while (end < value.size()) {
+            uint32_t cp = 0;
+            const size_t next = util::utf8_next(value, end, &cp);
+            if (next > limit) break;
+            end = next;
+        }
+        value.resize(end);
+        return value;
+    };
+    auto number = [](float value) { return util::format_float(value, 2); };
+    std::string out = "{\"scroll_x\":" + number(doc_->scroll_x) +
+        ",\"scroll_y\":" + number(doc_->scroll_y);
+    const auto active = doc_->focused_id;
+    const auto* focus = active > 0 && static_cast<size_t>(active) < doc_->id_map.size()
+        ? doc_->id_map[active] : nullptr;
+    out += ",\"focused_id\":" + quote(focus ? bounded(focus->attr("id"), 128) : "");
+    const auto* node = doc_->get_element_by_id(element_id);
+    if (!node) return out + ",\"element\":null}";
+    const auto rect = node->client_rect();
+    const float x = rect.x + rect.w / 2, y = rect.y + rect.h / 2;
+    auto* hit = rect.w > 0 && rect.h > 0 && x >= 0 && y >= 0 && x < viewport_w_ && y < viewport_h_
+        ? hit_test(doc_->html, 0, 0, x, y) : nullptr;
+    while (hit && hit != node) hit = hit->parent;
+    // Return only bounded DOM text. Live input values are deliberately omitted.
+    std::string label = node->is_element("input") || node->is_element("textarea") ? "" : node->text_content();
+    return out + ",\"element\":{\"tag\":" + quote(node->tag) +
+        ",\"text\":" + quote(bounded(std::move(label), 512)) + ",\"center_hit\":" + (hit ? "true" : "false") +
+        ",\"scroll_x\":" + number(node->scroll_x) + ",\"scroll_y\":" + number(node->scroll_y) +
+        ",\"rect\":[" + number(rect.x) + "," + number(rect.y) + "," +
+        number(rect.w) + "," + number(rect.h) + "]}}";
+}
+
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None) return nullptr;
     const LayoutInfo& L = n->layout;

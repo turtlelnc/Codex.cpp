@@ -46,6 +46,9 @@ module.exports = async function sessionTests(binary) {
   fs.writeFileSync(path.join(root, "missing-styles.html"),
     '<link rel="stylesheet" href="missing-a.css"><link rel="stylesheet" href="missing-b.css">' +
     '<link rel="stylesheet" href="missing-c.css"><button>Click</button>');
+  for (const file of ["live-task.html", "focus-reveal.html"]) {
+    fs.copyFileSync(path.resolve("miniweb/test", file), path.join(root, file));
+  }
   const peers = [];
   function peer() {
     const child = spawn(binary, ["preview", "session"], {
@@ -138,6 +141,60 @@ module.exports = async function sessionTests(binary) {
       return;
     }
     const id = token(first);
+    // Both acceptance flows use only the public session operations.
+    const acceptance = peer();
+    const workflow = async (page, height, exercise) => {
+      const session = token(await acceptance.request({path: page, height}));
+      const act = async (operation, fields = {}) => {
+        const result = await acceptance.request({operation, session, ...fields});
+        assert.equal(result.exit_code, 0, result.output);
+        return result;
+      };
+      const inspect = async (value) => JSON.parse((await act("inspect", {value})).output);
+      const capture = async (name) => {
+        const image = (await act("screenshot")).images[0];
+        assert.match(image, /^data:image\/png;base64,/);
+        if (process.env.CODEX_ARTIFACT_DIR) {
+          fs.writeFileSync(path.join(process.env.CODEX_ARTIFACT_DIR, name + ".png"),
+            Buffer.from(image.split(",")[1], "base64"));
+        }
+      };
+      await exercise(act, inspect, capture);
+      await capture("acceptance-" + page.replace(".html", ""));
+      await act("close");
+    };
+    await workflow("live-task.html", 320, async (act, inspect) => {
+      assert.equal((await inspect("missing")).element, null);
+      const input = (await inspect("new-task")).element;
+      const [x, y, w, h] = input.rect;
+      assert.equal(input.center_hit, true);
+      await act("click", {x: Math.floor(x+w/2), y: Math.floor(y+h/2)});
+      assert.equal((await inspect("new-task")).focused_id, "new-task");
+      for (let i = 1; i <= 8; i++) {
+        await act("type", {value: "Review task " + i});
+        await act("key", {value: "Enter"});
+      }
+      assert.equal((await inspect("count")).element.text, "10 tasks left");
+      assert.match((await inspect("tasks")).element.text, /Review task 8/);
+      await act("scroll", {x: 300, y: 260, delta_y: 600});
+      assert((await inspect("tasks")).scroll_y > 0, "Task page must scroll after adding rows");
+    });
+    await workflow("focus-reveal.html", 480, async (act, inspect, capture) => {
+      assert.equal((await inspect("dialog")).element.center_hit, false);
+      const [x, y, w, h] = (await inspect("settings")).element.rect;
+      await act("click", {x: Math.floor(x+w/2), y: Math.floor(y+h/2)});
+      assert.equal((await inspect("dialog-input")).focused_id, "dialog-input");
+      assert.equal((await inspect("dialog-input")).element.center_hit, true);
+      assert((await inspect("dialog-scroll")).element.scroll_y > 0, "Focus reveals the settings field");
+      await act("type", {value: "theme"});
+      assert.equal((await inspect("dialog-input")).element.text, "");
+      await capture("acceptance-settings-open");
+      await act("key", {value: "Escape"});
+      assert.equal((await inspect("dialog")).element.center_hit, false);
+      assert.equal((await inspect("near")).focused_id, "near");
+    });
+    console.log("PASS offline task and settings acceptance through the isolated session API");
+
     const retry = await p.request({ operation: "click", session: id, x: 640 });
     assert.equal(retry.exit_code, 2);
     assert.match(retry.output, /outside bounds/);

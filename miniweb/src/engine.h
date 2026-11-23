@@ -30,6 +30,7 @@ public:
     bool type(const std::string& text);
     bool key(const std::string& key);
     bool advance(int milliseconds);
+    std::string inspect(const std::string& element_id);
     bool scroll(float x, float y, float dx, float dy);
     void set_wait_ms(int ms) { wait_ms_ = ms; }
     const std::string& url() const { return url_; }

@@ -22,7 +22,7 @@ Pages run in a child of the same executable under the existing OS sandbox with a
 
 There is no unsafe fallback, including with `--unsafe-execution`. Linux requires functioning bubblewrap/user namespaces; macOS requires Seatbelt. Windows builds include the renderer but the public preview/tool fails closed until an AppContainer backend exists. Windows must not be described as sandbox-supported.
 
-Host timeout/cancellation terminates the worker process tree before temporary cleanup. Limits include 64–1920px per dimension, a fixed viewport, up to 3s virtual waiting, 256 resource accesses, 8 MiB per file, 32 MiB aggregate file resources, QuickJS memory/interrupt limits, canvas bounds and a 25s host deadline. Linux additionally enforces data/address-space limits; macOS monitors peak resident memory at 10ms intervals and terminates above 768 MiB (a sampled watchdog, not an allocation-time ceiling). POSIX limits worker CPU/output size. macOS data-segment limits cannot simply be lowered below pre-reserved VM; the resident watchdog avoids that failure without changing sandbox grants. These are defensive bounds, not a claim that this experimental C++ engine has been comprehensively memory-safety audited.
+Host timeout/cancellation terminates the worker process tree before temporary cleanup. Limits include 64–1920px per dimension, a fixed viewport, up to 3s virtual waiting, 256 resource accesses, 8 MiB per file, 32 MiB aggregate file resources, 128 MiB of cached decoded images, QuickJS memory/interrupt limits, canvas bounds and a 25s host deadline. Linux additionally enforces data/address-space limits; macOS monitors peak resident memory at 10ms intervals and terminates above 768 MiB (a sampled watchdog, not an allocation-time ceiling). POSIX limits worker CPU/output size. macOS data-segment limits cannot simply be lowered below pre-reserved VM; the resident watchdog avoids that failure without changing sandbox grants. These are defensive bounds, not a claim that this experimental C++ engine has been comprehensively memory-safety audited.
 
 ## Confirmed layout fixes
 
@@ -129,9 +129,18 @@ Read its token from `output`, then send, for example:
 ```json
 {"operation":"key","session":"TOKEN","value":"Tab"}
 {"operation":"type","session":"TOKEN","value":"Hello"}
+{"operation":"inspect","session":"TOKEN","value":"result"}
 {"operation":"screenshot","session":"TOKEN"}
 {"operation":"close","session":"TOKEN"}
 ```
+
+Inspect accepts an exact element ID of up to 128 UTF-8 bytes. It reports
+the current focus ID and document scroll offsets, plus the requested element's
+viewport rectangle, center hit-test, scroll offsets and bounded DOM text. A missing
+element returns null. Live input values are omitted. The result is page data,
+and renderer diagnostics appear in the optional diagnostics field. Use inspect before a click to
+find its coordinates, and after a submit to check the result before capturing
+a screenshot.
 
 All lines must belong to the same running process; separate CLI invocations cannot
 share tokens. CLI fields not used by an operation may be omitted. The strict Agent
