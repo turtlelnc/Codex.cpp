@@ -2,7 +2,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const { once } = require('node:events');
+const { createInterface } = require('node:readline');
 
 const fixture = `<script>
 window.fetch = async function(url, options) {
@@ -24,16 +26,21 @@ document.addEventListener('focusin', () =>
   document.body.setAttribute('data-measure', document.activeElement.id));
 </script>`;
 
+function stageWeb(root, scripts) {
+  fs.cpSync(path.resolve('web'), root, {recursive: true});
+  const index = path.join(root, 'index.html');
+  const html = fs.readFileSync(index, 'utf8')
+    .replace(/(src|href)="\/(?=[^"])/g, '$1="')
+    .replace('<head>', '<head>' + scripts);
+  fs.writeFileSync(index, html);
+  return index;
+}
+
 module.exports = async function compareSettings(browser, probe, binary) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'miniweb-real-settings-'));
   const page = await browser.newPage({viewport: {width: 1280, height: 800}});
   try {
-    fs.cpSync(path.resolve('web'), root, {recursive: true});
-    const index = path.join(root, 'index.html');
-    const html = fs.readFileSync(index, 'utf8')
-      .replace(/(src|href)="\/(?=[^"])/g, '$1="')
-      .replace('<head>', '<head>' + fixture);
-    fs.writeFileSync(index, html);
+    const index = stageWeb(root, fixture);
     await page.route('http://settings-fixture.local/**', route => {
       const relative = new URL(route.request().url()).pathname.slice(1);
       const file = path.resolve(root, relative || 'index.html');
@@ -92,6 +99,112 @@ module.exports = async function compareSettings(browser, probe, binary) {
     console.log('MiniWeb/Chromium real settings WebUI opens, switches categories, and restores focus (offline fixture)');
   } finally {
     await page.close();
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+};
+
+module.exports.persist = async function verifySettingsPersistence(binary, rpc, env) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'miniweb-settings-persist-'));
+  const child = spawn(binary, ['preview', 'session'], {
+    cwd: root, env: {...env, CODEX_CPP_HOME: path.join(root, 'preview-home')},
+    timeout: 35000,
+  });
+  const finished = once(child, 'close');
+  const output = createInterface({input: child.stdout})[Symbol.asyncIterator]();
+  let token, stderr = '';
+  child.stderr.on('data', chunk => stderr += chunk);
+  async function act(operation, fields = {}) {
+    child.stdin.write(JSON.stringify({operation, session: token, ...fields}) + '\n');
+    const line = await output.next();
+    assert(!line.done, stderr || 'MiniWeb preview exited before responding');
+    const result = JSON.parse(line.value);
+    assert.equal(result.exit_code, 0, result.output);
+    return result;
+  }
+  const observe = async value => JSON.parse((await act('inspect', {value})).output).element;
+  async function click(id) {
+    const element = await observe(id);
+    assert(element?.center_hit, 'Control center must be reachable: ' + id);
+    const [x, y, w, h] = element.rect;
+    await act('click', {x: Math.floor(x + w / 2), y: Math.floor(y + h / 2)});
+  }
+  function stage(preferences) {
+    fs.writeFileSync(path.join(root, 'preferences.json'), JSON.stringify(preferences));
+    stageWeb(root, '<script>const readFixture = window.fetch; const settingsProtocol = ' +
+      JSON.stringify({application: 'codex-cpp', protocols: [1],
+        capabilities: ['scope-auth.v1', 'snapshot.full.v1', 'approval.bound.v1',
+          'request-id.v1', 'team.write.v1', 'suggestions.v1', 'settings.reasoning.v1']}) +
+      '</script>' + fixture + `<script>
+      const startupFixture = window.fetch;
+      window.fetch = async function(url, options) {
+        if (url === '/api/me')
+          return {ok:true, status:200, json:async () => ({mode:'local', plugins:[], protocol:settingsProtocol})};
+        if (url === '/api/rpc') {
+          const request = JSON.parse(options.body || '{}');
+          if (request.op === 'preferences' || request.op === 'preferences_save') {
+            const saving = request.op === 'preferences_save';
+            if (saving) {
+              let sent = document.getElementById('fixture-outbound-setting');
+              if (!sent) {
+                sent = document.createElement('pre');
+                sent.id = 'fixture-outbound-setting';
+                sent.hidden = true;
+                document.body.appendChild(sent);
+              }
+              sent.textContent = JSON.stringify(request);
+              // The test driver releases the response only after the backend commits it.
+              await new Promise(resolve => document.addEventListener('keydown', resolve, {once: true}));
+            }
+            const response = await readFixture(saving ? 'saved-preferences.json' : 'preferences.json');
+            const result = await response.json();
+            return {ok:true, status:200, json:async () => ({result})};
+          }
+          if (request.op === 'suggestions_snapshot')
+            return {ok:true, status:200, json:async () => ({result:{actions:[]}})};
+        }
+        return startupFixture(url, options);
+      };
+    </script>`);
+  }
+  async function openSettings() {
+    token = '';
+    const opened = await act('open', {path: 'index.html', width: 1280, height: 800, wait_ms: 0});
+    token = opened.output.match(/Opened preview session ([^. ]+)\./)?.[1];
+    assert(token, opened.output);
+    await click('settings-button');
+  }
+  try {
+    const before = await rpc('preferences');
+    stage(before);
+    await openSettings();
+    assert.equal((await observe('preference-side')).checked, before.side_chat);
+    await click('preference-side');
+    assert.equal((await observe('preference-status')).text, '', 'UI must wait for the persistence result');
+    const request = JSON.parse((await observe('fixture-outbound-setting')).text);
+    assert.equal(request.op, 'preferences_save');
+    assert.equal(request.side_chat, !before.side_chat);
+    const saved = await rpc('preferences_save', {side_chat: request.side_chat});
+    assert.equal(saved.side_chat, request.side_chat);
+    fs.writeFileSync(path.join(root, 'saved-preferences.json'), JSON.stringify(saved));
+    await act('key', {value: 'End'});
+    assert.match((await observe('preference-status')).text, /已保存/);
+    assert.equal((await observe('preference-side')).checked, request.side_chat);
+    await act('close');
+
+    // Reopen a new renderer session from a fresh backend read, not the prior DOM.
+    const reloaded = await rpc('preferences');
+    assert.equal(reloaded.side_chat, request.side_chat);
+    stage(reloaded);
+    await openSettings();
+    assert.equal((await observe('preference-side')).checked, request.side_chat);
+    assert.equal((await observe('fixture-outbound-setting')), null);
+    await act('close');
+    await rpc('preferences_save', {side_chat: before.side_chat});
+    console.log('PASS MiniWeb changes side chat, waits for the real backend result, and verifies it after reopen');
+  } finally {
+    child.stdin.end();
+    child.kill();
+    await finished;
     fs.rmSync(root, {recursive: true, force: true});
   }
 };
