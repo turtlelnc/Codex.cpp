@@ -112,8 +112,8 @@ private:
     void layout_node(Node* n, float cb_w, float cb_h, bool shrink, float forced_w = -1, float forced_h = -1,
                      bool clamp_width = true, float avail_w = -1, float* content_height = nullptr);
     float layout_block_content(Node* n, float content_w, float hspec, float parent_cb_h);
-    float layout_flex(Node* n, float content_w, float hspec);
-    float layout_grid(Node* n, float content_w, float hspec);
+    float layout_flex(Node* n, float content_w, float hspec, float* intrinsic_height);
+    float layout_grid(Node* n, float content_w, float hspec, float* intrinsic_height);
     struct TableRow { Node* node; Node* group; std::vector<Node*> cells; };
     std::vector<TableRow> table_rows(Node* table);
     std::vector<float> table_columns(const std::vector<TableRow>& rows, float basis, bool minimum, int depth);
@@ -393,11 +393,11 @@ void LayoutEngine::layout_node(Node* n, float cb_w, float cb_h, bool shrink, flo
     float used = 0;
     // Indefinite is different from a definite zero. An auto-height block must
     // not lend its ancestor's height to percentage-height descendants.
-    if (st.display == Display::Flex) used = layout_flex(n, cw, hspec);
-    else if (st.display == Display::Grid) used = layout_grid(n, cw, hspec);
+    if (st.display == Display::Flex) used = layout_flex(n, cw, hspec, content_height);
+    else if (st.display == Display::Grid) used = layout_grid(n, cw, hspec, content_height);
     else if (st.display == Display::Table) used = layout_table(n, cw, hspec);
     else used = layout_block_content(n, cw, hspec, cb_h);
-    if (content_height) *content_height = used;
+    if (content_height && st.display != Display::Flex && st.display != Display::Grid) *content_height = used;
     float ch = hspec >= 0 ? hspec : used;
     if (st.display == Display::Table) ch = std::max(ch, used);
     ch = clamp_height(n,ch,cb_w,cb_h);
@@ -939,7 +939,7 @@ static void allocate_flex_main(std::vector<FlexMainItem>& items, float available
     }
 }
 
-float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
+float LayoutEngine::layout_flex(Node* n, float content_w, float hspec, float* intrinsic_height) {
     auto& st = n->style;
     std::vector<Node*> items;
     std::vector<Node*> absolutes;
@@ -984,6 +984,11 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             total += std::clamp(basis, minimum, maximum) + padding + mt + mb;
         }
         const float gaps = items.empty() ? 0 : (items.size() - 1) * st.row_gap;
+        if (intrinsic_height) {
+            *intrinsic_height = gaps;
+            for (size_t i = 0; i < main_items.size(); ++i)
+                *intrinsic_height += measured_heights[i] + main_items[i].edges;
+        }
         const float container_h = hspec >= 0 ? hspec : total + gaps;
         allocate_flex_main(main_items, container_h - gaps);
         for (size_t i = 0; i < items.size(); ++i) {
@@ -1082,6 +1087,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
     }
 
     float line_top = 0;
+    if (intrinsic_height) *intrinsic_height = 0;
     for (auto& line : lines) {
         std::vector<FlexMainItem> main_items;
         for (size_t i : line) {
@@ -1094,6 +1100,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
         std::vector<float> final_content;
         for (const auto& item : main_items) final_content.push_back(item.size);
         std::vector<float> outer_h(line.size(), 0);
+        float natural_cross = 0;
         for (size_t k = 0; k < line.size(); k++) {
             size_t i = line[k];
             Node* it = items[i];
@@ -1102,10 +1109,20 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size);
             const bool definite_stretch=hspec>=0&&lines.size()==1&&st.align_items==AlignItems::Stretch&&it->style.height.is_auto();
             const float stretched_height=definite_stretch?std::max(0.0f,hspec-mt-mb-pad_v(it,content_w)):-1;
-            layout_node(it, content_w, hspec, true, final_content[k], stretched_height);
+            float natural_height = INFINITY;
+            layout_node(it, content_w, hspec, true, final_content[k], stretched_height, true, -1,
+                intrinsic_height && definite_stretch ? &natural_height : nullptr);
+            if (intrinsic_height) {
+                const float height = definite_stretch && std::isfinite(natural_height)
+                    ? clamp_height(it, natural_height, content_w, hspec) + pad_v(it, content_w)
+                    : it->layout.border.h;
+                natural_cross = std::max(natural_cross, height + mt + mb);
+            }
             outer_h[k] = it->layout.border.h + resolve_l(it->style.margin.top, content_w, it->style.font_size) +
                          resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
         }
+        if (intrinsic_height)
+            *intrinsic_height += natural_cross + (&line == &lines.back() ? 0 : st.row_gap);
         float line_cross = 0;
         for (float h : outer_h) line_cross = std::max(line_cross, h);
         float cross_size = line_cross;
@@ -1411,7 +1428,7 @@ void LayoutEngine::finish_stretches(Node* node){
     for(auto* child:node->layout.box_children)finish_stretches(child);
 }
 
-float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
+float LayoutEngine::layout_grid(Node* n, float content_w, float hspec, float* intrinsic_height) {
     const auto& st = n->style;
     std::vector<Node*> items, absolutes;
     for (auto* c : n->children) {
@@ -1475,7 +1492,18 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
         row_h[p.row] = std::max(row_h[p.row], hspec >= 0 ? minimum : intrinsic);
     }
     std::vector<int> auto_rows;
-    float free_height = hspec - (rows > 1 ? (rows - 1) * st.row_gap : 0);
+    const float gaps = rows > 1 ? (rows - 1) * st.row_gap : 0;
+    float free_height = hspec - gaps;
+    if (intrinsic_height) {
+        const auto intrinsic_rows = std::max(st.grid_rows.size(), static_cast<size_t>(rows));
+        *intrinsic_height = intrinsic_rows ? (intrinsic_rows - 1) * st.row_gap : 0;
+        for (size_t row = 0; row < intrinsic_rows; ++row) {
+            if (row < st.grid_rows.size() && st.grid_rows[row].kind == TrackKind::Px)
+                *intrinsic_height += st.grid_rows[row].value;
+            else if (row < intrinsic_h.size())
+                *intrinsic_height += intrinsic_h[row];
+        }
+    }
     for (int r = 0; r < rows; ++r) {
         const auto track = r < (int)st.grid_rows.size() ? st.grid_rows[r] : GridTrack{};
         if (track.kind == TrackKind::Px) row_h[r] = track.value;
