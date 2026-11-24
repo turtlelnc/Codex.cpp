@@ -31,3 +31,24 @@ body { margin: 0; }
 <div id="auto-row"><div id="auto-item"></div></div>
 <div id="fixed-grid"><div id="fixed-row"></div><div id="auto-track"></div></div>
 <div id="fractional-grid"><div id="fractional-scroll"><div id="fractional-content"></div></div></div>
+<style>
+.column { display: flex; flex-direction: column; height: 300px; }
+.competing { flex: 1; }
+.tall { height: 200px; }
+.short { height: 100px; }
+#scroll-flex { overflow: auto; }
+#zero-flex { min-height: 0; }
+#capped-flex { max-height: 120px; }
+</style>
+<div class="column">
+  <div id="content-minimum" class="competing"><div class="tall"></div></div>
+  <div id="content-remainder" class="competing"><div class="short"></div></div>
+</div>
+<div class="column">
+  <div id="scroll-flex" class="competing"><div class="tall"></div></div>
+  <div id="zero-flex" class="competing"><div class="tall"></div></div>
+</div>
+<div class="column">
+  <div id="capped-flex" class="competing"><div class="tall"></div></div>
+  <div id="capped-remainder" class="competing"><div class="short"></div></div>
+</div>
