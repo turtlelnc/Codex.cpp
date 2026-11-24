@@ -910,6 +910,14 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             if (stretch) forced = std::max(0.0f, content_w - ml - mr - pad_h(it, content_w));
             layout_node(it, content_w, hspec, !stretch, forced, -1);
             measured_heights[i]=it->layout.content_h;
+            const auto& basis = it->style.flex_basis;
+            if (hspec >= 0 && !basis.is_auto()) {
+                const float padding = pad_v(it, content_w);
+                const float size = resolve_l(basis, hspec, it->style.font_size);
+                it->layout.content_h = clamp_height(it,
+                    std::max(0.0f, size - (it->style.box_sizing_border ? padding : 0)), content_w, hspec);
+                it->layout.border.h = it->layout.content_h + padding;
+            }
             outer_heights[i] = it->layout.border.h + mt + mb;
             total += outer_heights[i];
             if (i + 1 < items.size()) total += st.row_gap;
@@ -1125,6 +1133,13 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             if (k + 1 < line.size()) used_w += gap;
         }
         float extra = std::max(0.0f, content_w - used_w);
+        size_t auto_margins = 0;
+        for (size_t i : line) {
+            auto_margins += items[i]->style.margin.left.is_auto();
+            auto_margins += items[i]->style.margin.right.is_auto();
+        }
+        const float auto_share = auto_margins ? extra / auto_margins : 0;
+        if (auto_margins) extra = 0;
         float start = 0, between = 0;
         size_t count = line.size();
         if (st.justify == Justify::FlexEnd) start = extra;
@@ -1135,7 +1150,10 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
         float x = start;
         for (size_t k = 0; k < line.size(); k++) {
             Node* it = items[line[k]];
-            float ml = resolve_l(it->style.margin.left, content_w, it->style.font_size);
+            float ml = it->style.margin.left.is_auto() ? auto_share :
+                resolve_l(it->style.margin.left, content_w, it->style.font_size);
+            const float mr = it->style.margin.right.is_auto() ? auto_share :
+                resolve_l(it->style.margin.right, content_w, it->style.font_size);
             float mt = resolve_l(it->style.margin.top, content_w, it->style.font_size);
             float mb = resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
             float outer = it->layout.border.h + mt + mb;
@@ -1145,8 +1163,7 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec) {
             it->layout.border.x = x + ml;
             it->layout.border.y = line_top + mt + yoff;
             attach(n,it);
-            x += it->layout.border.w + ml + resolve_l(it->style.margin.right, content_w, it->style.font_size) + gap +
-                 between;
+            x += it->layout.border.w + ml + mr + gap + between;
         }
         line_top += cross_size;
         if (&line != &lines.back()) line_top += st.row_gap;
@@ -1438,12 +1455,46 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
     struct Placement {Node* node;int row,col,span;float width;};
     std::vector<Placement> placed;int row=0,col=0;
     for(auto* item:items){const int span=std::min(cn,std::max(1,item->style.grid_column_span));if(col+span>cn){++row;col=0;}float w=col_gap*(span-1);for(int c=col;c<col+span;++c)w+=cols[c];placed.push_back({item,row,col,span,w});col+=span;if(col==cn){++row;col=0;}}
-    const int rows=placed.empty()?0:placed.back().row+1;std::vector<float> row_h(rows,0);
-    for(auto& p:placed){auto* it=p.node;const float ml=resolve_l(it->style.margin.left,content_w,it->style.font_size),mr=resolve_l(it->style.margin.right,content_w,it->style.font_size),mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size);
-        float fw=it->style.width.is_auto()?std::max(0.0f,p.width-ml-mr-pad_h(it,content_w)):-1;
-        layout_node(it,p.width,hspec,true,fw,-1);row_h[p.row]=std::max(row_h[p.row],it->layout.border.h+mt+mb);
+    const int rows = placed.empty() ? 0 : placed.back().row + 1;
+    std::vector<float> row_h(rows, 0), intrinsic_h(rows, 0);
+    for (const auto& p : placed) {
+        auto* it = p.node;
+        const auto& style = it->style;
+        const float mt = resolve_l(style.margin.top, content_w, style.font_size);
+        const float mb = resolve_l(style.margin.bottom, content_w, style.font_size);
+        const float fw = style.width.is_auto() ?
+            std::max(0.0f, p.width - margin_h(it, content_w) - pad_h(it, content_w)) : -1;
+        layout_node(it, p.width, hspec, true, fw, -1);
+        const float intrinsic = it->layout.border.h + mt + mb;
+        const float minimum = style.height.is_auto() && !style.min_height.is_auto() ?
+            clamp_height(it, 0, p.width, -1) + pad_v(it, content_w) + mt + mb : intrinsic;
+        intrinsic_h[p.row] = std::max(intrinsic_h[p.row], intrinsic);
+        row_h[p.row] = std::max(row_h[p.row], hspec >= 0 ? minimum : intrinsic);
     }
-    for(int r=0;r<rows&&r<(int)st.grid_rows.size();++r){const auto t=st.grid_rows[r];if(t.kind==TrackKind::Px)row_h[r]=std::max(row_h[r],t.value);else if(t.kind==TrackKind::Percent)row_h[r]=std::max(row_h[r],t.value*std::max(0.0f,hspec)/100);}
+    std::vector<int> auto_rows;
+    float free_height = hspec - (rows > 1 ? (rows - 1) * st.row_gap : 0);
+    for (int r = 0; r < rows; ++r) {
+        const auto track = r < (int)st.grid_rows.size() ? st.grid_rows[r] : GridTrack{};
+        if (track.kind == TrackKind::Px) row_h[r] = track.value;
+        else if (track.kind == TrackKind::Percent && hspec >= 0) row_h[r] = track.value * hspec / 100;
+        else if (track.kind == TrackKind::Auto) auto_rows.push_back(r);
+        free_height -= row_h[r];
+    }
+    if (free_height > 0 && !auto_rows.empty()) {
+        // Grow toward intrinsic sizes first, then stretch auto tracks equally.
+        std::sort(auto_rows.begin(), auto_rows.end(), [&](int a, int b) {
+            return intrinsic_h[a] - row_h[a] < intrinsic_h[b] - row_h[b];
+        });
+        for (size_t i = 0; i < auto_rows.size(); ++i) {
+            const int row = auto_rows[i];
+            const float share = free_height / (auto_rows.size() - i);
+            const float growth = std::min(share, std::max(0.0f, intrinsic_h[row] - row_h[row]));
+            row_h[row] += growth;
+            free_height -= growth;
+        }
+        const float stretch = std::max(0.0f, free_height) / auto_rows.size();
+        for (int r : auto_rows) row_h[r] += stretch;
+    }
     float y=0;for(int r=0;r<rows;++r){for(auto& p:placed){if(p.row!=r)continue;auto* it=p.node;float x=0;for(int c=0;c<p.col;++c)x+=cols[c]+col_gap;
         const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size),ml=resolve_l(it->style.margin.left,content_w,it->style.font_size);
         if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){

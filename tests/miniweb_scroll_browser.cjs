@@ -170,6 +170,29 @@ module.exports = async function (browser, probe) {
     }
     await page.mouse.click(5, 5);
     assert.equal(await page.locator("body").getAttribute("data-click"), "late");
+    const sidebar = path.resolve("miniweb/test/sidebar-layout.html");
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.setContent(fs.readFileSync(sidebar, "utf8"));
+      const expected = await page.evaluate(() => Object.fromEntries(
+        Array.from(document.querySelectorAll("[id]"), node => {
+          const {x, y, width, height} = node.getBoundingClientRect();
+          return [node.id, [x, y, width, height]];
+        })
+      ));
+      const result = spawnSync(probe, [
+        "--geometry", sidebar, String(width), Object.keys(expected).join(","),
+      ], { encoding: "utf8", timeout: 10000 });
+      assert.equal(result.status, 0, result.stderr);
+      const actual = JSON.parse(result.stdout);
+      for (const [id, rect] of Object.entries(expected)) {
+        assert.deepEqual(actual[id], rect, `${width}px sidebar fixture: ${id}`);
+      }
+      await page.mouse.move(20, 220);
+      await page.mouse.wheel(0, 100);
+      await page.waitForFunction(() => document.getElementById("list").scrollTop === 100);
+      assert.equal(await page.locator("#footer").evaluate(n => n.getBoundingClientRect().y), 430);
+    }
     console.log(
       "MiniWeb/Chromium scrolling geometry, sticky, fixed and click comparison passed",
     );

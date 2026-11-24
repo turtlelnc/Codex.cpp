@@ -181,16 +181,13 @@ Length parse_length_value(const std::string& input, float font_size, float root_
     else if (util::ends_with(s, "em")) { s = s.substr(0, s.size() - 2); unit = Length::Em; }
     else if (util::ends_with(s, "%")) { s = s.substr(0, s.size() - 1); unit = Length::Percent; }
     else if (util::ends_with(s, "pt")) { s = s.substr(0, s.size() - 2); mul = 96.0f / 72.0f; }
-    else if (util::ends_with(s, "vh")) {
-        s = s.substr(0, s.size() - 2);
-        float vh = std::strtof(util::trim(s).c_str(), nullptr);
-        if (ok) *ok = true;
-        return Length::px(vh * g_viewport_h / 100.0f);
-    } else if (util::ends_with(s, "vw")) {
-        s = s.substr(0, s.size() - 2);
-        float vw = std::strtof(util::trim(s).c_str(), nullptr);
-        if (ok) *ok = true;
-        return Length::px(vw * g_viewport_w / 100.0f);
+    else if (util::ends_with(s, "vh") || util::ends_with(s, "vw")) {
+        const bool vertical = s.back() == 'h';
+        const bool viewport_variant = s.size() > 2 &&
+            (s[s.size()-3] == 'd' || s[s.size()-3] == 's' || s[s.size()-3] == 'l');
+        s.resize(s.size() - (viewport_variant ? 3 : 2));
+        // The preview has a fixed viewport without retractable browser chrome.
+        mul = (vertical ? g_viewport_h : g_viewport_w) / 100.0f;
     } else if (util::ends_with(s, "vmin") || util::ends_with(s, "vmax")) {
         bool is_max = util::ends_with(s, "vmax");
         s = s.substr(0, s.size() - 4);

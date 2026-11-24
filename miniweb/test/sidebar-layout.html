@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+body { margin: 0; }
+#viewport { height: 20dvh; }
+#grid { display: grid; grid-template-columns: 120px 1fr; height: 300px; }
+#sidebar { display: flex; flex-direction: column; min-height: 0; }
+#header { height: 40px; }
+#list { flex: 1; min-height: 0; overflow: auto; }
+#list-content { height: 600px; }
+#footer { display: flex; flex: none; height: 30px; }
+#label, #settings { width: 20px; }
+#settings { margin-left: auto; }
+#auto-row { display: flex; width: 120px; height: 30px; justify-content: center; }
+#auto-item { width: 20px; margin: 0 auto; }
+#fixed-grid { display: grid; grid-template-rows: 30px auto; height: 100px; }
+#fixed-row, #auto-track { min-height: 0; }
+</style>
+<div id="viewport"></div>
+<div id="grid">
+  <aside id="sidebar">
+    <header id="header"></header>
+    <div id="list"><div id="list-content"></div></div>
+    <footer id="footer"><span id="label"></span><span id="settings"></span></footer>
+  </aside>
+  <main></main>
+</div>
+<div id="auto-row"><div id="auto-item"></div></div>
+<div id="fixed-grid"><div id="fixed-row"></div><div id="auto-track"></div></div>
