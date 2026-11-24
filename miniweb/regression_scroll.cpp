@@ -90,7 +90,14 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        disclosure->has_attr("open")&&details.render(false)&&node_in_details("file")->layout.has_box,
        "Tab and Enter expose details contents");
  check(details.advance(1)&&detail_body->attr("data-toggle")=="closed:open","Details dispatches toggle");
- check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false),"Space closes details");
+ detail_body->set_attr("data-keys","");
+ detail_body->set_attr("data-cancel-keyup","");
+ check(details.key(" ")&&disclosure->has_attr("open")&&detail_body->attr("data-keys")=="keydown keyup ",
+       "Canceled key release leaves disclosure open");
+ detail_body->remove_attr("data-cancel-keyup");
+ detail_body->set_attr("data-keys","");
+ check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false)&&
+       detail_body->attr("data-keys")=="keydown keyup click ","Space activates disclosure after key release");
  detail_body->set_attr("data-cancel","");
  check(details.click(10,10)&&!disclosure->has_attr("open"),"Canceled summary click preserves state");
  detail_body->remove_attr("data-cancel");

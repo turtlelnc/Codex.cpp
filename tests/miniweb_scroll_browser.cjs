@@ -235,7 +235,19 @@ module.exports = async function (browser, probe) {
     await page.waitForFunction(() => document.body.dataset.toggle === "closed:open");
     assert.equal(await page.locator("#file").isVisible(), true);
     assert.equal(nativeDetails("12,10").content[3], 80);
+    await page.evaluate(() => {
+      document.body.dataset.keys = "";
+      document.body.setAttribute("data-cancel-keyup", "");
+    });
     await page.keyboard.press("Space");
+    assert.equal(await page.locator("#file").isVisible(), true);
+    assert.equal(await page.locator("body").getAttribute("data-keys"), "keydown keyup ");
+    await page.evaluate(() => {
+      document.body.dataset.keys = "";
+      document.body.removeAttribute("data-cancel-keyup");
+    });
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator("body").getAttribute("data-keys"), "keydown keyup click ");
     assert.equal(await page.locator("#file").isVisible(), false);
     assert.equal(nativeDetails("12,10;12,10").footer[1], await footerTop());
     const fallback = nativeDetails("");
