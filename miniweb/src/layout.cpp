@@ -853,6 +853,8 @@ const std::vector<Node*>& LayoutEngine::flex_items(Node* parent) {
             box->anonymous = true;
             box->parent = parent;
             box->style = inherited_style(parent->style);
+            const auto zero = Length::px(0);
+            box->style.margin = {zero, zero, zero, zero};
             box->style.display = Display::Block;
             doc.layout_nodes.emplace_back();
             auto* run = &doc.layout_nodes.back();
