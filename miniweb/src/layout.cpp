@@ -1045,6 +1045,13 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec, float* in
             resolve_l(items[i]->style.margin.bottom, content_w, items[i]->style.font_size);
         used_main += (items.size() > 1 ? (items.size() - 1) * st.row_gap : 0);
         float extra = std::max(0.0f, container_h - used_main);
+        size_t auto_margins = 0;
+        for (const auto* item : items) {
+            auto_margins += item->style.margin.top.is_auto();
+            auto_margins += item->style.margin.bottom.is_auto();
+        }
+        const float auto_share = auto_margins ? extra / auto_margins : 0;
+        if (auto_margins) extra = 0;
         float start = 0, between = 0;
         size_t count = items.size();
         if (st.justify == Justify::FlexEnd) start = extra;
@@ -1057,8 +1064,8 @@ float LayoutEngine::layout_flex(Node* n, float content_w, float hspec, float* in
             auto* it = items[i];
             float ml = resolve_l(it->style.margin.left, content_w, it->style.font_size);
             float mr = resolve_l(it->style.margin.right, content_w, it->style.font_size);
-            float mt = resolve_l(it->style.margin.top, content_w, it->style.font_size);
-            float mb = resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
+            float mt = it->style.margin.top.is_auto() ? auto_share : resolve_l(it->style.margin.top, content_w, it->style.font_size);
+            float mb = it->style.margin.bottom.is_auto() ? auto_share : resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
             float outer_w = it->layout.border.w + ml + mr;
             float x = ml;
             if (st.align_items == AlignItems::Center) x = (content_w - outer_w) / 2 + ml;
@@ -1514,7 +1521,11 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec, float* in
     struct Placement {Node* node;int row,col,span;float width;};
     std::vector<Placement> placed;int row=0,col=0;
     for(auto* item:items){const int span=std::min(cn,std::max(1,item->style.grid_column_span));if(col+span>cn){++row;col=0;}float w=col_gap*(span-1);for(int c=col;c<col+span;++c)w+=cols[c];placed.push_back({item,row,col,span,w});col+=span;if(col==cn){++row;col=0;}}
-    const int rows = placed.empty() ? 0 : placed.back().row + 1;
+    const int rows = std::max(static_cast<int>(st.grid_rows.size()),
+        placed.empty() ? 0 : placed.back().row + 1);
+    auto row_track = [&](int row) {
+        return row < static_cast<int>(st.grid_rows.size()) ? st.grid_rows[row] : GridTrack{};
+    };
     std::vector<float> row_h(rows, 0), intrinsic_h(rows, 0);
     for (const auto& p : placed) {
         auto* it = p.node;
@@ -1525,36 +1536,34 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec, float* in
             std::max(0.0f, p.width - margin_h(it, content_w) - pad_h(it, content_w)) : -1;
         layout_node(it, p.width, hspec, true, fw, -1);
         const float intrinsic = it->layout.border.h + mt + mb;
-        const float minimum = style.height.is_auto() && !style.min_height.is_auto() ?
-            clamp_height(it, 0, p.width, -1) + pad_v(it, content_w) + mt + mb : intrinsic;
+        const auto overflow = overflow_axis(it, false);
+        const bool scrollable = overflow != Overflow::Visible && overflow != Overflow::Clip;
+        const bool can_shrink = !style.min_height.is_auto() || scrollable;
+        const float minimum = style.height.is_auto() && can_shrink ?
+            clamp_height(it, 0, p.width, hspec) + pad_v(it, content_w) + mt + mb : intrinsic;
         intrinsic_h[p.row] = std::max(intrinsic_h[p.row], intrinsic);
         row_h[p.row] = std::max(row_h[p.row], hspec >= 0 ? minimum : intrinsic);
     }
-    std::vector<int> auto_rows;
+    std::vector<int> auto_rows, fraction_rows;
     const float gaps = rows > 1 ? (rows - 1) * st.row_gap : 0;
     float free_height = hspec - gaps;
-    if (intrinsic_height) {
-        const auto intrinsic_rows = std::max(st.grid_rows.size(), static_cast<size_t>(rows));
-        *intrinsic_height = intrinsic_rows ? (intrinsic_rows - 1) * st.row_gap : 0;
-        for (size_t row = 0; row < intrinsic_rows; ++row) {
-            if (row < st.grid_rows.size() && st.grid_rows[row].kind == TrackKind::Px)
-                *intrinsic_height += st.grid_rows[row].value;
-            else if (row < intrinsic_h.size())
-                *intrinsic_height += intrinsic_h[row];
-        }
-    }
+    if (intrinsic_height) *intrinsic_height = gaps;
     for (int r = 0; r < rows; ++r) {
-        const auto track = r < (int)st.grid_rows.size() ? st.grid_rows[r] : GridTrack{};
+        const auto track = row_track(r);
+        if (intrinsic_height)
+            *intrinsic_height += track.kind == TrackKind::Px ? track.value : intrinsic_h[r];
         if (track.kind == TrackKind::Px) row_h[r] = track.value;
         else if (track.kind == TrackKind::Percent && hspec >= 0) row_h[r] = track.value * hspec / 100;
         else if (track.kind == TrackKind::Auto) auto_rows.push_back(r);
-        // Fractional row allocation is still approximate. Preserve the
-        // intrinsic height until these tracks can receive their free space.
-        else row_h[r] = intrinsic_h[r];
+        else if (track.kind == TrackKind::Fr && hspec >= 0) {
+            if (!track.minimum.is_auto())
+                row_h[r] = std::max(0.0f, resolve_l(track.minimum, hspec, st.font_size));
+            if (track.value > 0) fraction_rows.push_back(r);
+        } else row_h[r] = intrinsic_h[r];
         free_height -= row_h[r];
     }
     if (free_height > 0 && !auto_rows.empty()) {
-        // Grow toward intrinsic sizes first, then stretch auto tracks equally.
+        // Grow automatic tracks toward intrinsic sizes before resolving fractions.
         std::sort(auto_rows.begin(), auto_rows.end(), [&](int a, int b) {
             return intrinsic_h[a] - row_h[a] < intrinsic_h[b] - row_h[b];
         });
@@ -1565,22 +1574,55 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec, float* in
             row_h[row] += growth;
             free_height -= growth;
         }
-        const float stretch = std::max(0.0f, free_height) / auto_rows.size();
-        for (int r : auto_rows) row_h[r] += stretch;
     }
-    float y=0;for(int r=0;r<rows;++r){for(auto& p:placed){if(p.row!=r)continue;auto* it=p.node;float x=0;for(int c=0;c<p.col;++c)x+=cols[c]+col_gap;
-        const float mt=resolve_l(it->style.margin.top,content_w,it->style.font_size),mb=resolve_l(it->style.margin.bottom,content_w,it->style.font_size),ml=resolve_l(it->style.margin.left,content_w,it->style.font_size);
-        if(it->style.height.is_auto()&&st.align_items==AlignItems::Stretch){
-            const float target=clamp_height(it,std::max(0.0f,row_h[r]-mt-mb-pad_v(it,content_w)),p.width,row_h[r]);
-            const float width=it->layout.content_w;
-            if(std::abs(target-it->layout.content_h)>.001f||has_height_percentages(it))
-                stretches[it]={width,p.width,row_h[r],target};
-            else stretches.erase(it);
-            it->layout.content_h=target;it->layout.border.h=target+pad_v(it,content_w);
+    if (free_height > 0 && !fraction_rows.empty()) {
+        float available = free_height, factor_sum = 0;
+        for (int row : fraction_rows) {
+            available += row_h[row];
+            factor_sum += row_track(row).value;
         }
-        it->layout.border.x=x+ml;it->layout.border.y=y+mt;attach(n,it);
-    }y+=row_h[r]+st.row_gap;}
-    float used = hspec >= 0 ? hspec : std::max(0.0f, y - (rows ? st.row_gap : 0));
+        // Freeze tracks whose minimum is above their fractional share.
+        std::sort(fraction_rows.begin(), fraction_rows.end(), [&](int a, int b) {
+            return row_h[a] / row_track(a).value > row_h[b] / row_track(b).value;
+        });
+        for (int row : fraction_rows) {
+            const float factor = row_track(row).value;
+            const float share = available * (factor / std::max(1.0f, factor_sum));
+            if (share < row_h[row]) {
+                available -= row_h[row];
+                factor_sum -= factor;
+            } else {
+                free_height -= share - row_h[row];
+                row_h[row] = share;
+            }
+        }
+    }
+    if (free_height > 0 && !auto_rows.empty()) {
+        const float stretch = free_height / auto_rows.size();
+        for (int row : auto_rows) row_h[row] += stretch;
+    }
+    std::vector<float> row_offsets(rows, 0), column_offsets(cn, 0);
+    for (int r = 1; r < rows; ++r) row_offsets[r] = row_offsets[r-1] + row_h[r-1] + st.row_gap;
+    for (int c = 1; c < cn; ++c) column_offsets[c] = column_offsets[c-1] + cols[c-1] + col_gap;
+    for (const auto& p : placed) {
+        auto* it = p.node;
+        const float mt = resolve_l(it->style.margin.top, content_w, it->style.font_size);
+        const float mb = resolve_l(it->style.margin.bottom, content_w, it->style.font_size);
+        const float ml = resolve_l(it->style.margin.left, content_w, it->style.font_size);
+        if (it->style.height.is_auto() && st.align_items == AlignItems::Stretch) {
+            const float height = clamp_height(it, std::max(0.0f, row_h[p.row]-mt-mb-pad_v(it,content_w)),
+                                              p.width, row_h[p.row]);
+            if (std::abs(height-it->layout.content_h)>.001f || has_height_percentages(it))
+                stretches[it] = {it->layout.content_w, p.width, row_h[p.row], height};
+            else stretches.erase(it);
+            it->layout.content_h = height;
+            it->layout.border.h = height + pad_v(it, content_w);
+        }
+        it->layout.border.x = column_offsets[p.col] + ml;
+        it->layout.border.y = row_offsets[p.row] + mt;
+        attach(n, it);
+    }
+    const float used = hspec >= 0 ? hspec : (rows ? row_offsets.back() + row_h.back() : 0);
     for (auto* a : absolutes) place_absolute(n, a, 0);
     return used;
 }

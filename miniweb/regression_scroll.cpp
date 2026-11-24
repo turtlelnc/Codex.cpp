@@ -66,6 +66,18 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        "Sidebar wheel scroll stays in the list");
  check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,
        "Sidebar footer stays in place while scrolling");
+ Engine app(640,800);app.set_wait_ms(0);
+ check(app.load((directory/"app-layout.html").u8string(),&error)&&app.render(false),"App layout fixture");
+ auto app_node=[&](const char* id){return app.document()->get_element_by_id(id);};
+ check(std::abs(app_node("first")->viewport_rect().h-106.667f)<.1f&&
+       app_node("footer")->viewport_rect().y==376,"Fractional tracks share definite height");
+ check(app_node("quarter")->viewport_rect().h==25,"Subunit fractions leave unused space");
+ check(app_node("bounded-track")->viewport_rect().h==70,"Explicit Grid track minimum");
+ check(app_node("top")->viewport_rect().y==490&&app_node("bottom")->viewport_rect().y==590,
+       "Column auto margin takes precedence over justification");
+ check(app.scroll(30,90,0,200)&&app.render(false)&&app_node("first")->scroll_y==200&&
+       app_node("sticky")->viewport_rect().y==40&&app_node("footer")->viewport_rect().y==376,
+       "Fractional Grid scroller keeps its sticky header and footer in place");
  Engine details(640,480);details.set_wait_ms(0);
  check(details.load((directory/"details.html").u8string(),&error)&&details.render(false),"Details fixture");
  auto node_in_details=[&](const char* id){return details.document()->get_element_by_id(id);};

@@ -193,6 +193,29 @@ module.exports = async function (browser, probe) {
       await page.waitForFunction(() => document.getElementById("list").scrollTop === 100);
       assert.equal(await page.locator("#footer").evaluate(n => n.getBoundingClientRect().y), 430);
     }
+    const app = path.resolve("miniweb/test/app-layout.html");
+    for (const width of [1280, 900, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.setContent(fs.readFileSync(app, "utf8"));
+      const expected = await page.evaluate(() => Object.fromEntries(
+        Array.from(document.querySelectorAll("[id]"), node => {
+          const {x, y, width, height} = node.getBoundingClientRect();
+          return [node.id, [x, y, width, height]];
+        })
+      ));
+      const result = spawnSync(probe, ["--geometry", app, String(width), Object.keys(expected).join(",")],
+        { encoding: "utf8", timeout: 10000 });
+      assert.equal(result.status, 0, result.stderr);
+      const actual = JSON.parse(result.stdout);
+      for (const [id, rect] of Object.entries(expected))
+        assert(rect.every((value, axis) => Math.abs(actual[id][axis] - value) < .1),
+          `${width}px app layout: ${id} ${actual[id]} vs ${rect}`);
+      await page.mouse.move(30, 90);
+      await page.mouse.wheel(0, 200);
+      await page.waitForFunction(() => document.getElementById("first").scrollTop === 200);
+      assert.equal(await page.locator("#sticky").evaluate(n => n.getBoundingClientRect().y), 40);
+      assert.equal(await page.locator("#footer").evaluate(n => n.getBoundingClientRect().y), 376);
+    }
     const disclosure = path.resolve("miniweb/test/details.html");
     await page.setContent(fs.readFileSync(disclosure, "utf8"));
     const nativeDetails = (clicks) => {
