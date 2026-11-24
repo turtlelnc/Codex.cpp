@@ -1480,6 +1480,9 @@ float LayoutEngine::layout_grid(Node* n, float content_w, float hspec) {
         if (track.kind == TrackKind::Px) row_h[r] = track.value;
         else if (track.kind == TrackKind::Percent && hspec >= 0) row_h[r] = track.value * hspec / 100;
         else if (track.kind == TrackKind::Auto) auto_rows.push_back(r);
+        // Fractional row allocation is still approximate. Preserve the
+        // intrinsic height until these tracks can receive their free space.
+        else row_h[r] = intrinsic_h[r];
         free_height -= row_h[r];
     }
     if (free_height > 0 && !auto_rows.empty()) {

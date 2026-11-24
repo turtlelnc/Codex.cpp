@@ -49,6 +49,7 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  check(sidebar_node("sidebar")->viewport_rect().h==300&&sidebar_node("header")->viewport_rect().h==40&&
        sidebar_node("list")->viewport_rect().h==230,
        "Definite Grid track constrains the flex scroller");
+ check(sidebar_node("fractional-scroll")->viewport_rect().h==100,"Fractional Grid row retains intrinsic height");
  check(sidebar_node("auto-track")->viewport_rect().h==70,"Fixed and auto Grid tracks share definite height");
  check(sidebar_node("settings")->viewport_rect().x==100,"Flex auto margin takes remaining width");
  check(sidebar.scroll(20,220,0,100)&&sidebar.render(false)&&sidebar_node("list")->scroll_y==100,
