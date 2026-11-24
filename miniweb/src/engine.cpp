@@ -147,8 +147,13 @@ bool Engine::click(float x, float y) {
     if (!js_runtime_ || !doc_ || !doc_->html || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=viewport_w_ || y>=viewport_h_) return false;
     Node* target = hit_test(doc_->html, 0, 0, x, y);
     if (!target) return interact("__mwDispatchBackground("+util::format_float(x,2)+","+util::format_float(y,2)+");");
+    const bool fallback_summary = target->is_element("details") &&
+        std::any_of(target->layout.box_children.begin(), target->layout.box_children.end(),
+            [&](const Node* child) {
+                return child->anonymous && child->is_element("summary") && child->viewport_rect().contains(x, y);
+            });
     std::string code = "__mwDispatchClick(" + std::to_string(target->id) + "," +
-                       util::format_float(x, 2) + "," + util::format_float(y, 2) + ");";
+                       util::format_float(x, 2) + "," + util::format_float(y, 2) + (fallback_summary ? ",true);" : ",false);");
     return interact(code);
 }
 
@@ -316,7 +321,7 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
             if (!r.contains(px, py)) continue;
             Node* target = item.node;
             if (target && (target->is_text() || target->is_comment())) target = target->parent;
-            if (target && target->is_element()) return target;
+            if (target && target->is_element()) return target->anonymous ? target->parent : target;
             if (item.link) return item.link;
         }
     }

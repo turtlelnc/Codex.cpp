@@ -76,6 +76,18 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  check(details.click(button.x+5,button.y+5)&&!disclosure->has_attr("open"),"Nested button does not toggle details");
  check(details.click(10,35)&&details.render(false)&&disclosure->has_attr("open")&&
        node_in_details("footer")->viewport_rect().y>30,"Script-opened details reflows");
+ auto* fallback=node_in_details("fallback");
+ auto* fallback_content=node_in_details("fallback-content");
+ check(fallback->viewport_rect().h>20&&!fallback_content->layout.has_box&&!fallback->children.front()->is_element("summary"),
+       "Summaryless details show a layout-only label");
+ check(details.key("Tab")&&details.document()->focused_id==fallback->id&&details.key("Enter")&&
+       fallback->has_attr("open")&&fallback_content->layout.has_box,"Keyboard opens summaryless details");
+ check(details.key(" ")&&!fallback->has_attr("open"),"Keyboard closes summaryless details");
+ const auto fallback_box=fallback->viewport_rect();
+ check(details.click(fallback_box.x+5,fallback_box.y+fallback_box.h-2)&&!fallback->has_attr("open"),
+       "Clicking outside the fallback label does not activate it");
+ check(details.click(fallback_box.x+5,fallback_box.y+5)&&fallback->has_attr("open")&&
+       fallback_content->layout.has_box,"Fallback summary label responds to pointer input");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

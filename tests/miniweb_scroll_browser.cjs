@@ -197,7 +197,7 @@ module.exports = async function (browser, probe) {
     await page.setContent(fs.readFileSync(disclosure, "utf8"));
     const nativeDetails = (clicks) => {
       const result = spawnSync(probe, [
-        "--geometry", disclosure, "390", "files,content,footer", clicks,
+        "--geometry", disclosure, "390", "files,content,footer,fallback,fallback-content", clicks,
       ], { encoding: "utf8", timeout: 10000 });
       assert.equal(result.status, 0, result.stderr);
       return JSON.parse(result.stdout);
@@ -215,6 +215,17 @@ module.exports = async function (browser, probe) {
     await page.keyboard.press("Space");
     assert.equal(await page.locator("#file").isVisible(), false);
     assert.equal(nativeDetails("12,10;12,10").footer[1], await footerTop());
+    const fallback = nativeDetails("");
+    assert(fallback.fallback[3] > 20);
+    assert.equal(fallback["fallback-content"][3], 0);
+    const fallbackClick = `12,${fallback.fallback[1] + 5}`;
+    assert.equal(nativeDetails(fallbackClick)["fallback-content"][3], 60);
+    await page.locator("#footer").focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("#fallback-file").isVisible(), true);
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator("#fallback-file").isVisible(), false);
     console.log(
       "MiniWeb/Chromium scrolling geometry, sticky, fixed and click comparison passed",
     );

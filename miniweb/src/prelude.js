@@ -1570,10 +1570,16 @@
       if (p.hasAttribute('hidden') || getComputedStyle(p).display === 'none') return false;
     return !!(n && n.isConnected && getComputedStyle(n).visibility !== 'hidden');
   }
+  function firstSummary(details) {
+    return details.children.find(child => child.tagName === 'SUMMARY');
+  }
+  function fallbackDisclosure(node) {
+    return node.tagName === 'DETAILS' && !firstSummary(node);
+  }
   function detailsFor(summary) {
     const details = summary && summary.parentElement;
     return details && details.tagName === 'DETAILS' &&
-      details.children.find(child => child.tagName === 'SUMMARY') === summary ? details : null;
+      firstSummary(details) === summary ? details : null;
   }
   const pendingDetailsToggles = new WeakMap();
   function queueDetailsToggle(details, wasOpen) {
@@ -1588,7 +1594,7 @@
     }, 0);
   }
   function focusable(n) {
-    return enabled(n) && inModal(n) && n.type !== 'hidden' && (n === currentModal() || (n.tagName === 'SUMMARY' && detailsFor(n)) || /^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
+    return enabled(n) && inModal(n) && n.type !== 'hidden' && (n === currentModal() || (n.tagName === 'SUMMARY' && detailsFor(n)) || fallbackDisclosure(n) || /^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
   }
   function forgetDetachedFocus() {
     if(activeControl && N.focusControl()!==activeControl.__id) {
@@ -1676,7 +1682,7 @@
   function activatable(n) {
     return !!n && !formDisabled(n);
   }
-  function activate(n, x, y, pointer) {
+  function activate(n, x, y, pointer, fallbackSummary) {
     if (pointer && !inModal(n)) return false;
     if (!activatable(n) || (pointer && !enabled(n))) return false;
     if (pointer) {
@@ -1702,6 +1708,7 @@
     const details = detailsFor(summary);
     const interactive = details && n.closest('button,input,textarea,select,a[href],label');
     if (details && !(interactive && summary.contains(interactive))) details.open = !details.open;
+    if (fallbackSummary && fallbackDisclosure(n)) n.open = !n.open;
     if (check && control.checked !== previous) {
       control.dispatchEvent(new Event('input', { bubbles: true }));
       control.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1750,7 +1757,7 @@
     return true;
   }
   globalThis.__mwDispatchBackground = function(x,y) { return activate(document.documentElement,x,y,true); };
-  globalThis.__mwDispatchClick = function (id, x, y) { return activate(wrap(id | 0), x || 0, y || 0, true); };
+  globalThis.__mwDispatchClick = function (id, x, y, fallbackSummary) { return activate(wrap(id | 0), x || 0, y || 0, true, fallbackSummary); };
   globalThis.__mwType = function (text) { if (!insertText(String(text), 'insertText')) throw new Error('No editable focused control'); };
   globalThis.__mwKey = function (key) {
     var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
@@ -1760,11 +1767,12 @@
         const dialog = currentModal();
         if (dialog.dispatchEvent(new Event('cancel', {cancelable:true}))) dialog.close();
       } else if (key === 'Tab') {
-        var list = document.querySelectorAll('input,textarea,button,select,a,summary,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
+        var list = document.querySelectorAll('input,textarea,button,select,a,summary,details,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
         list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });
         if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next===activeControl && next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
       } else if (key === 'Backspace') insertText('', 'deleteContentBackward');
       else if (key === 'Delete') insertText('', 'deleteContentForward');
+      else if ((key === 'Enter' || key === ' ') && fallbackDisclosure(n)) activate(n, 0, 0, false, true);
       else if (key === 'Enter') {
         if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
         else if ((n.tagName === 'SUMMARY' && detailsFor(n)) || n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
