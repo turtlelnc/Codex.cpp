@@ -98,6 +98,15 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        "Clicking outside the fallback label does not activate it");
  check(details.click(fallback_box.x+5,fallback_box.y+5)&&fallback->has_attr("open")&&
        fallback_content->layout.has_box,"Fallback summary label responds to pointer input");
+ auto* inline_details=node_in_details("inline-fallback");
+ auto* inline_content=node_in_details("inline-content");
+ const auto inline_box=inline_details->viewport_rect();
+ check(inline_box.w>0&&inline_box.h>0&&!inline_content->layout.has_box,
+       "Inline summaryless details has a visible fallback label");
+ check(details.click(inline_box.x+3,inline_box.y+3)&&inline_details->has_attr("open")&&
+       inline_content->layout.has_box,"Inline fallback label responds to pointer input");
+ check(details.key(" ")&&!inline_details->has_attr("open")&&!inline_content->layout.has_box,
+       "Inline fallback label supports keyboard activation");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

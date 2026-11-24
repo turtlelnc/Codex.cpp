@@ -722,7 +722,11 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         out.push_back(std::move(t));
         return;
     }
-    if (g->style.display == Display::InlineBlock || g->style.display == Display::Block ||
+    // Give an inline disclosure a stable box for its generated summary,
+    // whose pointer target remains the owning details element.
+    const bool inline_disclosure = g->style.display == Display::Inline && g->is_element("details") &&
+        flow_children(g).front()->anonymous;
+    if (inline_disclosure || g->style.display == Display::InlineBlock || g->style.display == Display::Block ||
         g->style.display == Display::Flex || g->style.display == Display::Grid) {
         layout_node(g, content_w, -1, true);
         Token t;
@@ -747,7 +751,7 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         out.push_back(std::move(t));
         return;
     }
-    for (auto* c : g->children) build_tokens(c, out, content_w, box_parent);
+    for (auto* c : flow_children(g)) build_tokens(c, out, content_w, box_parent);
 }
 
 float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& group, float content_w,
