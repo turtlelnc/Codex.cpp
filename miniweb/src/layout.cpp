@@ -509,7 +509,7 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         group.clear();
     };
     for (auto* child : n->children) {
-        if (!child) continue;
+        if (!child || child->style.display_none) continue;
         if (child->is_text() || child->is_comment()) {
             if (child->is_text()) group.push_back(child);
             continue;
@@ -646,7 +646,7 @@ void LayoutEngine::append_text_tokens(Node* tn, std::vector<Token>& out) {
 }
 
 void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_w, Node* box_parent) {
-    if (!g) return;
+    if (!g || g->style.display_none) return;
     if (g->is_text()) {
         append_text_tokens(g, out);
         return;
@@ -872,7 +872,7 @@ const std::vector<Node*>& LayoutEngine::flex_items(Node* parent) {
         text.clear();
     };
     for (auto* child : parent->children) {
-        if (!child) continue;
+        if (!child || child->style.display_none) continue;
         if (child->is_text()) text.push_back(child);
         else if (child->is_element()) {
             flush();
@@ -1562,7 +1562,7 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
     }
     float line = 0, maxw = 0;
     std::function<void(Node*)> walk = [&](Node* c) {
-        if (!c || depth > 30) return;
+        if (!c || c->style.display_none || depth > 30) return;
         if (c->is_text()) {
             line += fonts.text_width(collapse_text(c->data, c->style), c->style);
             return;
