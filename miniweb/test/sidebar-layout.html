@@ -15,6 +15,9 @@ body { margin: 0; }
 #auto-item { width: 20px; margin: 0 auto; }
 #fixed-grid { display: grid; grid-template-rows: 30px auto; height: 100px; }
 #fixed-row, #auto-track { min-height: 0; }
+#fractional-grid { display: grid; grid-template-rows: 1fr; height: 100px; }
+#fractional-scroll { min-height: 0; overflow: auto; }
+#fractional-content { height: 100px; }
 </style>
 <div id="viewport"></div>
 <div id="grid">
@@ -27,3 +30,4 @@ body { margin: 0; }
 </div>
 <div id="auto-row"><div id="auto-item"></div></div>
 <div id="fixed-grid"><div id="fixed-row"></div><div id="auto-track"></div></div>
+<div id="fractional-grid"><div id="fractional-scroll"><div id="fractional-content"></div></div></div>
