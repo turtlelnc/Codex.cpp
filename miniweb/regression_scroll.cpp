@@ -58,6 +58,10 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        "Scrollable and explicit zero-minimum Flex items may shrink");
  check(sidebar_node("capped-flex")->viewport_rect().h==120&&sidebar_node("capped-remainder")->viewport_rect().h==180,
        "Column Flex redistributes space after an item reaches its maximum");
+ check(sidebar_node("empty-nested-flex")->viewport_rect().h==30&&
+       sidebar_node("empty-nested-grid")->viewport_rect().h==30,"Empty nested containers shrink below specified height");
+ check(sidebar_node("filled-nested-flex")->viewport_rect().h==35&&
+       sidebar_node("filled-nested-grid")->viewport_rect().h==35,"Nested containers retain their intrinsic minimum");
  check(sidebar.scroll(20,220,0,100)&&sidebar.render(false)&&sidebar_node("list")->scroll_y==100,
        "Sidebar wheel scroll stays in the list");
  check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,

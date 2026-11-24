@@ -52,3 +52,14 @@ body { margin: 0; }
   <div id="capped-flex" class="competing"><div class="tall"></div></div>
   <div id="capped-remainder" class="competing"><div class="short"></div></div>
 </div>
+<style>
+.small-column { display: flex; flex-direction: column; height: 30px; }
+.nested-flex { display: flex; height: 40px; }
+.nested-grid { display: grid; height: 40px; }
+.nested-content { height: 35px; }
+</style>
+<div class="small-column"><div id="empty-nested-flex" class="nested-flex"></div></div>
+<div class="small-column"><div id="empty-nested-grid" class="nested-grid"></div></div>
+<div class="small-column"><div id="filled-nested-grid" class="nested-grid"><div class="nested-content"></div></div></div>
+<div class="small-column"><div id="filled-nested-flex" class="nested-flex"><div class="nested-content"></div></div></div>
+<div class="small-column"><div id="fixed-nested-grid" class="nested-grid" style="grid-template-rows:35px"></div></div>
