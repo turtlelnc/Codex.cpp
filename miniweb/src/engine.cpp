@@ -240,6 +240,11 @@ std::string Engine::inspect(const std::string& element_id) {
     auto rectangle = [&](const RectF& rect) {
         return "[" + number(rect.x) + "," + number(rect.y) + "," + number(rect.w) + "," + number(rect.h) + "]";
     };
+    auto checked = [](const Node& node, const std::string& type) -> std::string {
+        if (!node.is_element("input") || (type != "checkbox" && type != "radio")) return "";
+        const bool value = node.checked_dirty ? node.checked_value : node.has_attr("checked");
+        return value ? ",\"checked\":true" : ",\"checked\":false";
+    };
     if (element_id.empty()) {
         std::string controls, status;
         size_t control_count = 0, status_count = 0, hit_tests = 0;
@@ -276,9 +281,7 @@ std::string Engine::inspect(const std::string& element_id) {
                     ",\"id\":" + quote(bounded(item.attr("id"), 64)) +
                     ",\"focused\":" + (&item == focus ? "true" : "false") +
                     ",\"disabled\":" + (item.form_disabled() || item.attr("aria-disabled") == "true" ? "true" : "false");
-                if (item.is_element("input") && (type == "checkbox" || type == "radio"))
-                    controls += std::string(",\"checked\":") +
-                        ((item.checked_dirty ? item.checked_value : item.has_attr("checked")) ? "true" : "false");
+                controls += checked(item, type);
                 controls += ",\"rect\":" + rectangle(rect) + "}";
             } else if (control) truncated = true;
             if (result && !control && status_count < 4) {
@@ -297,7 +300,7 @@ std::string Engine::inspect(const std::string& element_id) {
     return out + ",\"element\":{\"tag\":" + quote(node->tag) +
         ",\"text\":" + quote(bounded(std::move(label), 512)) + ",\"center_hit\":" + (center(node, rect) ? "true" : "false") +
         ",\"scroll_x\":" + number(node->scroll_x) + ",\"scroll_y\":" + number(node->scroll_y) +
-        ",\"rect\":" + rectangle(rect) + "}}";
+        ",\"rect\":" + rectangle(rect) + checked(*node, util::to_lower(node->attr("type"))) + "}}";
 }
 
 Node* Engine::hit_page(float x, float y) {

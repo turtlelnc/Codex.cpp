@@ -173,6 +173,8 @@ async function port() {
       await page.locator('#workspace-settings-close').click();
       assert.deepEqual(errors, []);
       assert.equal(requests.length, 0, 'opening/editing settings must not call model');
+      await require('./miniweb_settings_browser.cjs').persist(binary, rpc, env);
+      assert.equal(requests.length, 0, 'MiniWeb settings persistence must not call a model');
     }
     if (process.argv.includes('--tui')) {
       assert.equal(process.platform, 'linux', 'real PTY test uses util-linux script');
