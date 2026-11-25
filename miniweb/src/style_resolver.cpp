@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <optional>
 #include <sstream>
 
 const char* kUserAgentCss = R"CSS(
@@ -65,6 +66,7 @@ struct DeclItem {
     std::string value;
     bool important = false;
     bool inline_style = false;
+    bool backdrop = false;
     bool user_agent = false;
     int spec_id = 0, spec_class = 0, spec_tag = 0;
     int order = 0;
@@ -1360,7 +1362,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         st.is_root = node == doc.html;
 
         std::vector<DeclItem> items;
-        auto add_rule_decls = [&](const CssRule& rule, int spec_id, int spec_class, int spec_tag, bool user_agent) {
+        auto add_rule_decls = [&](const CssRule& rule, int spec_id, int spec_class, int spec_tag, bool user_agent, bool backdrop) {
             for (size_t k = 0; k < rule.declarations.size(); k++) {
                 DeclItem it;
                 it.decl = &rule.declarations[k];
@@ -1368,6 +1370,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
                 it.value = rule.declarations[k].value;
                 it.important = rule.declarations[k].important;
                 it.user_agent = user_agent;
+                it.backdrop = backdrop;
                 it.spec_id = spec_id;
                 it.spec_class = spec_class;
                 it.spec_tag = spec_tag;
@@ -1377,23 +1380,26 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
             }
         };
 
-        auto consider_sheet = [&](const Stylesheet& sheet, bool user_agent) {
+        auto consider_sheet = [&](const Stylesheet& sheet, bool user_agent, bool backdrop = false) {
             for (auto& rule : sheet.rules) {
                 bool matched = false;
                 int bi = -1, bc = -1, bt = -1;
                 for (auto& sel : rule.selectors) {
-                    if (css_matches_selector(node, sel, &doc)) {
+                    if (css_matches_selector(node, sel, &doc, backdrop)) {
                         matched = true;
                         if (sel.spec_id > bi) { bi = sel.spec_id; bc = sel.spec_class; bt = sel.spec_tag; }
                         else if (sel.spec_id == bi && sel.spec_class > bc) { bc = sel.spec_class; bt = sel.spec_tag; }
                         else if (sel.spec_id == bi && sel.spec_class == bc && sel.spec_tag > bt) { bt = sel.spec_tag; }
                     }
                 }
-                if (matched) add_rule_decls(rule, bi, bc, bt, user_agent);
+                if (matched) add_rule_decls(rule, bi, bc, bt, user_agent, backdrop);
             }
         };
         consider_sheet(ua, true);
-        for (auto& sheet : sheets) consider_sheet(sheet, false);
+        for (auto& sheet : sheets) {
+            consider_sheet(sheet, false);
+            if (node->modal_dialog) consider_sheet(sheet, false, true);
+        }
 
         auto inline_decls = parse_inline_style(node->attr("style"));
         for (size_t k = 0; k < inline_decls.size(); k++) {
@@ -1428,18 +1434,36 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
 
         // Custom properties cascade independently and are inherited.
         for (auto& it : items) {
-            if (util::starts_with(it.name, "--")) st.custom_props[it.name] = util::trim(it.value);
+            if (!it.backdrop && util::starts_with(it.name, "--")) st.custom_props[it.name] = util::trim(it.value);
         }
-        for (int pass = 0; pass < 8; pass++) {
-            bool changed = false;
-            for (auto& kv : st.custom_props) {
-                std::string nv = substitute_vars(kv.second, st.custom_props);
-                if (nv != kv.second) { kv.second = nv; changed = true; }
+        auto resolve_custom_properties = [](auto& properties) {
+            for (int pass = 0; pass < 8; ++pass) {
+                bool changed = false;
+                for (auto& kv : properties) {
+                    std::string value = substitute_vars(kv.second, properties);
+                    if (value != kv.second) { kv.second = std::move(value); changed = true; }
+                }
+                if (!changed) break;
             }
-            if (!changed) break;
-        }
+        };
+        resolve_custom_properties(st.custom_props);
 
+        std::optional<ComputedStyle> backdrop;
+        if (node->modal_dialog) {
+            backdrop.emplace();
+            backdrop->background = Color{0, 0, 0, 26};
+            backdrop->custom_props = st.custom_props;
+            for (const auto& it : items)
+                if (it.backdrop && util::starts_with(it.name, "--"))
+                    backdrop->custom_props[it.name] = util::trim(it.value);
+            resolve_custom_properties(backdrop->custom_props);
+        }
         for (auto& it : items) {
+            if (it.backdrop) {
+                if (it.name == "background" || it.name == "background-color" || it.name == "opacity")
+                    apply_property(*backdrop, it.name, substitute_vars(it.value, backdrop->custom_props), nullptr, node);
+                continue;
+            }
             if (util::starts_with(it.name, "--")) continue;
             std::string val = substitute_vars(it.value, st.custom_props);
             apply_property(st, it.name, val, parent_style, node);
@@ -1455,6 +1479,10 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         st.display_none = st.display == Display::None;
 
         node->style = st;
+        if (backdrop) {
+            node->backdrop = backdrop->background;
+            node->backdrop.a = static_cast<uint8_t>(std::lround(node->backdrop.a * backdrop->opacity));
+        }
         const bool closed_details = node->is_element("details") && !node->has_attr("open");
         bool found_summary = false;
         for (auto* child : node->children) {

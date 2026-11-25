@@ -126,6 +126,27 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        inline_content->layout.has_box,"Inline fallback label responds to pointer input");
  check(details.key(" ")&&!inline_details->has_attr("open")&&!inline_content->layout.has_box,
        "Inline fallback label supports keyboard activation");
+ Engine modal(640,480);modal.set_wait_ms(0);
+ check(modal.load((directory/"modal-backdrop.html").u8string(),&error)&&modal.render(false),"Modal backdrop fixture");
+ auto color_at=[&](int x,int y,int r,int g,int b){
+     const auto& data=modal.canvas()->pixels();
+     const size_t pixel=(y*640+x)*4;
+     return data[pixel]==r&&data[pixel+1]==g&&data[pixel+2]==b;
+ };
+ check(color_at(0,0,255,255,255)&&modal.click(20,20)&&modal.render(false),"Open native modal");
+ check(color_at(0,0,153,153,153)&&color_at(25,70,153,0,0),"Author backdrop dims the viewport");
+ check(color_at(185,56,0,0,255),"Modal paints above a higher z-index page element");
+ check(modal.inspect("behind").find("\"center_hit\":false")!=std::string::npos,"Modal blocks background targeting");
+ check(modal.click(110,52)&&modal.render(false)&&color_at(0,0,255,255,255),
+       "Top-layer button closes dialog and restores background");
+ check(modal.click(20,20)&&modal.render(false)&&
+       color_at(224,58,0,255,0)&&modal.inspect("fixed-close").find("\"center_hit\":true")!=std::string::npos,
+       "Viewport-fixed modal control is targetable outside the dialog box");
+ check(modal.click(235,60)&&modal.render(false)&&color_at(0,0,255,255,255),
+       "Viewport-fixed modal control closes the dialog");
+ check(modal.click(20,20)&&modal.key("End")&&modal.render(false)&&color_at(0,0,255,255,255)&&
+       color_at(405,56,0,0,255),"Detached and reinserted closed dialog paints normally");
+ check(modal.document()->modal_dialogs.empty(),"Detachment clears native top-layer state");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

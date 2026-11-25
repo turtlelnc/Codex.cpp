@@ -145,7 +145,7 @@ bool Engine::render(bool full_page) {
 
 bool Engine::click(float x, float y) {
     if (!js_runtime_ || !doc_ || !doc_->html || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=viewport_w_ || y>=viewport_h_) return false;
-    Node* target = hit_test(doc_->html, 0, 0, x, y);
+    Node* target = hit_page(x, y);
     if (!target) return interact("__mwDispatchBackground("+util::format_float(x,2)+","+util::format_float(y,2)+");");
     const bool fallback_summary = target->is_element("details") &&
         std::any_of(target->layout.box_children.begin(), target->layout.box_children.end(),
@@ -203,7 +203,7 @@ bool Engine::advance(int milliseconds) {
 
 bool Engine::scroll(float x,float y,float dx,float dy) {
     if(!doc_||!js_runtime_||!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(dx)||!std::isfinite(dy)||x<0||y<0||x>=viewport_w_||y>=viewport_h_||std::abs(dx)>10000||std::abs(dy)>10000)return false;
-    ensure_layout();auto* target=hit_test(doc_->html,0,0,x,y);
+    ensure_layout();auto* target=hit_page(x,y);
     return interact("__mwScroll("+std::to_string(target?target->id:0)+","+util::format_float(dx,2)+","+util::format_float(dy,2)+");");
 }
 
@@ -233,7 +233,7 @@ std::string Engine::inspect(const std::string& element_id) {
     auto center = [&](const Node* node, const RectF& rect) {
         const float x = rect.x + rect.w / 2, y = rect.y + rect.h / 2;
         auto* hit = rect.w > 0 && rect.h > 0 && x >= 0 && y >= 0 && x < viewport_w_ && y < viewport_h_
-            ? hit_test(doc_->html, 0, 0, x, y) : nullptr;
+            ? hit_page(x, y) : nullptr;
         while (hit && hit != node) hit = hit->parent;
         return hit != nullptr;
     };
@@ -303,20 +303,32 @@ std::string Engine::inspect(const std::string& element_id) {
         ",\"rect\":" + rectangle(rect) + checked(*node, util::to_lower(node->attr("type"))) + "}}";
 }
 
+Node* Engine::hit_page(float x, float y) {
+    for (auto it = doc_->modal_dialogs.rbegin(); it != doc_->modal_dialogs.rend(); ++it) {
+        auto* dialog = *it;
+        if (dialog->layout.has_box && dialog->has_attr("open"))
+            return hit_test(dialog, 0, 0, x, y);
+    }
+    return hit_test(doc_->html, 0, 0, x, y);
+}
+
 Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     if (!n || !n->is_element() || !n->layout.has_box || n->style.display==Display::None) return nullptr;
     const LayoutInfo& L = n->layout;
     RectF box=n->viewport_rect();
     // A clipped descendant cannot paint or receive clicks over the border.
     // The border itself still belongs to this element.
-    if(n->style.overflow!=Overflow::Visible&&!overflow_clip(n,box).contains(px,py))
-        return n->style.visibility==Visibility::Visible&&box.contains(px,py)?n:nullptr;
+    const bool clipped = n->style.overflow != Overflow::Visible && !overflow_clip(n, box).contains(px, py);
+    if (clipped && !n->modal_dialog)
+        return n->style.visibility == Visibility::Visible && box.contains(px, py) ? n : nullptr;
     float cx = box.x + L.content_x - n->scroll_x;
     float cy = box.y + L.content_y - n->scroll_y;
     const auto ordered=paint_order(n);
     for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
-        if (Node* hit = hit_test(*it, cx, cy, px, py)) return hit;
+        if (!(*it)->modal_dialog && (!clipped || escapes_modal_clip(n, *it)))
+            if (Node* hit = hit_test(*it, cx, cy, px, py)) return hit;
     }
+    if (clipped) return n->style.visibility == Visibility::Visible && box.contains(px, py) ? n : nullptr;
     for (auto& line : L.lines) {
         for (auto& item : line.items) {
             if (item.w <= 0 || item.h <= 0 || !item.style || item.style->visibility != Visibility::Visible) continue;

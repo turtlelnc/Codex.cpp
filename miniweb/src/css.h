@@ -21,7 +21,7 @@ struct CompoundSelector {
     std::vector<std::pair<std::string, std::string>> pseudo_args; // e.g. nth-child(2n+1)
     std::vector<std::shared_ptr<Selector>> nots;
     std::vector<std::shared_ptr<Selector>> anys;
-    bool has_pseudo_element = false;
+    std::string pseudo_element;
 };
 
 struct SelectorPart {
@@ -32,6 +32,7 @@ struct Selector {
     std::vector<SelectorPart> parts;      // left to right
     std::vector<char> combinators;        // between parts[i] and parts[i+1]: ' ', '>', '+', '~'
     int spec_id = 0, spec_class = 0, spec_tag = 0;
+    bool backdrop = false;
 };
 
 struct CssDeclaration {
@@ -54,7 +55,7 @@ struct Stylesheet {
 Stylesheet parse_css(const std::string& css, const std::string& source_url, int viewport_w, int viewport_h,
                      int* rule_order);
 bool css_matches(const Node* node, const std::string& selector, const Document* doc);
-bool css_matches_selector(const Node* node, const Selector& selector, const Document* doc);
+bool css_matches_selector(const Node* node, const Selector& selector, const Document* doc, bool backdrop = false);
 std::vector<Selector> parse_selector_list(const std::string& text);
 
 void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int viewport_w, int viewport_h);

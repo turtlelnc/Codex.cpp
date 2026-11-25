@@ -19,7 +19,7 @@ Color with_opacity(Color c, float op) {
 }
 
 void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images, float ox, float oy,
-                float opacity);
+                float opacity, bool top_layer = false);
 
 void paint_text_item(Canvas& canvas, FontManager& fonts, const LineItem& item, float cx, float cy, float opacity) {
     if (item.kind != LineItem::Text) return;
@@ -96,8 +96,8 @@ void paint_select_value(Canvas& canvas, Node* n, FontManager& fonts, float cx, f
 }
 
 void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images, float ox, float oy,
-                float opacity) {
-    if (!n || !n->is_element()) return;
+                float opacity, bool top_layer) {
+    if (!n || !n->is_element() || (n->modal_dialog && !top_layer)) return;
     if (n->style.display == Display::None) return;
     const bool visible = n->style.visibility == Visibility::Visible;
     const LayoutInfo& L = n->layout;
@@ -186,7 +186,14 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
     }
 
-    if (!n->is_element("textarea")) for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
+    if (!n->is_element("textarea")) {
+        for (auto* child : paint_order(n)) {
+            const bool ignores_clip = clip && escapes_modal_clip(n, child);
+            if (ignores_clip) canvas.pop_clip();
+            paint_node(canvas, child, fonts, images, cx, cy, op);
+            if (ignores_clip) canvas.push_clip(overflow_clip(n, box));
+        }
+    }
 
     if (visible && n->is_element("li") && n->style.list_marker) {
         Node* p = n->parent;
@@ -253,5 +260,10 @@ void paint_document(Canvas& canvas, Document& doc, FontManager& fonts, ImageCach
     if (!doc.root) return;
     for (auto* c : doc.root->children) {
         if (c && c->is_element()) paint_node(canvas, c, fonts, images, 0, 0, 1.0f);
+    }
+    for (auto* dialog : doc.modal_dialogs) {
+        if (!dialog->layout.has_box || !dialog->has_attr("open")) continue;
+        canvas.fill_rect(RectF{0, 0, (float)canvas.width(), (float)canvas.height()}, dialog->backdrop, 1.0f);
+        paint_node(canvas, dialog, fonts, images, 0, 0, 1.0f, true);
     }
 }

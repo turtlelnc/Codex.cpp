@@ -55,6 +55,7 @@ void Node::remove_attr(const std::string& name) {
     auto old=attr_ptr(n);if(!old)return;if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"attributes",n,*old,true);
     attrs.erase(std::remove_if(attrs.begin(), attrs.end(), [&](auto& a) { return a.first == n; }),
                 attrs.end());
+    if (modal_dialog && n == "open") set_modal(false);
 }
 
 std::vector<std::string> Node::classes() const {
@@ -98,19 +99,39 @@ Node* Node::insert_before(Node* child, Node* ref) {
     return child;
 }
 
-// Detaching a focused subtree loses focus even if it is reinserted before JS
-// next reads activeElement. Layout ancestry may differ; use DOM ancestry here.
-static void clear_detached_focus(Node* subtree) {
+void Node::set_modal(bool active) {
+    if (!doc || modal_dialog == active) return;
+    auto& dialogs = doc->modal_dialogs;
+    if (active) dialogs.push_back(this);
+    else dialogs.erase(std::remove(dialogs.begin(), dialogs.end(), this), dialogs.end());
+    modal_dialog = active;
+    ++doc->revision;
+}
+
+// Detachment immediately clears focus and top-layer membership, including
+// when the same subtree is reinserted during a single JS callback.
+static void clear_detached_state(Node* subtree) {
     if (!subtree || !subtree->doc) return;
-    auto* doc=subtree->doc;const int id=doc->focused_id;
-    if(id<=0 || id>=static_cast<int>(doc->id_map.size()))return;
-    for(auto* n=doc->id_map[id];n;n=n->parent)if(n==subtree){doc->focused_id=0;return;}
+    auto* doc = subtree->doc;
+    const auto in_subtree = [subtree](const Node* node) {
+        for (; node; node = node->parent) if (node == subtree) return true;
+        return false;
+    };
+    const int id = doc->focused_id;
+    if (id > 0 && id < static_cast<int>(doc->id_map.size()) && in_subtree(doc->id_map[id]))
+        doc->focused_id = 0;
+    auto& dialogs = doc->modal_dialogs;
+    dialogs.erase(std::remove_if(dialogs.begin(), dialogs.end(), [&](Node* dialog) {
+        if (!in_subtree(dialog)) return false;
+        dialog->modal_dialog = false;
+        return true;
+    }), dialogs.end());
 }
 Node* Node::remove_child(Node* child) {
     auto it = std::find(children.begin(), children.end(), child);
     if (it == children.end()) return nullptr;
     if(doc)++doc->revision;
-    clear_detached_focus(child);
+    clear_detached_state(child);
     if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{}, {child},child->previous_sibling(),child->next_sibling());
     children.erase(it);
     if (child) child->parent = nullptr;
@@ -132,7 +153,7 @@ Node* Node::replace_child(Node* new_child, Node* old_child) {
     if (doc) new_child->doc = doc;
     *it = new_child;
     if(doc&&doc->capture_mutations&&!doc->mutation_suppression)doc->record_mutation(this,"childList",{},{},false,{new_child},{old_child},previous,next);
-    clear_detached_focus(old_child);
+    clear_detached_state(old_child);
     old_child->parent = nullptr;
     return old_child;
 }
@@ -141,7 +162,7 @@ void Node::detach() { if(parent)parent->remove_child(this); }
 
 void Node::remove_all_children() {
     if(doc){++doc->revision;if(doc->capture_mutations&&!doc->mutation_suppression&&!children.empty())doc->record_mutation(this,"childList",{},{},false,{},children);}
-    for(auto* c:children)if(c){clear_detached_focus(c);c->parent=nullptr;}
+    for(auto* c:children)if(c){clear_detached_state(c);c->parent=nullptr;}
     children.clear();
 }
 
@@ -525,6 +546,10 @@ bool viewport_fixed(const Node* n){
 float client_size(const Node* n,bool x){const auto& l=n->layout;return std::max(0.0f,x?l.border.w-l.border_left-l.border_right:l.border.h-l.border_top-l.border_bottom);}
 bool scrollable(const Node* n,bool x){auto o=overflow_axis(n,x);return o==Overflow::Auto||o==Overflow::Scroll||o==Overflow::Hidden;}
 }
+bool escapes_modal_clip(const Node* parent, const Node* child) {
+    return parent->modal_dialog && viewport_fixed(child);
+}
+
 RectF Node::viewport_rect() const {
     if(!layout.has_box)return {};
     if(doc&&visual_cache_revision==doc->visual_revision)return visual_cache;

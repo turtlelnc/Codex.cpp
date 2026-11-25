@@ -35,6 +35,8 @@ struct Node {
     Node* parent = nullptr;
     Document* doc = nullptr;
     int id = 0;
+    bool modal_dialog = false;
+    Color backdrop{0, 0, 0, 26};
     bool anonymous = false;         // layout-only box; never exposed through the DOM
 
     ComputedStyle style;
@@ -66,6 +68,7 @@ struct Node {
     Node* remove_child(Node* child);
     Node* replace_child(Node* new_child, Node* old_child);
     void detach();
+    void set_modal(bool active);
     void remove_all_children();
 
     Node* first_element_child() const;
@@ -105,6 +108,7 @@ struct Document {
                          const std::vector<Node*>& added = {}, const std::vector<Node*>& removed = {},
                          Node* previous = nullptr, Node* next = nullptr);
     int focused_id = 0;
+    std::vector<Node*> modal_dialogs;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout
     std::vector<Node*> id_map; // index == node id
@@ -144,6 +148,7 @@ struct Document {
 
 std::string serialize_html(const Node* node, bool outer = true);
 Overflow overflow_axis(const Node* node, bool horizontal);
+bool escapes_modal_clip(const Node* parent, const Node* child);
 RectF overflow_clip(const Node* node, const RectF& box);
 void update_scroll_layout(Document& doc);
 bool set_scroll(Node* node, float x, float y);

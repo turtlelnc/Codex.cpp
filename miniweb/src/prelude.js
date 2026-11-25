@@ -618,15 +618,7 @@
     getSelection() { N.unsupported('document.getSelection', 'selection API is not implemented'); return { rangeCount: 0, toString: function () { return ''; }, removeAllRanges: function () {} }; }
   }
 
-  const modalDialogs = [];
-  function currentModal() {
-    while (modalDialogs.length) {
-      const dialog = modalDialogs[modalDialogs.length - 1];
-      if (dialog.open && dialog.isConnected) return dialog;
-      modalDialogs.pop();
-    }
-    return null;
-  }
+  function currentModal() { return wrap(N.modalDialog()); }
   function inModal(node) {
     const dialog = currentModal();
     return !dialog || node === dialog || dialog.contains(node);
@@ -635,11 +627,11 @@
     get open() { return this.hasAttribute('open'); }
     set open(value) { this.toggleAttribute('open', !!value); }
     showModal() {
-      if (this.open && modalDialogs.includes(this)) return;
+      if (this.open && N.modalDialog(this.__id)) return;
       if (this.open || !this.isConnected) throw new Error('Cannot open dialog modally');
       this.__dialogOpener = document.activeElement;
       this.open = true;
-      modalDialogs.push(this);
+      N.modalDialog(this.__id, true);
       const controls = this.querySelectorAll('button,input,textarea,select,a,[tabindex]');
       const target = controls.find(node => node.hasAttribute('autofocus') && focusable(node)) || controls.find(focusable);
       focusControl(target || this, true);
@@ -647,12 +639,11 @@
     close(value) {
       if (!this.open) return;
       if (value !== undefined) this.returnValue = String(value);
+      const wasModal = N.modalDialog(this.__id);
       this.open = false;
-      const index = modalDialogs.lastIndexOf(this);
-      if (index >= 0) modalDialogs.splice(index, 1);
       const opener = this.__dialogOpener;
       this.__dialogOpener = null;
-      if (index >= 0 && (!activeControl || this.contains(activeControl) || activeControl === this))
+      if (wasModal && (!activeControl || this.contains(activeControl) || activeControl === this))
         focusControl(opener && focusable(opener) ? opener : null, true);
       this.dispatchEvent(new Event('close'));
     }

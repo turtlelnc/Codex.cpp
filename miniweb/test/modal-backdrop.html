@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+html, body { margin: 0; background: white; }
+#behind { position: fixed; left: 10px; top: 10px; width: 260px; height: 80px; z-index: 9999; background: #ff0000; }
+#dialog { position: fixed; inset: auto; left: 80px; top: 34px; transform: none; overflow: hidden; width: 120px; height: 60px; margin: 0; padding: 0; border: 0; background: blue; }
+#dialog::backdrop { background-color: var(--shade); --shade: var(--tint); --tint: rgba(0, 0, 0, .4); }
+#close { position: absolute; left: 12px; top: 12px; }
+#fixed-close { position: fixed; left: 220px; top: 46px; background: lime; }
+</style>
+<button id="behind">Open dialog</button>
+<dialog id="dialog"><button id="close">Close</button><button id="fixed-close">Fixed</button></dialog>
+<script>
+const behind = document.getElementById('behind');
+const dialog = document.getElementById('dialog');
+behind.addEventListener('click', () => dialog.showModal());
+dialog.addEventListener('keydown', event => {
+  if (event.key !== 'End') return;
+  const parent = dialog.parentElement;
+  dialog.remove();
+  dialog.open = false;
+  dialog.style.display = 'block';
+  dialog.style.left = '300px';
+  parent.appendChild(dialog);
+});
+for (const id of ['close', 'fixed-close'])
+  document.getElementById(id).addEventListener('click', () => dialog.close());
+</script>

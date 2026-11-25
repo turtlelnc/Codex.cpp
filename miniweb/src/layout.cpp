@@ -440,9 +440,17 @@ void LayoutEngine::finish_absolutes(Node* root){
             }
         }
         Node* parent=cb?cb:root;
+        // Keep viewport-positioned descendants in their modal paint layer
+        // while retaining the original containing block for inset resolution.
+        for (auto* ancestor = child->parent; ancestor && ancestor != cb; ancestor = ancestor->parent) {
+            if (ancestor->modal_dialog && ancestor->layout.has_box) {
+                parent = ancestor;
+                break;
+            }
+        }
         // Keep stacking groups in the paint tree even when they do not establish
         // a containing block. Full cross-group stacking/clipping is still limited.
-        for(auto* ancestor=child->parent;ancestor&&ancestor!=cb;ancestor=ancestor->parent)
+        for(auto* ancestor=child->parent;!escapes_modal_clip(parent, child)&&ancestor&&ancestor!=parent;ancestor=ancestor->parent)
             if(ancestor->layout.has_box&&(ancestor->style.opacity<1||(!ancestor->style.z_auto&&ancestor->parent&&
                (ancestor->parent->style.display==Display::Flex||ancestor->parent->style.display==Display::Grid)))){parent=ancestor;break;}
         if(parent!=cb&&parent!=root)for(auto* ancestor=parent;ancestor&&ancestor!=cb;ancestor=ancestor->parent)

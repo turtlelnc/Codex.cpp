@@ -211,7 +211,8 @@ bool parse_compound(const std::string& s, size_t& i, CompoundSelector& comp, Sel
                 i = close + 1;
             }
             if (pseudo_element) {
-                comp.has_pseudo_element = true;
+                if (!comp.pseudo_element.empty() || name != "backdrop" || !arg.empty()) return false;
+                comp.pseudo_element = name;
                 sel.spec_tag++;
                 any = true;
                 continue;
@@ -262,7 +263,11 @@ SelectorParseResult parse_one_selector(const std::string& text) {
     while (i < text.size()) {
         CompoundSelector comp;
         if (!parse_compound(text, i, comp, sel)) return r;
-        if (comp.has_pseudo_element) return r; // unsupported pseudo-element
+        if (!comp.pseudo_element.empty()) {
+            skip_ws(text, i);
+            if (i != text.size()) return r;
+            sel.backdrop = true;
+        }
         sel.parts.emplace_back(SelectorPart{std::move(comp)});
         bool had_ws = false;
         while (i < text.size() && std::isspace((unsigned char)text[i])) { i++; had_ws = true; }
@@ -670,8 +675,8 @@ std::vector<Selector> parse_selector_list(const std::string& text) {
     return parse_selector_list_impl(text);
 }
 
-bool css_matches_selector(const Node* node, const Selector& sel, const Document* doc) {
-    if (!node || sel.parts.empty()) return false;
+bool css_matches_selector(const Node* node, const Selector& sel, const Document* doc, bool backdrop) {
+    if (!node || sel.parts.empty() || sel.backdrop != backdrop) return false;
     return match_selector_from(node, sel, (int)sel.parts.size() - 1, doc);
 }
 
