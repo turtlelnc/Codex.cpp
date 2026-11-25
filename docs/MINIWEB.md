@@ -276,3 +276,10 @@ unsupported. These fixes do not establish complete CSS or browser equivalence.
 ### Offline WebUI settings acceptance
 
 The browser regression opens the real settings markup and scripts, switches to the Model and Context tab, and verifies close and focus restoration. Its temporary copy uses relative asset URLs and an in-memory fixture for the startup API. It neither connects to a Codex server nor writes preferences. Basic modal dialog visibility, focus and Escape are supported. MiniWeb does not implement the full HTML top layer or CSS backdrop.
+
+The settings integration suite also toggles the side-chat checkbox, checks that
+the app waits for the save response, and reopens a fresh MiniWeb session to read
+the saved value. The test driver sends the one allowed preference to a temporary
+Codex.cpp backend and returns its response through a local fixture file.
+MiniWeb stays offline throughout. Exact element inspection reports checked
+state for checkboxes and radio buttons without returning live text input values.
