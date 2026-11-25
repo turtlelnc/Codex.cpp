@@ -261,6 +261,8 @@ jobs:
       - name: Verify large-session incremental snapshots in Chromium
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/long_session_test.cjs build/codex-cpp --browser
       - name: Verify MiniWeb pixels, image history and Chromium geometry
+        env:
+          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/plugin-browser
         run: NODE_PATH="$RUNNER_TEMP/plugin-tests/node_modules" node tests/miniweb_test.cjs build/codex-cpp build/miniweb/miniweb-regression --browser
       - name: Verify tool history across repeated context compaction
         env:
