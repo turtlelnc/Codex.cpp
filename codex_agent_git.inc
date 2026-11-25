@@ -93,6 +93,31 @@ void require_clean(git_repository *repo) {
             "Commit or preserve current changes before checkout/merge");
   }
 }
+std::string patch_parse_location(const std::string &patch, const std::string &error) {
+  size_t error_line = 0;
+  const auto marker = error.rfind(" at line ");
+  if (marker != std::string::npos) {
+    std::istringstream number(error.substr(marker + 9));
+    number >> error_line;
+  }
+  std::istringstream lines(patch);
+  std::string line, file_header;
+  size_t line_number = 0, header_line = 0;
+  while (std::getline(lines, line)) {
+    ++line_number;
+    if (line.compare(0, 11, "diff --git ") == 0 ||
+        line.compare(0, 16, "*** Update File:") == 0 ||
+        (file_header.empty() && line.compare(0, 4, "--- ") == 0)) {
+      file_header = line;
+      header_line = line_number;
+    }
+    if (error_line && line_number >= error_line) break;
+  }
+  if (file_header.empty()) return "";
+  return " Patch file header at line " + std::to_string(header_line) + ": " +
+      json_dump(str(bounded_text(file_header, 240))) + ".";
+}
+
 void apply(const fs::path &root, const J &args) {
   keys(args, {"patch"});
   auto patch = string_arg(args, "patch");
@@ -100,7 +125,15 @@ void apply(const fs::path &root, const J &args) {
   if (auto risk = external_hardlink_risk(root))
     throw std::runtime_error("DENIED: " + *risk);
   git_diff *raw_diff = nullptr;
-  check(git_diff_from_buffer(&raw_diff, patch.data(), patch.size()));
+  try {
+    check(git_diff_from_buffer(&raw_diff, patch.data(), patch.size()));
+  } catch (const std::runtime_error &error) {
+    throw std::runtime_error(std::string("Patch format error: ") + error.what() +
+        patch_parse_location(patch, error.what()) +
+        " Use a raw Git unified diff: diff --git a/path b/path, --- a/path, +++ b/path,"
+        " and a numbered @@ -old,count +new,count @@ header. Context lines start with one space."
+        " Omit Markdown fences and *** Begin Patch wrappers. Keep old/new hunk counts exact.");
+  }
   Handle<git_diff, git_diff_free> diff(raw_diff, git_diff_free);
   require(git_diff_num_deltas(raw_diff) > 0, "Patch contains no file changes");
   for (size_t i = 0; i < git_diff_num_deltas(raw_diff); ++i) {
@@ -128,10 +161,38 @@ void apply(const fs::path &root, const J &args) {
   check(git_repository_set_workdir(raw, root.u8string().c_str(), 0));
   git_apply_options options{};
   check(git_apply_options_init(&options, GIT_APPLY_OPTIONS_VERSION));
-  options.flags = GIT_APPLY_CHECK;
-  check(git_apply(raw, raw_diff, GIT_APPLY_LOCATION_WORKDIR, &options));
-  options.flags = 0;
-  check(git_apply(raw, raw_diff, GIT_APPLY_LOCATION_WORKDIR, &options));
+  struct PatchPosition {
+    const char *path = nullptr;
+    int old_start = -1;
+  } position;
+  options.payload = &position;
+  options.delta_cb = [](const git_diff_delta *delta, void *payload) {
+    auto &position = *static_cast<PatchPosition *>(payload);
+    position.path = delta->status == GIT_DELTA_ADDED ? delta->new_file.path : delta->old_file.path;
+    position.old_start = -1;
+    return 0;
+  };
+  options.hunk_cb = [](const git_diff_hunk *hunk, void *payload) {
+    static_cast<PatchPosition *>(payload)->old_start = hunk->old_start;
+    return 0;
+  };
+  auto run_patch = [&](unsigned flags) {
+    options.flags = flags;
+    position = {};
+    try {
+      check(git_apply(raw, raw_diff, GIT_APPLY_LOCATION_WORKDIR, &options));
+    } catch (const std::runtime_error &error) {
+      std::string message = flags == GIT_APPLY_CHECK ? "Patch preflight failed" : "Patch apply failed";
+      if (position.path) message += " for " + json_dump(str(bounded_text(position.path, 240)));
+      if (position.old_start >= 0) message += " (hunk starts at original line " + std::to_string(position.old_start) + ")";
+      message += ": " + std::string(error.what());
+      if (flags == GIT_APPLY_CHECK)
+        message += ". Re-read the current file around the reported hunk and regenerate the smallest patch.";
+      throw std::runtime_error(message);
+    }
+  };
+  run_patch(GIT_APPLY_CHECK);
+  run_patch(0);
   std::cout << json_dump(obj({{"applied", boolean(true)}, {"files", number(git_diff_num_deltas(raw_diff))}}))
             << '\n';
 }
