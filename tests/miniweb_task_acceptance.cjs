@@ -6,19 +6,22 @@ const {spawn} = require('node:child_process');
 const {once} = require('node:events');
 const {createInterface} = require('node:readline');
 
-function taskPage() {
+function taskPage({clipped = false} = {}) {
   const base = fs.readFileSync('miniweb/test/live-task.html', 'utf8');
   return base.replace('<ul class="tasks"', `
 <style>
   #tasks { height: 180px; overflow: auto; }
   #confirm { width: 250px; padding: 16px; border: 0; background: #fff; }
   #confirm::backdrop { background-color: rgba(0, 0, 0, .4); }
+  #confirm-clear { color: #000; background: #fff; border: 0; padding: 8px; }
+  #confirm-clear span { display: block; white-space: nowrap; }
+  ${clipped ? '@media (max-width: 460px) { #confirm-clear { width: 60px; } #confirm-clear span { overflow: hidden; } }' : ''}
 </style>
 <button id="clear-completed" type="button">Clear completed</button>
 <dialog id="confirm" aria-labelledby="confirm-title">
   <h2 id="confirm-title">Clear completed tasks?</h2>
   <button id="cancel-clear" type="button" autofocus>Cancel</button>
-  <button id="confirm-clear" type="button">Clear</button>
+  <button id="confirm-clear" type="button"><span>Clear completed tasks</span></button>
 </dialog>
 <ul class="tasks"`).replace('})();\n</script>', `
 const dialog = document.getElementById('confirm');
@@ -51,6 +54,8 @@ module.exports = async function taskAcceptance(browser, binary) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'miniweb-task-acceptance-'));
   const html = taskPage();
   fs.writeFileSync(path.join(root, 'task.html'), html);
+  const clipped = taskPage({clipped: true});
+  fs.writeFileSync(path.join(root, 'clipped.html'), clipped);
   try {
     for (const [width, height] of [[390, 600], [900, 700]]) {
       const page = await browser.newPage({viewport: {width, height}});
@@ -81,7 +86,7 @@ module.exports = async function taskAcceptance(browser, binary) {
         await page.locator('#' + id).click();
       }
       const artifacts = process.env.CODEX_ARTIFACT_DIR;
-      async function capture(stage) {
+      async function capture(stage, buttons = []) {
         const response = await act('screenshot');
         const mini = Buffer.from(response.images[0].split(',')[1], 'base64');
         const chrome = await page.screenshot();
@@ -90,7 +95,7 @@ module.exports = async function taskAcceptance(browser, binary) {
           for (const [engine, image] of [['miniweb', mini], ['chromium', chrome]])
             fs.writeFileSync(path.join(artifacts, `task-acceptance-${width}-${stage}-${engine}.png`), image);
         }
-        return page.evaluate(async sources => Promise.all(sources.map(async source => {
+        return page.evaluate(async ({sources, buttons}) => Promise.all(sources.map(async (source, engine) => {
           const image = new Image();
           image.src = 'data:image/png;base64,' + source;
           await image.decode();
@@ -99,8 +104,29 @@ module.exports = async function taskAcceptance(browser, binary) {
           canvas.height = image.height;
           const context = canvas.getContext('2d');
           context.drawImage(image, 0, 0);
-          return Array.from(context.getImageData(2, 2, 1, 1).data).slice(0, 3);
-        })), [mini, chrome].map(buffer => buffer.toString('base64')));
+          const shade = Array.from(context.getImageData(2, 2, 1, 1).data).slice(0, 3);
+          const button = buttons[engine];
+          let ink = 0;
+          if (button) {
+            const [x, y, w, h] = button.map(Math.floor);
+            const pixels = context.getImageData(x + 3, y + 3, w - 6, h - 6).data;
+            for (let i = 0; i < pixels.length; i += 4) {
+              if (pixels[i] < 100 && pixels[i + 1] < 100 && pixels[i + 2] < 100) ink++;
+            }
+          }
+          return {shade, ink};
+        })), {sources: [mini, chrome].map(buffer => buffer.toString('base64')), buttons});
+      }
+      async function readLabel(stage) {
+        const {element} = await inspect('confirm-clear');
+        assert.equal(element.text, 'Clear completed tasks');
+        assert(element.center_hit, 'Element inspection still sees a clickable button');
+        const button = page.locator('#confirm-clear');
+        assert.equal(await button.innerText(), 'Clear completed tasks');
+        const {x, y, width, height} = await button.boundingBox();
+        const overflow = await button.locator('span').evaluate(span => span.scrollWidth > span.clientWidth);
+        const shots = await capture(stage, [element.rect, [x, y, width, height]]);
+        return {shots, overflow};
       }
       try {
         const opened = await act('open', {path: 'task.html', width, height, wait_ms: 0});
@@ -127,9 +153,11 @@ module.exports = async function taskAcceptance(browser, binary) {
         assert.equal((await inspect('cancel-clear')).focused_id, 'cancel-clear');
         assert.equal(await page.evaluate(() => document.activeElement.id), 'cancel-clear');
         assert.equal((await inspect('clear-completed')).element.center_hit, false);
-        const dimmed = await capture('dialog');
-        for (let engine = 0; engine < dimmed.length; ++engine)
-          assert(dimmed[engine].every((value, channel) => Math.abs(value - .6 * before[engine][channel]) <= 1));
+        const fullLabel = await readLabel('dialog');
+        assert.equal(fullLabel.overflow, false);
+        for (let engine = 0; engine < fullLabel.shots.length; ++engine)
+          assert(fullLabel.shots[engine].shade.every((value, channel) =>
+            Math.abs(value - .6 * before[engine].shade[channel]) <= 1));
         await click('cancel-clear');
         assert.equal((await inspect('acceptance-task')).element.checked, true);
         assert.equal(await page.locator('#acceptance-task').isChecked(), true);
@@ -144,6 +172,23 @@ module.exports = async function taskAcceptance(browser, binary) {
         assert.equal(await page.locator('#tasks li').count(), 14);
         assert.equal((await inspect('clear-completed')).focused_id, 'clear-completed');
         await capture('cleared');
+        await act('close');
+        if (width === 390) {
+          session = undefined;
+          const reopened = await act('open', {path: 'clipped.html', width, height, wait_ms: 0});
+          session = reopened.output.match(/Opened preview session ([^. ]+)/)?.[1];
+          assert(session, reopened.output);
+          await page.setContent(clipped);
+          await click('clear-completed');
+          const clippedLabel = await readLabel('clipped');
+          assert.equal(clippedLabel.overflow, true);
+          for (let engine = 0; engine < clippedLabel.shots.length; ++engine) {
+            const ink = clippedLabel.shots[engine].ink;
+            assert(ink > 0 && ink < fullLabel.shots[engine].ink * 0.65,
+              `Clipped button should show less label ink, engine ${engine}`);
+          }
+          await act('close');
+        }
       } catch (error) {
         if (artifacts && session) {
           await capture('failure').catch(() => {});
