@@ -66,6 +66,47 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        "Sidebar wheel scroll stays in the list");
  check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,
        "Sidebar footer stays in place while scrolling");
+ Engine details(640,480);details.set_wait_ms(0);
+ check(details.load((directory/"details.html").u8string(),&error)&&details.render(false),"Details fixture");
+ auto node_in_details=[&](const char* id){return details.document()->get_element_by_id(id);};
+ auto* disclosure=node_in_details("files");
+ auto* summary=node_in_details("summary");
+ auto* detail_body=details.document()->body;
+ check(disclosure->viewport_rect().h==30&&!node_in_details("file")->layout.has_box&&
+       !node_in_details("extra")->layout.has_box,"Closed details only lays out its first summary");
+ check(details.key("Tab")&&details.document()->focused_id==summary->id&&details.key("Enter")&&
+       disclosure->has_attr("open")&&details.render(false)&&node_in_details("file")->layout.has_box,
+       "Tab and Enter expose details contents");
+ check(details.advance(1)&&detail_body->attr("data-toggle")=="closed:open","Details dispatches toggle");
+ check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false),"Space closes details");
+ detail_body->set_attr("data-cancel","");
+ check(details.click(10,10)&&!disclosure->has_attr("open"),"Canceled summary click preserves state");
+ detail_body->remove_attr("data-cancel");
+ const auto button=node_in_details("embedded")->viewport_rect();
+ check(details.click(button.x+5,button.y+5)&&!disclosure->has_attr("open"),"Nested button does not toggle details");
+ check(details.click(10,35)&&details.render(false)&&disclosure->has_attr("open")&&
+       node_in_details("footer")->viewport_rect().y>30,"Script-opened details reflows");
+ auto* fallback=node_in_details("fallback");
+ auto* fallback_content=node_in_details("fallback-content");
+ check(fallback->viewport_rect().h>20&&!fallback_content->layout.has_box&&!fallback->children.front()->is_element("summary"),
+       "Summaryless details show a layout-only label");
+ check(details.key("Tab")&&details.document()->focused_id==fallback->id&&details.key("Enter")&&
+       fallback->has_attr("open")&&fallback_content->layout.has_box,"Keyboard opens summaryless details");
+ check(details.key(" ")&&!fallback->has_attr("open"),"Keyboard closes summaryless details");
+ const auto fallback_box=fallback->viewport_rect();
+ check(details.click(fallback_box.x+5,fallback_box.y+fallback_box.h-2)&&!fallback->has_attr("open"),
+       "Clicking outside the fallback label does not activate it");
+ check(details.click(fallback_box.x+5,fallback_box.y+5)&&fallback->has_attr("open")&&
+       fallback_content->layout.has_box,"Fallback summary label responds to pointer input");
+ auto* inline_details=node_in_details("inline-fallback");
+ auto* inline_content=node_in_details("inline-content");
+ const auto inline_box=inline_details->viewport_rect();
+ check(inline_box.w>0&&inline_box.h>0&&!inline_content->layout.has_box,
+       "Inline summaryless details has a visible fallback label");
+ check(details.click(inline_box.x+3,inline_box.y+3)&&inline_details->has_attr("open")&&
+       inline_content->layout.has_box,"Inline fallback label responds to pointer input");
+ check(details.key(" ")&&!inline_details->has_attr("open")&&!inline_content->layout.has_box,
+       "Inline fallback label supports keyboard activation");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

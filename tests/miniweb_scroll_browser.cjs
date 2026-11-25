@@ -193,6 +193,45 @@ module.exports = async function (browser, probe) {
       await page.waitForFunction(() => document.getElementById("list").scrollTop === 100);
       assert.equal(await page.locator("#footer").evaluate(n => n.getBoundingClientRect().y), 430);
     }
+    const disclosure = path.resolve("miniweb/test/details.html");
+    await page.setContent(fs.readFileSync(disclosure, "utf8"));
+    const nativeDetails = (clicks) => {
+      const result = spawnSync(probe, [
+        "--geometry", disclosure, "390", "files,content,footer,fallback,fallback-content,inline-fallback,inline-content", clicks,
+      ], { encoding: "utf8", timeout: 10000 });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    const footerTop = () => page.locator("#footer").evaluate(n => n.getBoundingClientRect().top);
+    assert.equal(nativeDetails("").footer[1], await footerTop());
+    assert.equal(nativeDetails("").content[3], 0);
+    assert.equal(await page.locator("#file").isVisible(), false);
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "summary");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.body.dataset.toggle === "closed:open");
+    assert.equal(await page.locator("#file").isVisible(), true);
+    assert.equal(nativeDetails("12,10").content[3], 80);
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator("#file").isVisible(), false);
+    assert.equal(nativeDetails("12,10;12,10").footer[1], await footerTop());
+    const fallback = nativeDetails("");
+    assert(fallback.fallback[3] > 20);
+    assert.equal(fallback["fallback-content"][3], 0);
+    const fallbackClick = `12,${fallback.fallback[1] + 5}`;
+    assert.equal(nativeDetails(fallbackClick)["fallback-content"][3], 60);
+    await page.locator("#footer").focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("#fallback-file").isVisible(), true);
+    await page.keyboard.press("Space");
+    assert.equal(await page.locator("#fallback-file").isVisible(), false);
+    const inline = nativeDetails("")["inline-fallback"];
+    assert(inline[2] > 0 && inline[3] > 0);
+    assert.equal(nativeDetails(`${inline[0] + 3},${inline[1] + 3}`)["inline-content"][3], 40);
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("#inline-content").isVisible(), true);
     console.log(
       "MiniWeb/Chromium scrolling geometry, sticky, fixed and click comparison passed",
     );

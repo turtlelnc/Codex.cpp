@@ -93,6 +93,7 @@ private:
     ImageCache& images;
     float vw = 1280, vh = 800;
     std::unordered_map<Node*, std::vector<Node*>> flex_item_cache;
+    std::unordered_map<Node*, std::vector<Node*>> disclosure_child_cache;
     std::unordered_map<Node*,size_t> document_order,document_depth;
     struct Absolute {Node* anchor;Node* node;float cursor;};
     std::map<std::pair<size_t,size_t>,Absolute> absolutes;
@@ -106,6 +107,7 @@ private:
     void finish_stretches(Node* node);
     float clamp_height(Node* node,float height,float basis_width,float basis_height);
     const std::vector<Node*>& flex_items(Node* parent);
+    const std::vector<Node*>& flow_children(Node* parent);
 
     void resolve_edges(Node* n, float cb_w);
     void apply_auto_margins(Node* n, float cb_w);
@@ -486,6 +488,39 @@ void LayoutEngine::finish_absolutes(Node* root){
     }
 }
 
+const std::vector<Node*>& LayoutEngine::flow_children(Node* parent) {
+    if (!parent->is_element("details")) return parent->children;
+    auto [cached, inserted] = disclosure_child_cache.try_emplace(parent);
+    auto& children = cached->second;
+    if (inserted) {
+        const bool has_summary = std::any_of(parent->children.begin(), parent->children.end(),
+            [](const Node* child) { return child->is_element("summary"); });
+        if (!has_summary) {
+            // A UA disclosure label lives in layout only, outside author DOM.
+            auto& summary = doc.layout_nodes.emplace_back();
+            summary.tag = "summary";
+            summary.parent = parent;
+            summary.doc = &doc;
+            summary.anonymous = true;
+            summary.style = inherited_style(parent->style);
+            summary.style.display = Display::Block;
+            const auto zero = Length::px(0);
+            summary.style.margin = {zero, zero, zero, zero};
+            summary.style.padding = {zero, zero, zero, zero};
+
+            auto& label = doc.layout_nodes.emplace_back();
+            label.type = NodeType::Text;
+            label.data = parent->has_attr("open") ? u8"▾ Details" : u8"▸ Details";
+            label.parent = &summary;
+            label.style = summary.style;
+            summary.children.push_back(&label);
+            children.push_back(&summary);
+        }
+        children.insert(children.end(), parent->children.begin(), parent->children.end());
+    }
+    return children;
+}
+
 float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, float parent_cb_h) {
     float cursor = 0;
     bool flow_content=false;
@@ -509,8 +544,8 @@ float LayoutEngine::layout_block_content(Node* n, float content_w, float hspec, 
         if(used>0){cursor+=margin()+used;clear_margin();flow_content=true;top_open=false;}
         group.clear();
     };
-    for (auto* child : n->children) {
-        if (!child) continue;
+    for (auto* child : flow_children(n)) {
+        if (!child || child->style.display_none) continue;
         if (child->is_text() || child->is_comment()) {
             if (child->is_text()) group.push_back(child);
             continue;
@@ -647,7 +682,7 @@ void LayoutEngine::append_text_tokens(Node* tn, std::vector<Token>& out) {
 }
 
 void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_w, Node* box_parent) {
-    if (!g) return;
+    if (!g || g->style.display_none) return;
     if (g->is_text()) {
         append_text_tokens(g, out);
         return;
@@ -687,7 +722,11 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         out.push_back(std::move(t));
         return;
     }
-    if (g->style.display == Display::InlineBlock || g->style.display == Display::Block ||
+    // Give an inline disclosure a stable box for its generated summary,
+    // whose pointer target remains the owning details element.
+    const bool inline_disclosure = g->style.display == Display::Inline && g->is_element("details") &&
+        flow_children(g).front()->anonymous;
+    if (inline_disclosure || g->style.display == Display::InlineBlock || g->style.display == Display::Block ||
         g->style.display == Display::Flex || g->style.display == Display::Grid) {
         layout_node(g, content_w, -1, true);
         Token t;
@@ -712,7 +751,7 @@ void LayoutEngine::build_tokens(Node* g, std::vector<Token>& out, float content_
         out.push_back(std::move(t));
         return;
     }
-    for (auto* c : g->children) build_tokens(c, out, content_w, box_parent);
+    for (auto* c : flow_children(g)) build_tokens(c, out, content_w, box_parent);
 }
 
 float LayoutEngine::layout_inline_group(Node* parent, const std::vector<Node*>& group, float content_w,
@@ -872,8 +911,8 @@ const std::vector<Node*>& LayoutEngine::flex_items(Node* parent) {
         }
         text.clear();
     };
-    for (auto* child : parent->children) {
-        if (!child) continue;
+    for (auto* child : flow_children(parent)) {
+        if (!child || child->style.display_none) continue;
         if (child->is_text()) text.push_back(child);
         else if (child->is_element()) {
             flush();
@@ -1431,7 +1470,7 @@ void LayoutEngine::finish_stretches(Node* node){
 float LayoutEngine::layout_grid(Node* n, float content_w, float hspec, float* intrinsic_height) {
     const auto& st = n->style;
     std::vector<Node*> items, absolutes;
-    for (auto* c : n->children) {
+    for (auto* c : flow_children(n)) {
         if (!c || !c->is_element() || c->style.display == Display::None) continue;
         if (c->style.position == Position::Absolute || c->style.position == Position::Fixed) {
             absolutes.push_back(c);
@@ -1570,7 +1609,7 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
         if (cols <= 0 || n->style.grid_columns[0].kind == TrackKind::AutoFit) cols = 1;
         float maxw = 0;
         int count = 0;
-        for (auto* c : n->children) {
+        for (auto* c : flow_children(n)) {
             if (!c || !c->is_element() || c->style.display == Display::None) continue;
             maxw = std::max(maxw, intrinsic_outer_width(c, basis, depth + 1));
             count++;
@@ -1594,7 +1633,7 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
     }
     float line = 0, maxw = 0;
     std::function<void(Node*)> walk = [&](Node* c) {
-        if (!c || depth > 30) return;
+        if (!c || c->style.display_none || depth > 30) return;
         if (c->is_text()) {
             line += fonts.text_width(collapse_text(c->data, c->style), c->style);
             return;
@@ -1619,7 +1658,7 @@ float LayoutEngine::intrinsic_content_width(Node* n, float basis, int depth) {
         line = 0;
         maxw = std::max(maxw, intrinsic_outer_width(c, basis, depth + 1));
     };
-    for (auto* c : n->children) walk(c);
+    for (auto* c : flow_children(n)) walk(c);
     maxw = std::max(maxw, line);
     return maxw;
 }

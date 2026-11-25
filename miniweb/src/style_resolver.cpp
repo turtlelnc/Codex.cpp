@@ -1332,11 +1332,15 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         ua_ready = true;
     }
 
-    std::function<void(Node*, Node*)> resolve = [&](Node* node, Node* parent) {
+    std::function<void(Node*, Node*, bool)> resolve = [&](Node* node, Node* parent, bool collapsed) {
         if (!node) return;
         if (!node->is_element()) {
             if (parent) node->style = parent->style;
-            for (auto* c : node->children) resolve(c, node);
+            if (collapsed) {
+                node->style.display = Display::None;
+                node->style.display_none = true;
+            }
+            for (auto* c : node->children) resolve(c, node, false);
             return;
         }
         const ComputedStyle* parent_style = parent ? &parent->style : nullptr;
@@ -1441,7 +1445,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         }
 
         for (auto& side : st.border) if (side.current_color) side.color = st.color;
-        if (node->has_attr("hidden")) st.display = Display::None;
+        if (collapsed || node->has_attr("hidden")) st.display = Display::None;
         // Positioned boxes and flex/grid items blockify inline outer display.
         // Normalize before descendants resolve styles/containing blocks.
         const bool blockified=st.position==Position::Absolute||st.position==Position::Fixed||
@@ -1450,8 +1454,14 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         st.display_none = st.display == Display::None;
 
         node->style = st;
-        for (auto* c : node->children) resolve(c, node);
+        const bool closed_details = node->is_element("details") && !node->has_attr("open");
+        bool found_summary = false;
+        for (auto* child : node->children) {
+            const bool summary = closed_details && !found_summary && child->is_element("summary");
+            found_summary |= summary;
+            resolve(child, node, closed_details && !summary);
+        }
     };
 
-    resolve(doc.root, nullptr);
+    resolve(doc.root, nullptr, false);
 }
