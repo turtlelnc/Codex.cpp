@@ -1012,6 +1012,7 @@ struct App {
     next.root = workspace.root;
     next.carry_reasoning = options.carry_reasoning;
     next.context_window = options.context_window;
+    next.max_steps = options.max_steps;
     next.output_reserve = options.output_reserve;
     std::map<std::string, std::string> keys;
     display_model.clear();
@@ -1048,6 +1049,7 @@ struct App {
                                      "--provider",      options.provider, "--model",
                                      options.model};
     if(suggestion_mode)args.insert(args.end(),{"--no-tools","--max-steps","1"});
+    else args.insert(args.end(), {"--max-steps", options.max_steps ? std::to_string(*options.max_steps) : "unlimited"});
     if(!session_directory.empty())args.insert(args.end(),{"--session-dir",session_directory.u8string()});
     if (web_isolated_plugin && !side_mode && !suggestion_mode) {
       const auto& [manifest, fingerprint] = *web_isolated_plugin;

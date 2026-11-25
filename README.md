@@ -316,6 +316,8 @@ TUI 中 `/web` 启动本机 WebUI 并打开浏览器，`/web start` 只显示地
 ./codex-cpp web --context-window 131072 --output-reserve 8192
 ```
 
+每轮 Agent 默认最多运行 64 步，可用 `--max-steps 1` 到 `--max-steps 512` 设置，或通过 `--max-steps unlimited` 取消总步数上限。例如 `./codex-cpp --max-steps unlimited "实现并验证这个功能"`。本地 WebUI 可用 `./codex-cpp web --max-steps unlimited` 把同一选项传给 Agent。停止操作、单次超时、权限审批和提供商额度照常生效。
+
 请按当前模型的实际窗口配置 `--context-window`，或设置 `CODEX_CPP_CONTEXT_WINDOW`。未配置时保守使用 32768；输出预留默认 `min(4096, window/8)`，可用 `--output-reserve` 或 `CODEX_CPP_OUTPUT_RESERVE` 修改。切换到窗口更小的模型时，也应调整部署预算。本版不根据模型名称猜测窗口，也不额外请求模型目录来推断它。
 
 每次请求前按实际输入、系统提示词和工具定义估算 token，扣除输出预留及窗口的 10% 安全余量，再决定是否压缩。ASCII 约按每 3 字节一个 token、非 ASCII 每字节一个 token 保守估算，每张内联图片暂计 4096；**这不是精确 tokenizer，也不能保证匹配所有模型的图片计费**。输出预留用于输入预算，不强制更改现有提供商的输出上限参数，以保留不同 API 的兼容性。

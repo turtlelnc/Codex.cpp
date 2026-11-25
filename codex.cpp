@@ -884,7 +884,7 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_frontend.inc"
 // ---------- CLI ----------
 struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool web_plugin_approval = false;bool list_sessions = false;
-bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;int max_steps = 64;
+bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;std::optional<uint64_t> max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
 size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
@@ -949,7 +949,7 @@ Agent options:
   --output-reserve N            reserved output tokens (default min(4096, window/8))
   --design                      enable Design instructions and review
   --no-tools                    discussion-only mode; reject tool calls
-  --max-steps N                 agent step limit (default: 64)
+  --max-steps N|unlimited       per-turn agent step limit (default: 64)
   --isolated-plugin ABSOLUTE_LIBRARY  enable the isolated read-only plugin tool
   --mcp-config PATH             trusted MCP stdio server configuration JSON
   --image PATH                  attach an image to the next prompt (repeatable)
@@ -1003,8 +1003,18 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   else if(v == "danger-full-access")o.policy.sandbox = SandboxMode::DangerFullAccess;else{err = "invalid --sandbox: " + v;return std::nullopt;}continue; }
   if(a=="--carry-reasoning"){if(i+1>=argc){err="--carry-reasoning requires auto|always";return {};}std::string value=argv[++i];if(value!="auto"&&value!="always"){err="--carry-reasoning requires auto|always";return {};}o.carry_reasoning=value=="always";continue;}
   if(a=="--context-window"||a=="--output-reserve"){try{if(i+1>=argc)throw std::runtime_error("Missing context budget value");const auto n=ContextBudget::number(argv[++i]);if(a=="--context-window"){o.context_window=n;explicit_window=true;}else{o.output_reserve=n;explicit_reserve=true;}}catch(const std::exception& e){err=e.what();return {};}continue;}
-  if(a == "--max-steps" && i + 1 < argc){try{o.max_steps = std::stoi(argv[++i]);}catch(...){err = "invalid --max-steps";return std::nullopt;}
-  if(o.max_steps < 1 || o.max_steps > 512){err = "--max-steps must be 1..512";return std::nullopt;}continue; } o.prompt.push_back(a);
+  if(a == "--max-steps"){
+    if(i + 1 >= argc){err = "--max-steps requires an integer from 1 to 512 or unlimited";return std::nullopt;}
+    const std::string value = argv[++i];
+    if(value == "unlimited"){o.max_steps.reset();continue;}
+    try{
+      size_t consumed = 0;
+      const int limit = std::stoi(value, &consumed);
+      if(consumed == value.size() && limit >= 1 && limit <= 512){o.max_steps = limit;continue;}
+    }catch(const std::exception&){}
+    err = "--max-steps must be an integer from 1 to 512 or unlimited";
+    return std::nullopt;
+  } o.prompt.push_back(a);
 }
 try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::string model_input_item(const std::string& raw){auto j=parse_json(raw);if(j&&json_string_field(raw,"type")==std::optional<std::string>("codex_tool_image")){j->fields.erase("type");j->fields.erase("call_id");j->fields["role"]=Json{Json::String,"user"};return json_dump(*j);}return raw;}
@@ -1321,7 +1331,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   if(!continuing && !session.record_item(user_item)){err="could not save user message";if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n'; return 3; }
   plugins.event("turn.started",opt.root);session.emit(EventKind::TurnStarted,"{\"task\":\"" + json_escape(user_prompt)+ "\",\"sandbox\":\"" + sandbox_name(turn_policy.sandbox)+ "\"}");
   auto apply_steering=[&](){bool added=false;if(frontend)for(const auto& item:frontend->steering){if(!session.record_item("{\"role\":\"user\",\"content\":\""+json_escape(item.second)+"\"}"))return -1;session.append_transcript("\n[user steering]\n"+item.second+"\n");added=true;}if(frontend)frontend->steering.clear();if(tui)for(const auto& message:tui->take_steering()){if(!session.record_item("{\"role\":\"user\",\"content\":\""+json_escape(message)+"\"}")){err="could not save steering message";return -1;}session.append_transcript("\n[user steering]\n"+message+"\n");tui->add_user(message);added=true;}return added?1:0;};
-  pending_images.clear();for(int step = 1;step <= opt.max_steps;++step){
+  pending_images.clear();for(uint64_t step = 1; !opt.max_steps || step <= *opt.max_steps; ++step){
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
 #endif
