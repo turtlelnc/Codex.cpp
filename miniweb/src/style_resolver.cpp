@@ -1436,24 +1436,32 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         for (auto& it : items) {
             if (!it.backdrop && util::starts_with(it.name, "--")) st.custom_props[it.name] = util::trim(it.value);
         }
-        for (int pass = 0; pass < 8; pass++) {
-            bool changed = false;
-            for (auto& kv : st.custom_props) {
-                std::string nv = substitute_vars(kv.second, st.custom_props);
-                if (nv != kv.second) { kv.second = nv; changed = true; }
+        auto resolve_custom_properties = [](auto& properties) {
+            for (int pass = 0; pass < 8; ++pass) {
+                bool changed = false;
+                for (auto& kv : properties) {
+                    std::string value = substitute_vars(kv.second, properties);
+                    if (value != kv.second) { kv.second = std::move(value); changed = true; }
+                }
+                if (!changed) break;
             }
-            if (!changed) break;
-        }
+        };
+        resolve_custom_properties(st.custom_props);
 
         std::optional<ComputedStyle> backdrop;
         if (node->modal_dialog) {
             backdrop.emplace();
             backdrop->background = Color{0, 0, 0, 26};
+            backdrop->custom_props = st.custom_props;
+            for (const auto& it : items)
+                if (it.backdrop && util::starts_with(it.name, "--"))
+                    backdrop->custom_props[it.name] = util::trim(it.value);
+            resolve_custom_properties(backdrop->custom_props);
         }
         for (auto& it : items) {
             if (it.backdrop) {
                 if (it.name == "background" || it.name == "background-color" || it.name == "opacity")
-                    apply_property(*backdrop, it.name, substitute_vars(it.value, st.custom_props), nullptr, node);
+                    apply_property(*backdrop, it.name, substitute_vars(it.value, backdrop->custom_props), nullptr, node);
                 continue;
             }
             if (util::starts_with(it.name, "--")) continue;

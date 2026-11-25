@@ -68,6 +68,7 @@ struct Node {
     Node* remove_child(Node* child);
     Node* replace_child(Node* new_child, Node* old_child);
     void detach();
+    void set_modal(bool active);
     void remove_all_children();
 
     Node* first_element_child() const;

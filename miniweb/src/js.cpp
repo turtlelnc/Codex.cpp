@@ -496,15 +496,15 @@ JSValue js_form_disabled(JSContext* ctx, JSValueConst, int argc, JSValueConst* a
     const auto* node = argc ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
     return JS_NewBool(ctx, node && node->form_disabled());
 }
-JSValue js_set_modal(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
-    auto* node = argc >= 2 ? node_of(ctx, arg_i32(ctx, argv[0])) : nullptr;
-    if (!node || !node->is_element("dialog")) return JS_UNDEFINED;
-    auto& dialogs = node->doc->modal_dialogs;
-    dialogs.erase(std::remove(dialogs.begin(), dialogs.end(), node), dialogs.end());
-    node->modal_dialog = JS_ToBool(ctx, argv[1]) > 0;
-    if (node->modal_dialog) dialogs.push_back(node);
-    ++node->doc->revision;
-    return JS_UNDEFINED;
+JSValue js_modal_dialog(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    auto* b = bridge(ctx);
+    if (!b || !b->doc) return JS_UNDEFINED;
+    const auto& dialogs = b->doc->modal_dialogs;
+    if (!argc) return JS_NewInt32(ctx, dialogs.empty() ? 0 : dialogs.back()->id);
+    auto* node = node_of(ctx, arg_i32(ctx, argv[0]));
+    if (!node || !node->is_element("dialog")) return JS_FALSE;
+    if (argc > 1) node->set_modal(JS_ToBool(ctx, argv[1]) > 0);
+    return JS_NewBool(ctx, node->modal_dialog);
 }
 JSValue js_focus_control(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto* b = bridge(ctx); if (!b) return JS_UNDEFINED;
@@ -921,7 +921,7 @@ const JSCFunctionListEntry kMwFuncs[] = {
     bridge_function("resizeMetrics", 1, js_resize_metrics),
     bridge_function("formDisabled", 1, js_form_disabled),
     bridge_function("focusControl", 1, js_focus_control),
-    bridge_function("setModal", 2, js_set_modal),
+    bridge_function("modalDialog", 2, js_modal_dialog),
     bridge_function("hasAttr", 2, js_has_attr),
     bridge_function("setAttr", 3, js_set_attr),
     bridge_function("removeAttr", 2, js_remove_attr),
