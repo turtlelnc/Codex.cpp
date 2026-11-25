@@ -2310,7 +2310,7 @@ int main(int argc, char **argv) {
         continue;
       }
       require(std::set<std::string>{"--root", "--provider", "--model", "--base-url", "--api", "--api-key-env",
-                                    "--no-api-key", "--reasoning", "--context-window", "--output-reserve"}
+                                    "--no-api-key", "--reasoning", "--context-window", "--output-reserve", "--max-steps"}
                   .count(arg),
               "Unsupported web option; execution policy is chosen in the page");
       if (arg != "--root")
