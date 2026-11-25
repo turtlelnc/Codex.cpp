@@ -148,6 +148,7 @@ struct Document {
 
 std::string serialize_html(const Node* node, bool outer = true);
 Overflow overflow_axis(const Node* node, bool horizontal);
+bool escapes_modal_clip(const Node* parent, const Node* child);
 RectF overflow_clip(const Node* node, const RectF& box);
 void update_scroll_layout(Document& doc);
 bool set_scroll(Node* node, float x, float y);

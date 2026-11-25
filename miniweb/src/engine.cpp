@@ -318,15 +318,17 @@ Node* Engine::hit_test(Node* n, float ox, float oy, float px, float py) {
     RectF box=n->viewport_rect();
     // A clipped descendant cannot paint or receive clicks over the border.
     // The border itself still belongs to this element.
-    if(n->style.overflow!=Overflow::Visible&&!overflow_clip(n,box).contains(px,py))
-        return n->style.visibility==Visibility::Visible&&box.contains(px,py)?n:nullptr;
+    const bool clipped = n->style.overflow != Overflow::Visible && !overflow_clip(n, box).contains(px, py);
+    if (clipped && !n->modal_dialog)
+        return n->style.visibility == Visibility::Visible && box.contains(px, py) ? n : nullptr;
     float cx = box.x + L.content_x - n->scroll_x;
     float cy = box.y + L.content_y - n->scroll_y;
     const auto ordered=paint_order(n);
     for (auto it = ordered.rbegin(); it != ordered.rend(); ++it) {
-        if (!(*it)->modal_dialog)
+        if (!(*it)->modal_dialog && (!clipped || escapes_modal_clip(n, *it)))
             if (Node* hit = hit_test(*it, cx, cy, px, py)) return hit;
     }
+    if (clipped) return n->style.visibility == Visibility::Visible && box.contains(px, py) ? n : nullptr;
     for (auto& line : L.lines) {
         for (auto& item : line.items) {
             if (item.w <= 0 || item.h <= 0 || !item.style || item.style->visibility != Visibility::Visible) continue;

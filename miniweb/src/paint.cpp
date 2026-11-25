@@ -186,7 +186,14 @@ void paint_node(Canvas& canvas, Node* n, FontManager& fonts, ImageCache* images,
         }
     }
 
-    if (!n->is_element("textarea")) for (auto* child : paint_order(n)) paint_node(canvas, child, fonts, images, cx, cy, op);
+    if (!n->is_element("textarea")) {
+        for (auto* child : paint_order(n)) {
+            const bool ignores_clip = clip && escapes_modal_clip(n, child);
+            if (ignores_clip) canvas.pop_clip();
+            paint_node(canvas, child, fonts, images, cx, cy, op);
+            if (ignores_clip) canvas.push_clip(overflow_clip(n, box));
+        }
+    }
 
     if (visible && n->is_element("li") && n->style.list_marker) {
         Node* p = n->parent;

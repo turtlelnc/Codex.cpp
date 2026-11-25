@@ -3,7 +3,7 @@
 <style>
 html, body { margin: 0; background: white; }
 #behind { position: fixed; left: 10px; top: 10px; width: 260px; height: 80px; z-index: 9999; background: #ff0000; }
-#dialog { position: fixed; inset: auto; left: 80px; top: 34px; transform: none; width: 120px; height: 60px; margin: 0; padding: 0; border: 0; background: blue; }
+#dialog { position: fixed; inset: auto; left: 80px; top: 34px; transform: none; overflow: hidden; width: 120px; height: 60px; margin: 0; padding: 0; border: 0; background: blue; }
 #dialog::backdrop { background-color: var(--shade); --shade: var(--tint); --tint: rgba(0, 0, 0, .4); }
 #close { position: absolute; left: 12px; top: 12px; }
 #fixed-close { position: fixed; left: 220px; top: 46px; background: lime; }

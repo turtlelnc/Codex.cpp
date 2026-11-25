@@ -546,6 +546,10 @@ bool viewport_fixed(const Node* n){
 float client_size(const Node* n,bool x){const auto& l=n->layout;return std::max(0.0f,x?l.border.w-l.border_left-l.border_right:l.border.h-l.border_top-l.border_bottom);}
 bool scrollable(const Node* n,bool x){auto o=overflow_axis(n,x);return o==Overflow::Auto||o==Overflow::Scroll||o==Overflow::Hidden;}
 }
+bool escapes_modal_clip(const Node* parent, const Node* child) {
+    return parent->modal_dialog && viewport_fixed(child);
+}
+
 RectF Node::viewport_rect() const {
     if(!layout.has_box)return {};
     if(doc&&visual_cache_revision==doc->visual_revision)return visual_cache;
