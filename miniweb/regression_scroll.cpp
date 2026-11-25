@@ -42,6 +42,30 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  check(flow.scroll(50,50,0,200)&&flow.document()->get_element_by_id("late")->viewport_rect().y==100,"Sticky remains below the viewport before threshold");
  check(flow.scroll(50,50,0,100)&&flow.document()->get_element_by_id("late")->viewport_rect().y==0&&flow.click(5,5)&&flow.document()->body->attr("data-click")=="late","Sticky activates at its normal-flow threshold");
  check(flow.scroll(50,50,0,150)&&flow.document()->get_element_by_id("late")->viewport_rect().y==0,"Direct scroll-container child uses scrolling-content bounds");
+ Engine sidebar(640,800);sidebar.set_wait_ms(0);
+ check(sidebar.load((directory/"sidebar-layout.html").u8string(),&error)&&sidebar.render(false),"Sidebar fixture");
+ auto sidebar_node=[&](const char* id){return sidebar.document()->get_element_by_id(id);};
+ check(sidebar_node("viewport")->viewport_rect().h==160,"Dynamic viewport units");
+ check(sidebar_node("sidebar")->viewport_rect().h==300&&sidebar_node("header")->viewport_rect().h==40&&
+       sidebar_node("list")->viewport_rect().h==230,
+       "Definite Grid track constrains the flex scroller");
+ check(sidebar_node("fractional-scroll")->viewport_rect().h==100,"Fractional Grid row retains intrinsic height");
+ check(sidebar_node("auto-track")->viewport_rect().h==70,"Fixed and auto Grid tracks share definite height");
+ check(sidebar_node("settings")->viewport_rect().x==100,"Flex auto margin takes remaining width");
+ check(sidebar_node("content-minimum")->viewport_rect().h==200&&
+       sidebar_node("content-remainder")->viewport_rect().h==100,"Column Flex preserves automatic minimum heights");
+ check(sidebar_node("scroll-flex")->viewport_rect().h==150&&sidebar_node("zero-flex")->viewport_rect().h==150,
+       "Scrollable and explicit zero-minimum Flex items may shrink");
+ check(sidebar_node("capped-flex")->viewport_rect().h==120&&sidebar_node("capped-remainder")->viewport_rect().h==180,
+       "Column Flex redistributes space after an item reaches its maximum");
+ check(sidebar_node("empty-nested-flex")->viewport_rect().h==30&&
+       sidebar_node("empty-nested-grid")->viewport_rect().h==30,"Empty nested containers shrink below specified height");
+ check(sidebar_node("filled-nested-flex")->viewport_rect().h==35&&
+       sidebar_node("filled-nested-grid")->viewport_rect().h==35,"Nested containers retain their intrinsic minimum");
+ check(sidebar.scroll(20,220,0,100)&&sidebar.render(false)&&sidebar_node("list")->scroll_y==100,
+       "Sidebar wheel scroll stays in the list");
+ check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,
+       "Sidebar footer stays in place while scrolling");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }
