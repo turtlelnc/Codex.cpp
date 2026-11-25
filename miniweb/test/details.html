@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+body { margin: 0; }
+details, summary { width: 240px; }
+summary, button { height: 30px; }
+#content { height: 80px; }
+#footer { height: 20px; }
+</style>
+<details id="files">
+  <summary id="summary"><span id="label">Files</span><button id="embedded">Action</button></summary>
+  hidden text
+  <div id="content"><button id="file">File</button></div>
+  <summary id="extra">Second summary</summary>
+</details>
+<button id="footer">Settings</button>
+<script>
+const files = document.getElementById('files');
+files.addEventListener('toggle', e => document.body.dataset.toggle = e.oldState + ':' + e.newState);
+document.getElementById('summary').addEventListener('click', e => {
+  if (document.body.hasAttribute('data-cancel')) e.preventDefault();
+});
+document.getElementById('footer').addEventListener('click', () => files.open = true);
+</script>
+<details id="fallback" style="padding-bottom:20px">
+  <div id="fallback-content" style="height:60px"><button id="fallback-file">Fallback file</button></div>
+</details>
+<div>
+  <details id="inline-fallback" style="display:inline;width:auto">
+    <div id="inline-content" style="height:40px">Inline disclosure content</div>
+  </details><button id="after-inline">After inline</button>
+</div>
+
+<script>
+const title = document.getElementById('summary');
+document.body.dataset.keys = '';
+for (const name of ['keydown', 'keyup', 'click']) {
+  title.addEventListener(name, event => {
+    document.body.dataset.keys += name + ' ';
+    if (name === 'keyup' && document.body.hasAttribute('data-cancel-keyup')) event.preventDefault();
+  });
+}
+</script>

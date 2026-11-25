@@ -181,16 +181,13 @@ Length parse_length_value(const std::string& input, float font_size, float root_
     else if (util::ends_with(s, "em")) { s = s.substr(0, s.size() - 2); unit = Length::Em; }
     else if (util::ends_with(s, "%")) { s = s.substr(0, s.size() - 1); unit = Length::Percent; }
     else if (util::ends_with(s, "pt")) { s = s.substr(0, s.size() - 2); mul = 96.0f / 72.0f; }
-    else if (util::ends_with(s, "vh")) {
-        s = s.substr(0, s.size() - 2);
-        float vh = std::strtof(util::trim(s).c_str(), nullptr);
-        if (ok) *ok = true;
-        return Length::px(vh * g_viewport_h / 100.0f);
-    } else if (util::ends_with(s, "vw")) {
-        s = s.substr(0, s.size() - 2);
-        float vw = std::strtof(util::trim(s).c_str(), nullptr);
-        if (ok) *ok = true;
-        return Length::px(vw * g_viewport_w / 100.0f);
+    else if (util::ends_with(s, "vh") || util::ends_with(s, "vw")) {
+        const bool vertical = s.back() == 'h';
+        const bool viewport_variant = s.size() > 2 &&
+            (s[s.size()-3] == 'd' || s[s.size()-3] == 's' || s[s.size()-3] == 'l');
+        s.resize(s.size() - (viewport_variant ? 3 : 2));
+        // The preview has a fixed viewport without retractable browser chrome.
+        mul = (vertical ? g_viewport_h : g_viewport_w) / 100.0f;
     } else if (util::ends_with(s, "vmin") || util::ends_with(s, "vmax")) {
         bool is_max = util::ends_with(s, "vmax");
         s = s.substr(0, s.size() - 4);
@@ -480,7 +477,8 @@ GridTrack parse_grid_track(const std::string& raw, float fs, bool auto_fit_conte
             GridTrack tr;
             tr.kind = TrackKind::Fr;
             tr.value = (float)std::atof(hi.substr(0, hi.size() - 2).c_str());
-            if (tr.value <= 0) tr.value = 1;
+            if (!std::isfinite(tr.value) || tr.value < 0) tr.value = 1;
+            tr.minimum = parse_length_value(lo, fs, 16, true);
             return tr;
         }
         return parse_grid_track(lo, fs);
@@ -489,7 +487,7 @@ GridTrack parse_grid_track(const std::string& raw, float fs, bool auto_fit_conte
         GridTrack tr;
         tr.kind = TrackKind::Fr;
         tr.value = (float)std::atof(t.substr(0, t.size() - 2).c_str());
-        if (tr.value <= 0) tr.value = 1;
+        if (!std::isfinite(tr.value) || tr.value < 0) tr.value = 1;
         return tr;
     }
     if (t == "auto" || t == "min-content" || t == "max-content" || util::starts_with(t, "fit-content(")) {
@@ -1335,11 +1333,15 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         ua_ready = true;
     }
 
-    std::function<void(Node*, Node*)> resolve = [&](Node* node, Node* parent) {
+    std::function<void(Node*, Node*, bool)> resolve = [&](Node* node, Node* parent, bool collapsed) {
         if (!node) return;
         if (!node->is_element()) {
             if (parent) node->style = parent->style;
-            for (auto* c : node->children) resolve(c, node);
+            if (collapsed) {
+                node->style.display = Display::None;
+                node->style.display_none = true;
+            }
+            for (auto* c : node->children) resolve(c, node, false);
             return;
         }
         const ComputedStyle* parent_style = parent ? &parent->style : nullptr;
@@ -1444,7 +1446,7 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         }
 
         for (auto& side : st.border) if (side.current_color) side.color = st.color;
-        if (node->has_attr("hidden")) st.display = Display::None;
+        if (collapsed || node->has_attr("hidden")) st.display = Display::None;
         // Positioned boxes and flex/grid items blockify inline outer display.
         // Normalize before descendants resolve styles/containing blocks.
         const bool blockified=st.position==Position::Absolute||st.position==Position::Fixed||
@@ -1453,8 +1455,14 @@ void apply_cascade(Document& doc, const std::vector<Stylesheet>& sheets, int vie
         st.display_none = st.display == Display::None;
 
         node->style = st;
-        for (auto* c : node->children) resolve(c, node);
+        const bool closed_details = node->is_element("details") && !node->has_attr("open");
+        bool found_summary = false;
+        for (auto* child : node->children) {
+            const bool summary = closed_details && !found_summary && child->is_element("summary");
+            found_summary |= summary;
+            resolve(child, node, closed_details && !summary);
+        }
     };
 
-    resolve(doc.root, nullptr);
+    resolve(doc.root, nullptr, false);
 }

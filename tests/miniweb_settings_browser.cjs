@@ -10,7 +10,7 @@ const fixture = `<script>
 window.fetch = async function(url, options) {
   const replies = {
     status: {workspace: '/offline/project'},
-    snapshot: {timeline: [{k: 'user', text: 'Review settings'}], events: [], messages: [], sessions: [], models: []},
+    snapshot: {timeline: [{k: 'user', text: 'Review settings'}], events: [], messages: [], sessions: Array.from({length: 60}, (_, i) => ({id: String(i), title: "Session " + (i + 1)})), models: []},
     files: {files: []}
   };
   let reply;
@@ -31,7 +31,8 @@ function stageWeb(root, scripts) {
   const index = path.join(root, 'index.html');
   const html = fs.readFileSync(index, 'utf8')
     .replace(/(src|href)="\/(?=[^"])/g, '$1="')
-    .replace('<head>', '<head>' + scripts);
+    .replace('<head>', '<head>' + scripts)
+    .replace('<summary>项目文件</summary>', '<summary id="project-files-summary">项目文件</summary>');
   fs.writeFileSync(index, html);
   return index;
 }
@@ -55,8 +56,21 @@ module.exports = async function compareSettings(browser, probe, binary) {
     await page.locator('#workspace-settings-close').click();
     assert.equal(await page.evaluate(() => document.activeElement.id), 'settings-button');
 
+    await page.getByRole('button', {name: 'Session 60', exact: true}).waitFor();
+    const browserSettings = await page.locator('#settings-button').boundingBox();
+    const browserList = await page.locator('#projects').boundingBox();
+    await page.locator('#project-files-summary').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#refresh-files').isVisible(), true);
+    assert((await page.locator('#projects').boundingBox()).height < browserList.height);
+    assert.deepEqual(await page.locator('#settings-button').boundingBox(), browserSettings);
+    await page.keyboard.press('Space');
+    assert.equal(await page.locator('#refresh-files').isVisible(), false);
+    assert.deepEqual(await page.locator('#projects').boundingBox(), browserList);
+
     const ids = ['settings-button', 'workspace-settings', 'settings-model',
-      'settings-panel-general', 'settings-panel-model', 'workspace-settings-close', 'notice'];
+      'settings-panel-general', 'settings-panel-model', 'workspace-settings-close', 'notice',
+      'project-files-summary', 'refresh-files', 'projects'];
     const actions = [];
     function state() {
       const run = spawnSync(probe, ['--geometry', index, '1280', ids.join(','), actions.join(';')],
@@ -74,7 +88,15 @@ module.exports = async function compareSettings(browser, probe, binary) {
     const initial = state();
     assert.equal(initial['workspace-settings'][2], 0);
     assert.equal(initial.notice[3], 0, 'WebUI should initialize without an error banner');
-    const opened = click('settings-button', initial);
+    assert.equal(initial['refresh-files'][3], 0);
+    const filesOpen = click('project-files-summary', initial);
+    assert(filesOpen['refresh-files'][3] > 0);
+    assert(filesOpen.projects[3] < initial.projects[3]);
+    assert.deepEqual(filesOpen['settings-button'], initial['settings-button']);
+    const filesClosed = click('project-files-summary', filesOpen);
+    assert.equal(filesClosed['refresh-files'][3], 0);
+    assert.deepEqual(filesClosed.projects, initial.projects);
+    const opened = click('settings-button', filesClosed);
     assert(opened['settings-panel-general'][3] > 0);
     const model = click('settings-model', opened);
     assert(model['settings-panel-model'][3] > 0);

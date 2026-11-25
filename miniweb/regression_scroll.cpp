@@ -42,6 +42,90 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  check(flow.scroll(50,50,0,200)&&flow.document()->get_element_by_id("late")->viewport_rect().y==100,"Sticky remains below the viewport before threshold");
  check(flow.scroll(50,50,0,100)&&flow.document()->get_element_by_id("late")->viewport_rect().y==0&&flow.click(5,5)&&flow.document()->body->attr("data-click")=="late","Sticky activates at its normal-flow threshold");
  check(flow.scroll(50,50,0,150)&&flow.document()->get_element_by_id("late")->viewport_rect().y==0,"Direct scroll-container child uses scrolling-content bounds");
+ Engine sidebar(640,800);sidebar.set_wait_ms(0);
+ check(sidebar.load((directory/"sidebar-layout.html").u8string(),&error)&&sidebar.render(false),"Sidebar fixture");
+ auto sidebar_node=[&](const char* id){return sidebar.document()->get_element_by_id(id);};
+ check(sidebar_node("viewport")->viewport_rect().h==160,"Dynamic viewport units");
+ check(sidebar_node("sidebar")->viewport_rect().h==300&&sidebar_node("header")->viewport_rect().h==40&&
+       sidebar_node("list")->viewport_rect().h==230,
+       "Definite Grid track constrains the flex scroller");
+ check(sidebar_node("fractional-scroll")->viewport_rect().h==100,"Fractional Grid row retains intrinsic height");
+ check(sidebar_node("auto-track")->viewport_rect().h==70,"Fixed and auto Grid tracks share definite height");
+ check(sidebar_node("settings")->viewport_rect().x==100,"Flex auto margin takes remaining width");
+ check(sidebar_node("content-minimum")->viewport_rect().h==200&&
+       sidebar_node("content-remainder")->viewport_rect().h==100,"Column Flex preserves automatic minimum heights");
+ check(sidebar_node("scroll-flex")->viewport_rect().h==150&&sidebar_node("zero-flex")->viewport_rect().h==150,
+       "Scrollable and explicit zero-minimum Flex items may shrink");
+ check(sidebar_node("capped-flex")->viewport_rect().h==120&&sidebar_node("capped-remainder")->viewport_rect().h==180,
+       "Column Flex redistributes space after an item reaches its maximum");
+ check(sidebar_node("empty-nested-flex")->viewport_rect().h==30&&
+       sidebar_node("empty-nested-grid")->viewport_rect().h==30,"Empty nested containers shrink below specified height");
+ check(sidebar_node("filled-nested-flex")->viewport_rect().h==35&&
+       sidebar_node("filled-nested-grid")->viewport_rect().h==35,"Nested containers retain their intrinsic minimum");
+ check(sidebar.scroll(20,220,0,100)&&sidebar.render(false)&&sidebar_node("list")->scroll_y==100,
+       "Sidebar wheel scroll stays in the list");
+ check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,
+       "Sidebar footer stays in place while scrolling");
+ Engine app(640,800);app.set_wait_ms(0);
+ check(app.load((directory/"app-layout.html").u8string(),&error)&&app.render(false),"App layout fixture");
+ auto app_node=[&](const char* id){return app.document()->get_element_by_id(id);};
+ check(std::abs(app_node("first")->viewport_rect().h-106.667f)<.1f&&
+       app_node("footer")->viewport_rect().y==376,"Fractional tracks share definite height");
+ check(app_node("quarter")->viewport_rect().h==25,"Subunit fractions leave unused space");
+ check(app_node("bounded-track")->viewport_rect().h==70,"Explicit Grid track minimum");
+ check(app_node("top")->viewport_rect().y==490&&app_node("bottom")->viewport_rect().y==590,
+       "Column auto margin takes precedence over justification");
+ check(app.scroll(30,90,0,200)&&app.render(false)&&app_node("first")->scroll_y==200&&
+       app_node("sticky")->viewport_rect().y==40&&app_node("footer")->viewport_rect().y==376,
+       "Fractional Grid scroller keeps its sticky header and footer in place");
+ Engine details(640,480);details.set_wait_ms(0);
+ check(details.load((directory/"details.html").u8string(),&error)&&details.render(false),"Details fixture");
+ auto node_in_details=[&](const char* id){return details.document()->get_element_by_id(id);};
+ auto* disclosure=node_in_details("files");
+ auto* summary=node_in_details("summary");
+ auto* detail_body=details.document()->body;
+ check(disclosure->viewport_rect().h==30&&!node_in_details("file")->layout.has_box&&
+       !node_in_details("extra")->layout.has_box,"Closed details only lays out its first summary");
+ check(details.key("Tab")&&details.document()->focused_id==summary->id&&details.key("Enter")&&
+       disclosure->has_attr("open")&&details.render(false)&&node_in_details("file")->layout.has_box,
+       "Tab and Enter expose details contents");
+ check(details.advance(1)&&detail_body->attr("data-toggle")=="closed:open","Details dispatches toggle");
+ detail_body->set_attr("data-keys","");
+ detail_body->set_attr("data-cancel-keyup","");
+ check(details.key(" ")&&disclosure->has_attr("open")&&detail_body->attr("data-keys")=="keydown keyup ",
+       "Canceled key release leaves disclosure open");
+ detail_body->remove_attr("data-cancel-keyup");
+ detail_body->set_attr("data-keys","");
+ check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false)&&
+       detail_body->attr("data-keys")=="keydown keyup click ","Space activates disclosure after key release");
+ detail_body->set_attr("data-cancel","");
+ check(details.click(10,10)&&!disclosure->has_attr("open"),"Canceled summary click preserves state");
+ detail_body->remove_attr("data-cancel");
+ const auto button=node_in_details("embedded")->viewport_rect();
+ check(details.click(button.x+5,button.y+5)&&!disclosure->has_attr("open"),"Nested button does not toggle details");
+ check(details.click(10,35)&&details.render(false)&&disclosure->has_attr("open")&&
+       node_in_details("footer")->viewport_rect().y>30,"Script-opened details reflows");
+ auto* fallback=node_in_details("fallback");
+ auto* fallback_content=node_in_details("fallback-content");
+ check(fallback->viewport_rect().h>20&&!fallback_content->layout.has_box&&!fallback->children.front()->is_element("summary"),
+       "Summaryless details show a layout-only label");
+ check(details.key("Tab")&&details.document()->focused_id==fallback->id&&details.key("Enter")&&
+       fallback->has_attr("open")&&fallback_content->layout.has_box,"Keyboard opens summaryless details");
+ check(details.key(" ")&&!fallback->has_attr("open"),"Keyboard closes summaryless details");
+ const auto fallback_box=fallback->viewport_rect();
+ check(details.click(fallback_box.x+5,fallback_box.y+fallback_box.h-2)&&!fallback->has_attr("open"),
+       "Clicking outside the fallback label does not activate it");
+ check(details.click(fallback_box.x+5,fallback_box.y+5)&&fallback->has_attr("open")&&
+       fallback_content->layout.has_box,"Fallback summary label responds to pointer input");
+ auto* inline_details=node_in_details("inline-fallback");
+ auto* inline_content=node_in_details("inline-content");
+ const auto inline_box=inline_details->viewport_rect();
+ check(inline_box.w>0&&inline_box.h>0&&!inline_content->layout.has_box,
+       "Inline summaryless details has a visible fallback label");
+ check(details.click(inline_box.x+3,inline_box.y+3)&&inline_details->has_attr("open")&&
+       inline_content->layout.has_box,"Inline fallback label responds to pointer input");
+ check(details.key(" ")&&!inline_details->has_attr("open")&&!inline_content->layout.has_box,
+       "Inline fallback label supports keyboard activation");
  if(report)std::cout<<"SCROLL_RESULT {\"target\":["<<r.x<<","<<r.y<<"],\"sticky\":["<<s.x<<","<<s.y<<"],\"extent\":[400,700],\"window\":400}\n";
  std::cerr<<"MiniWeb scroll regressions passed\n";
 }

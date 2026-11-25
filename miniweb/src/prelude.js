@@ -357,9 +357,19 @@
     }
     getAttributeNS(ns, n) { return this.getAttribute(n); }
     hasAttribute(n) { return !!N.hasAttr(this.__id, String(n)); }
-    setAttribute(n, v) { N.setAttr(this.__id, String(n), String(v)); }
+    setAttribute(n, v) {
+      n = String(n);
+      const opening = this.tagName === 'DETAILS' && n.toLowerCase() === 'open' && !this.open;
+      N.setAttr(this.__id, n, String(v));
+      if (opening) queueDetailsToggle(this, false);
+    }
     setAttributeNS(ns, n, v) { this.setAttribute(n, v); }
-    removeAttribute(n) { N.removeAttr(this.__id, String(n)); }
+    removeAttribute(n) {
+      n = String(n);
+      const closing = this.tagName === 'DETAILS' && n.toLowerCase() === 'open' && this.open;
+      N.removeAttr(this.__id, n);
+      if (closing) queueDetailsToggle(this, true);
+    }
     removeAttributeNS(ns, n) { this.removeAttribute(n); }
     toggleAttribute(n, force) {
       if (force === undefined) {
@@ -499,6 +509,8 @@
     set defaultChecked(v) { if(v)this.setAttribute('checked','');else this.removeAttribute('checked'); }
     get disabled() { return this.hasAttribute('disabled'); }
     set disabled(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); }
+    get open() { return this.hasAttribute('open'); }
+    set open(v) { this.toggleAttribute('open', !!v); }
     get hidden() { return this.getAttribute('hidden')==='until-found'?'until-found':this.hasAttribute('hidden'); }
     set hidden(v) { if(v)this.setAttribute('hidden',v==='until-found'?'until-found':'');else this.removeAttribute('hidden'); }
     get selected() { return this.hasAttribute('selected'); }
@@ -721,7 +733,7 @@
     });
   }
   var eventNames = ['click', 'dblclick', 'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout',
-                    'input', 'change', 'submit', 'reset', 'keydown', 'keyup', 'keypress', 'focus', 'blur',
+                    'input', 'change', 'submit', 'reset', 'keydown', 'keyup', 'keypress', 'focus', 'blur', 'toggle',
                     'load', 'error', 'scroll', 'wheel', 'touchstart', 'touchend', 'touchmove', 'pointerdown',
                     'pointerup', 'pointermove', 'animationend', 'transitionend'];
   for (var ei = 0; ei < eventNames.length; ei++) defineEventProp(Element.prototype, eventNames[ei]);
@@ -1558,8 +1570,31 @@
       if (p.hasAttribute('hidden') || getComputedStyle(p).display === 'none') return false;
     return !!(n && n.isConnected && getComputedStyle(n).visibility !== 'hidden');
   }
+  function firstSummary(details) {
+    return details.children.find(child => child.tagName === 'SUMMARY');
+  }
+  function fallbackDisclosure(node) {
+    return node.tagName === 'DETAILS' && !firstSummary(node);
+  }
+  function detailsFor(summary) {
+    const details = summary && summary.parentElement;
+    return details && details.tagName === 'DETAILS' &&
+      firstSummary(details) === summary ? details : null;
+  }
+  const pendingDetailsToggles = new WeakMap();
+  function queueDetailsToggle(details, wasOpen) {
+    if (pendingDetailsToggles.has(details)) return;
+    pendingDetailsToggles.set(details, wasOpen);
+    setTimeout(() => {
+      const event = new Event('toggle');
+      event.oldState = pendingDetailsToggles.get(details) ? 'open' : 'closed';
+      event.newState = details.open ? 'open' : 'closed';
+      pendingDetailsToggles.delete(details);
+      details.dispatchEvent(event);
+    }, 0);
+  }
   function focusable(n) {
-    return enabled(n) && inModal(n) && n.type !== 'hidden' && (n === currentModal() || /^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
+    return enabled(n) && inModal(n) && n.type !== 'hidden' && (n === currentModal() || (n.tagName === 'SUMMARY' && detailsFor(n)) || fallbackDisclosure(n) || /^(INPUT|TEXTAREA|BUTTON|SELECT)$/.test(n.tagName) || n.hasAttribute('tabindex') || (n.tagName === 'A' && n.hasAttribute('href')));
   }
   function forgetDetachedFocus() {
     if(activeControl && N.focusControl()!==activeControl.__id) {
@@ -1647,7 +1682,7 @@
   function activatable(n) {
     return !!n && !formDisabled(n);
   }
-  function activate(n, x, y, pointer) {
+  function activate(n, x, y, pointer, fallbackSummary) {
     if (pointer && !inModal(n)) return false;
     if (!activatable(n) || (pointer && !enabled(n))) return false;
     if (pointer) {
@@ -1669,6 +1704,11 @@
     if (check) control.checked = !previous;
     var accepted = n.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
     if (!accepted) { if (check) control.checked = previous; return true; }
+    const summary = n.closest('summary');
+    const details = detailsFor(summary);
+    const interactive = details && n.closest('button,input,textarea,select,a[href],label');
+    if (details && !(interactive && summary.contains(interactive))) details.open = !details.open;
+    if (fallbackSummary && fallbackDisclosure(n)) n.open = !n.open;
     if (check && control.checked !== previous) {
       control.dispatchEvent(new Event('input', { bubbles: true }));
       control.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1717,24 +1757,27 @@
     return true;
   }
   globalThis.__mwDispatchBackground = function(x,y) { return activate(document.documentElement,x,y,true); };
-  globalThis.__mwDispatchClick = function (id, x, y) { return activate(wrap(id | 0), x || 0, y || 0, true); };
+  globalThis.__mwDispatchClick = function (id, x, y, fallbackSummary) { return activate(wrap(id | 0), x || 0, y || 0, true, fallbackSummary); };
   globalThis.__mwType = function (text) { if (!insertText(String(text), 'insertText')) throw new Error('No editable focused control'); };
   globalThis.__mwKey = function (key) {
     var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
     var n = document.activeElement;
-    if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift })) && enabled(n)) {
+    const disclosureSpace = key === ' ' && ((n.tagName === 'SUMMARY' && !!detailsFor(n)) || fallbackDisclosure(n));
+    const pressed = n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift }));
+    if (pressed && enabled(n) && !disclosureSpace) {
       if (key === 'Escape' && currentModal()) {
         const dialog = currentModal();
         if (dialog.dispatchEvent(new Event('cancel', {cancelable:true}))) dialog.close();
       } else if (key === 'Tab') {
-        var list = document.querySelectorAll('input,textarea,button,select,a,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
+        var list = document.querySelectorAll('input,textarea,button,select,a,summary,details,[tabindex]').filter(function (e) { return focusable(e) && Number(e.getAttribute('tabindex') || 0) >= 0; });
         list.sort(function (a, b) { var x = Number(a.getAttribute('tabindex')) || 0, y = Number(b.getAttribute('tabindex')) || 0; return (x > 0 ? x : Infinity) - (y > 0 ? y : Infinity); });
         if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next===activeControl && next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
       } else if (key === 'Backspace') insertText('', 'deleteContentBackward');
       else if (key === 'Delete') insertText('', 'deleteContentForward');
+      else if (key === 'Enter' && fallbackDisclosure(n)) activate(n, 0, 0, false, true);
       else if (key === 'Enter') {
         if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
-        else if (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
+        else if ((n.tagName === 'SUMMARY' && detailsFor(n)) || n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
         else if (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)) implicitSubmit(n);
       } else if (key === ' ' && (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
       else if (key === ' ' && editable(n)) insertText(' ', 'insertText');
@@ -1749,7 +1792,11 @@
         n.selectionStart = n.selectionEnd = pos;
       }
     }
-    document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: key, bubbles: true, shiftKey: shift }));
+    const released = document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {
+      key: key, bubbles: true, cancelable: disclosureSpace, shiftKey: shift
+    }));
+    if (disclosureSpace && pressed && released && n === document.activeElement && enabled(n))
+      activate(n, 0, 0, false, fallbackDisclosure(n));
   };
 
 })();
