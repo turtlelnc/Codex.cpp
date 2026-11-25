@@ -666,7 +666,7 @@ ToolResult run_interruptible(const std::string& args,const fs::path& root,Sandbo
 };
 static ToolResult run_libgit_tool(const std::string&,const std::string&,const fs::path&,bool,SandboxMode,const std::function<void()>& = {},bool=false);
 class ApplyPatchTool final : public ToolRuntime{public: std::string name()const override{return "apply_patch";}bool mutates()const override{return true;} std::string spec_json()const override{
-  return one_arg_tool_spec("apply_patch","Apply a unified git patch to files inside the workspace.","patch");
+  return one_arg_tool_spec("apply_patch","Apply a raw Git unified diff to workspace files. Start each file with diff --git a/path b/path and use numbered @@ -old,count +new,count @@ hunks with exact context. Omit Markdown fences and Begin Patch wrappers.","patch");
 }
 ToolResult execute(const std::string& args,const fs::path& root,SandboxMode mode,const std::function<void()>& tick,bool watch)override{return run_with_policy(args,root,mode,tick,watch);}
 ToolResult run(const std::string& args,const fs::path& root)override{return run_with_policy(args,root,SandboxMode::WorkspaceWrite); }
