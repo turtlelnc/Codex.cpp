@@ -56,6 +56,41 @@ static int web_boundary_checks(const fs::path& input,const std::string& subset){
         require((std::find(argv.begin(), argv.end(), "--no-tools") != argv.end()) == app.suggestion_mode,
                 "Unexpected tools policy for Agent budget");
       };
+      // Block state replacement, then confirm the exact request can be retried
+      // after the underlying failure is removed.
+      {
+        App app(workspace, executable(name), root/"failed-start-home", initial, true);
+        const auto request = obj({{"op",str("send")},{"text",str("retry fixture")},{"request_id",str("retry-fixture")}});
+        const auto state_path = app.state_path;
+        app.state_path = state_path/"unwritable";
+        fs::create_directories(app.state_path);
+        bool rejected = false;
+        try { app.rpc(request); } catch (const std::exception&) { rejected = true; }
+        require(rejected && !app.busy && app.messages.items.empty() && !app.submissions.get("retry-fixture"),
+                "Failed startup persistence left a task or duplicate request behind");
+        app.state_path = state_path;
+        fs::remove_all(state_path);
+        app.binary = workspace/"missing-agent";
+        rejected = false;
+        try { app.rpc(request); } catch (const std::exception&) { rejected = true; }
+        require(rejected && !app.busy && !app.submissions.get("retry-fixture"),
+                "Missing executable consumed the request ID");
+        std::ofstream(app.binary) << "not executable";
+        rejected = false;
+        try { app.rpc(request); } catch (const std::exception&) { rejected = true; }
+        require(rejected && !app.busy && !app.submissions.get("retry-fixture") &&
+                !field(read_json(app.state_path), "submissions", obj()).get("retry-fixture"),
+                "Failed child launch consumed the request ID");
+#if !defined(_WIN32)
+        app.binary = "/usr/bin/true";
+        auto retry = app.rpc(request);
+        require(flag(retry,"submitted") && !flag(retry,"duplicate"), "Failed request could not be retried");
+        app.finish();
+#endif
+        auto argv = app.agent_args("", false);
+        require(std::find(argv.begin(), argv.end(), "auto") != argv.end() && !app.options.carry_reasoning,
+                "Request-specific reasoning changed the startup defaults");
+      }
       std::string id;
       {
         App app(workspace,executable(name),home,initial,false);verify(app,16384,2048);
