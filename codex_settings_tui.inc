@@ -9,6 +9,10 @@ static J save_preferences(const fs::path& home,const fs::path& root,const std::s
   for(const auto& entry:preference_definitions())if(auto value=patch.get(entry.key)){
     require(value->kind==J::Other&&(value->value=="true"||value->value=="false"),"Preference must be a boolean");next.fields[entry.key]=*value;
   }
+  if (const auto* steps = patch.get("max_steps")) {
+    validate_step_preference(*steps);
+    next.fields["max_steps"] = *steps;
+  }
   atomic_save(directory/(digest(actor)+".json"),next);return next;
 }
 }

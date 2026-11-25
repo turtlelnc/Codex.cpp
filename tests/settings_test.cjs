@@ -23,7 +23,8 @@ let service,
   browser,
   tui,
   logs = '',
-  stage = 'startup';
+  stage = 'startup',
+  remainingProbeCalls = 0;
 const requests = [],
   authorizations = [];
 async function wait(fn) {
@@ -50,6 +51,16 @@ async function port() {
       requests.push(request);
       authorizations.push(req.headers.authorization);
       res.setHeader('Content-Type', 'application/json');
+      if (remainingProbeCalls > 0) {
+        remainingProbeCalls--;
+        res.end(JSON.stringify({id: 'step-probe-' + requests.length, choices: [{
+          message: {role: 'assistant', content: null, reasoning_content: '',
+            tool_calls: [{id: 'call-step-' + requests.length, type: 'function',
+              function: {name: 'read_file', arguments: '{"path":"step-fixture.txt"}'}}]},
+          finish_reason: 'tool_calls',
+        }]}));
+        return;
+      }
       res.end(
         JSON.stringify({
           id: 'fixture-' + requests.length,
@@ -69,7 +80,7 @@ async function port() {
     await new Promise((r) => model.listen(0, '127.0.0.1', r));
     const webPort = await port(),
       origin = 'http://127.0.0.1:' + webPort;
-    service = spawn(binary, ['web', '--root', root, '--port', String(webPort)], { env });
+    service = spawn(binary, ['web', '--root', root, '--port', String(webPort), '--max-steps', '2'], { env });
     service.stdout.on('data', (b) => (logs += b));
     service.stderr.on('data', (b) => (logs += b));
     let csrf, cookie;
@@ -103,6 +114,9 @@ async function port() {
     }
     const initial = await rpc('preferences');
     assert.equal(initial.carry_reasoning, false);
+    assert.equal(initial.max_steps, '');
+    await rpc('preferences_save', {max_steps: '513'}, 400);
+    await rpc('preferences_save', {max_steps: 1}, 400);
     await rpc('preferences_save', { carry_reasoning: 'yes' }, 400);
     assert.deepEqual(await rpc('preferences'), initial);
     if (process.argv.includes('--browser')) {
@@ -135,6 +149,14 @@ async function port() {
       await page.locator('#preference-reasoning').check();
       await page.getByText('已保存', { exact: true }).waitFor();
       assert.equal((await rpc('preferences')).carry_reasoning, true);
+      const steps = page.locator('#preference-steps');
+      await steps.fill('unlimited');
+      await steps.press('Tab');
+      await wait(async () => (await rpc('preferences')).max_steps === 'unlimited');
+      await page.reload();
+      await page.locator('#settings-button').click();
+      await page.locator('#settings-model').click();
+      await wait(async () => (await steps.inputValue()) === 'unlimited');
       await page.locator('#provider-button').click();
       await page.getByRole('button', { name: '＋ 添加提供商', exact: true }).click();
       await page.locator('#dialog-cancel').click();
@@ -292,6 +314,25 @@ async function port() {
       await wait(() => tui.exitCode !== null);
       assert.equal(tui.exitCode, 0);
     }
+    fs.writeFileSync(path.join(root, 'step-fixture.txt'), 'step fixture');
+    await rpc('preferences_save', {max_steps: '1'});
+    let previousCount = requests.length;
+    remainingProbeCalls = 1;
+    await rpc('send', {text: 'step limit probe', request_id: 'settings-step-probe'});
+    await wait(async () => {
+      if (requests.length === previousCount) return false;
+      const snapshot = await rpc('snapshot');
+      if (snapshot.busy) return false;
+      assert(snapshot.error);
+      return true;
+    });
+    assert.equal(requests.length, previousCount + 1);
+    await rpc('preferences_save', {max_steps: 'unlimited'});
+    previousCount = requests.length;
+    remainingProbeCalls = 2;
+    await task('unlimited-probe');
+    assert.equal(requests.length, previousCount + 3);
+    assert.equal((await rpc('preferences_save', {max_steps: ''})).max_steps, '');
     console.log(
       'PASS shared settings persistence/validation, actual request reasoning carry on/off' +
         (browser ? ', real browser categories/theme/focus/mobile/reload/no model calls' : '') +
