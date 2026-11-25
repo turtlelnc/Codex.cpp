@@ -139,6 +139,11 @@ void check_scroll(const std::filesystem::path& directory,bool report){
  check(modal.inspect("behind").find("\"center_hit\":false")!=std::string::npos,"Modal blocks background targeting");
  check(modal.click(110,52)&&modal.render(false)&&color_at(0,0,255,255,255),
        "Top-layer button closes dialog and restores background");
+ check(modal.click(20,20)&&modal.render(false)&&
+       color_at(224,58,0,255,0)&&modal.inspect("fixed-close").find("\"center_hit\":true")!=std::string::npos,
+       "Viewport-fixed modal control is targetable outside the dialog box");
+ check(modal.click(235,60)&&modal.render(false)&&color_at(0,0,255,255,255),
+       "Viewport-fixed modal control closes the dialog");
  check(modal.click(20,20)&&modal.key("End")&&modal.render(false)&&color_at(0,0,255,255,255)&&
        color_at(405,56,0,0,255),"Detached and reinserted closed dialog paints normally");
  check(modal.document()->modal_dialogs.empty(),"Detachment clears native top-layer state");

@@ -226,10 +226,13 @@ module.exports = async function liveTaskParity(browser, binary) {
         canvas.height = image.height;
         const context = canvas.getContext("2d");
         context.drawImage(image, 0, 0);
-        return [[0, 0], [25, 70], [185, 56]].map(([x, y]) =>
+        return [[0, 0], [25, 70], [185, 56], [224, 58]].map(([x, y]) =>
           Array.from(context.getImageData(x, y, 1, 1).data).slice(0, 3));
       })), sources.map(image => image.toString("base64")));
       assert.deepEqual(pixels[0], pixels[1], "Native modal backdrop dims the page and paints above a higher z-index control");
+      await modalPage.locator("#fixed-close").click();
+      assert.equal(await modalPage.locator("dialog").evaluate(node => node.open), false);
+      await modalPage.mouse.click(20, 20);
       await modalPage.keyboard.press("End");
       assert.equal(await modalPage.locator("dialog").evaluate(node => node.open), false);
       assert.equal(await modalPage.locator("dialog").isVisible(), true);
