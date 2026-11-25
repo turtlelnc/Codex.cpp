@@ -488,7 +488,8 @@ dialog pre { max-height: 38vh; overflow: auto; background: var(--bg); padding: 1
 .preference span { min-width:0; }
 .preference strong { color:var(--ink); display:block; font-weight:500; font-size:14px; }
 .preference small { display:block; color:var(--muted); font-size:12px; line-height:1.6; margin-top:5px; }
-#workspace-settings .preference input { width:18px; height:18px; margin:0; flex-shrink:0; accent-color:var(--accent); }
+#workspace-settings .preference input[type="checkbox"] { width:18px; height:18px; margin:0; flex-shrink:0; accent-color:var(--accent); }
+#workspace-settings .preference input[type="text"] { width: 8rem; max-width: 38%; flex-shrink: 0; }
 #preference-status { min-height:20px; margin:12px 0 0; color:var(--muted); font-size:12px; }
 #workspace-settings #team-dialog, #workspace-settings #plugin-dialog { position:static; width:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; box-shadow:none; background:transparent; overflow:visible; }
 #workspace-settings #team-close, #workspace-settings #plugin-close { font-size:13px; }

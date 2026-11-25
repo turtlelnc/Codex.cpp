@@ -883,6 +883,15 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
+static std::optional<uint64_t> parse_agent_step_limit(const std::string& value) {
+  if (value == "unlimited") return std::nullopt;
+  if (!value.empty() && value.size() <= 3 && value.find_first_not_of("0123456789") == std::string::npos) {
+    const int limit = std::stoi(value);
+    if (limit >= 1 && limit <= 512) return static_cast<uint64_t>(limit);
+  }
+  throw std::runtime_error("--max-steps must be an integer from 1 to 512 or unlimited");
+}
+
 struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool web_plugin_approval = false;bool list_sessions = false;
 bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;std::optional<uint64_t> max_steps = 64;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
@@ -1005,15 +1014,9 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a=="--context-window"||a=="--output-reserve"){try{if(i+1>=argc)throw std::runtime_error("Missing context budget value");const auto n=ContextBudget::number(argv[++i]);if(a=="--context-window"){o.context_window=n;explicit_window=true;}else{o.output_reserve=n;explicit_reserve=true;}}catch(const std::exception& e){err=e.what();return {};}continue;}
   if(a == "--max-steps"){
     if(i + 1 >= argc){err = "--max-steps requires an integer from 1 to 512 or unlimited";return std::nullopt;}
-    const std::string value = argv[++i];
-    if(value == "unlimited"){o.max_steps.reset();continue;}
-    try{
-      size_t consumed = 0;
-      const int limit = std::stoi(value, &consumed);
-      if(consumed == value.size() && limit >= 1 && limit <= 512){o.max_steps = limit;continue;}
-    }catch(const std::exception&){}
-    err = "--max-steps must be an integer from 1 to 512 or unlimited";
-    return std::nullopt;
+    try { o.max_steps = parse_agent_step_limit(argv[++i]); }
+    catch (const std::exception& error) { err = error.what(); return std::nullopt; }
+    continue;
   } o.prompt.push_back(a);
 }
 try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }

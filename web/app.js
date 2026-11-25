@@ -141,7 +141,7 @@ onClick('dialog-close', () => $('dialog').close());
 onClick('dialog-cancel', () => $('dialog').close());
 
 /* ---------- 设置与缓存的模型建议 ---------- */
-const preferences = { loaded: false, side_chat: true, auto_suggestions: false, carry_reasoning: false };
+const preferences = { loaded: false, side_chat: true, auto_suggestions: false, carry_reasoning: false, max_steps: "" };
 const suggestions = {
   cache: null,
   node: el('section', undefined, 'next-steps'),
@@ -156,9 +156,12 @@ function applyPreferences(value) {
     side_chat: value.side_chat !== false,
     auto_suggestions: value.auto_suggestions === true,
     carry_reasoning: value.carry_reasoning === true,
+    max_steps: typeof value.max_steps === "string" ? value.max_steps : "",
   });
   $('preference-reasoning').disabled = !state.user?.protocol?.capabilities?.includes('settings.reasoning.v1');
   $('preference-reasoning').checked = preferences.carry_reasoning;
+  $('preference-steps').disabled = !state.user?.protocol?.capabilities?.includes('settings.steps.v1');
+  $('preference-steps').value = preferences.max_steps;
   $('preference-reasoning').title = $('preference-reasoning').disabled?'当前服务器尚未支持推理回传设置':'';
   $('preference-side').disabled = false;
   $('preference-suggestions').disabled = false;
@@ -174,6 +177,7 @@ async function loadPreferences() {
     !state.user?.protocol?.capabilities?.includes('suggestions.v1')
   ) {
     $('preference-reasoning').disabled = true;
+    $('preference-steps').disabled = true;
     $('preference-side').disabled = true;
     $('preference-suggestions').disabled = true;
     return;
@@ -186,12 +190,13 @@ for (const [id, name] of [
   ['preference-side', 'side_chat'],
   ['preference-suggestions', 'auto_suggestions'],
   ['preference-reasoning', 'carry_reasoning'],
+  ['preference-steps', 'max_steps'],
 ])
   $(id).onchange = async () => {
     const input = $(id),
-      value = input.checked,
+      value = input.type === "checkbox" ? input.checked : input.value.trim(),
       generation = state.generation;
-    for(const id of ['preference-side','preference-suggestions','preference-reasoning'])$(id).disabled=true;
+    for(const id of ['preference-side','preference-suggestions','preference-reasoning','preference-steps'])$(id).disabled=true;
     try {
       const next = await rpc('preferences_save', { [name]: value });
       if (generation !== state.generation) return;
@@ -200,7 +205,6 @@ for (const [id, name] of [
       suggestions.lastActivity = Date.now();
     } catch (e) {
       if(generation!==state.generation)return;
-      input.checked = !value;
       $('preference-status').textContent = e.message;
     } finally {
       if(generation===state.generation)applyPreferences(preferences);
