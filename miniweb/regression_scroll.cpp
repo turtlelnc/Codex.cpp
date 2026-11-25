@@ -66,6 +66,18 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        "Sidebar wheel scroll stays in the list");
  check(sidebar.document()->scroll_y==0&&sidebar_node("footer")->viewport_rect().y==430,
        "Sidebar footer stays in place while scrolling");
+ Engine app(640,800);app.set_wait_ms(0);
+ check(app.load((directory/"app-layout.html").u8string(),&error)&&app.render(false),"App layout fixture");
+ auto app_node=[&](const char* id){return app.document()->get_element_by_id(id);};
+ check(std::abs(app_node("first")->viewport_rect().h-106.667f)<.1f&&
+       app_node("footer")->viewport_rect().y==376,"Fractional tracks share definite height");
+ check(app_node("quarter")->viewport_rect().h==25,"Subunit fractions leave unused space");
+ check(app_node("bounded-track")->viewport_rect().h==70,"Explicit Grid track minimum");
+ check(app_node("top")->viewport_rect().y==490&&app_node("bottom")->viewport_rect().y==590,
+       "Column auto margin takes precedence over justification");
+ check(app.scroll(30,90,0,200)&&app.render(false)&&app_node("first")->scroll_y==200&&
+       app_node("sticky")->viewport_rect().y==40&&app_node("footer")->viewport_rect().y==376,
+       "Fractional Grid scroller keeps its sticky header and footer in place");
  Engine details(640,480);details.set_wait_ms(0);
  check(details.load((directory/"details.html").u8string(),&error)&&details.render(false),"Details fixture");
  auto node_in_details=[&](const char* id){return details.document()->get_element_by_id(id);};
@@ -78,7 +90,14 @@ void check_scroll(const std::filesystem::path& directory,bool report){
        disclosure->has_attr("open")&&details.render(false)&&node_in_details("file")->layout.has_box,
        "Tab and Enter expose details contents");
  check(details.advance(1)&&detail_body->attr("data-toggle")=="closed:open","Details dispatches toggle");
- check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false),"Space closes details");
+ detail_body->set_attr("data-keys","");
+ detail_body->set_attr("data-cancel-keyup","");
+ check(details.key(" ")&&disclosure->has_attr("open")&&detail_body->attr("data-keys")=="keydown keyup ",
+       "Canceled key release leaves disclosure open");
+ detail_body->remove_attr("data-cancel-keyup");
+ detail_body->set_attr("data-keys","");
+ check(details.key(" ")&&!disclosure->has_attr("open")&&details.render(false)&&
+       detail_body->attr("data-keys")=="keydown keyup click ","Space activates disclosure after key release");
  detail_body->set_attr("data-cancel","");
  check(details.click(10,10)&&!disclosure->has_attr("open"),"Canceled summary click preserves state");
  detail_body->remove_attr("data-cancel");

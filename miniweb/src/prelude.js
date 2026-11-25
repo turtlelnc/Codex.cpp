@@ -1762,7 +1762,9 @@
   globalThis.__mwKey = function (key) {
     var shift = key === 'Shift+Tab'; if (shift) key = 'Tab';
     var n = document.activeElement;
-    if (n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift })) && enabled(n)) {
+    const disclosureSpace = key === ' ' && ((n.tagName === 'SUMMARY' && !!detailsFor(n)) || fallbackDisclosure(n));
+    const pressed = n.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true, shiftKey: shift }));
+    if (pressed && enabled(n) && !disclosureSpace) {
       if (key === 'Escape' && currentModal()) {
         const dialog = currentModal();
         if (dialog.dispatchEvent(new Event('cancel', {cancelable:true}))) dialog.close();
@@ -1772,12 +1774,12 @@
         if (list.length) { var index = list.indexOf(n), next = list[(index < 0 ? (shift ? list.length - 1 : 0) : index + (shift ? -1 : 1) + list.length) % list.length]; focusControl(next); if (next===activeControl && next.tagName === 'INPUT' && editable(next)) { next.selectionStart = 0; next.selectionEnd = next.value.length; } }
       } else if (key === 'Backspace') insertText('', 'deleteContentBackward');
       else if (key === 'Delete') insertText('', 'deleteContentForward');
-      else if ((key === 'Enter' || key === ' ') && fallbackDisclosure(n)) activate(n, 0, 0, false, true);
+      else if (key === 'Enter' && fallbackDisclosure(n)) activate(n, 0, 0, false, true);
       else if (key === 'Enter') {
         if (n.tagName === 'TEXTAREA') insertText('\n', 'insertLineBreak');
         else if ((n.tagName === 'SUMMARY' && detailsFor(n)) || n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset)$/.test(n.type))) n.click();
         else if (n.tagName === 'INPUT' && /^(|text|search|email|url|tel|password)$/.test(n.type)) implicitSubmit(n);
-      } else if (key === ' ' && ((n.tagName === 'SUMMARY' && detailsFor(n)) || n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
+      } else if (key === ' ' && (n.tagName === 'BUTTON' || (n.tagName === 'INPUT' && /^(button|submit|reset|checkbox|radio)$/.test(n.type)))) n.click();
       else if (key === ' ' && editable(n)) insertText(' ', 'insertText');
       else if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(key) && editable(n)) {
         var value=n.value, start=Math.max(0,Math.min(value.length,Number(n.selectionStart)||0)), end=Math.max(start,Math.min(value.length,Number(n.selectionEnd)||0));
@@ -1790,7 +1792,11 @@
         n.selectionStart = n.selectionEnd = pos;
       }
     }
-    document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: key, bubbles: true, shiftKey: shift }));
+    const released = document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {
+      key: key, bubbles: true, cancelable: disclosureSpace, shiftKey: shift
+    }));
+    if (disclosureSpace && pressed && released && n === document.activeElement && enabled(n))
+      activate(n, 0, 0, false, fallbackDisclosure(n));
   };
 
 })();

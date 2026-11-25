@@ -33,6 +33,7 @@ enum class TrackKind { Px, Percent, Fr, Auto, AutoFit };
 struct GridTrack {
     TrackKind kind = TrackKind::Auto;
     float value = 0;
+    Length minimum;
 };
 enum class Position { Static, Relative, Absolute, Fixed, Sticky };
 enum class TextAlign { Left, Right, Center, Justify };

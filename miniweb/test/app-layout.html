@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+body { margin: 0; }
+#app { display: grid; height: 400px; grid-template-rows: 32px 1fr 2fr 24px; row-gap: 8px; }
+#first { overflow: auto; }
+#first-content { height: 600px; }
+#sticky { position: sticky; top: 0; height: 22px; }
+#second { min-height: 160px; }
+#empty-track { display: grid; height: 80px; grid-template-rows: 20px 1fr; }
+#after { height: 10px; }
+#column { display: flex; flex-direction: column; height: 120px; justify-content: center; }
+#top, #bottom { height: 20px; }
+#bottom { margin-top: auto; }
+#fraction { display: grid; height: 100px; grid-template-rows: .25fr .25fr; }
+#minmax { display: grid; height: 90px; grid-template-rows: minmax(0, 1fr) 20px; }
+#overflow { height: 100px; }
+</style>
+<div id="app">
+  <header id="header"></header>
+  <section id="first"><header id="sticky"></header><div id="first-content"></div></section>
+  <section id="second"></section>
+  <footer id="footer"></footer>
+</div>
+<div id="empty-track"><div id="early"></div></div><div id="after"></div>
+<div id="column"><div id="top"></div><div id="bottom"></div></div>
+<div id="fraction"><div id="quarter"></div><div id="next-quarter"></div></div>
+<div id="minmax"><div id="bounded-track"><div id="overflow"></div></div><div id="status"></div></div>

@@ -477,7 +477,8 @@ GridTrack parse_grid_track(const std::string& raw, float fs, bool auto_fit_conte
             GridTrack tr;
             tr.kind = TrackKind::Fr;
             tr.value = (float)std::atof(hi.substr(0, hi.size() - 2).c_str());
-            if (tr.value <= 0) tr.value = 1;
+            if (!std::isfinite(tr.value) || tr.value < 0) tr.value = 1;
+            tr.minimum = parse_length_value(lo, fs, 16, true);
             return tr;
         }
         return parse_grid_track(lo, fs);
@@ -486,7 +487,7 @@ GridTrack parse_grid_track(const std::string& raw, float fs, bool auto_fit_conte
         GridTrack tr;
         tr.kind = TrackKind::Fr;
         tr.value = (float)std::atof(t.substr(0, t.size() - 2).c_str());
-        if (tr.value <= 0) tr.value = 1;
+        if (!std::isfinite(tr.value) || tr.value < 0) tr.value = 1;
         return tr;
     }
     if (t == "auto" || t == "min-content" || t == "max-content" || util::starts_with(t, "fit-content(")) {
