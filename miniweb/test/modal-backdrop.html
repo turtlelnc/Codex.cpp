@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+html, body { margin: 0; background: white; }
+#behind { position: fixed; left: 10px; top: 10px; width: 260px; height: 80px; z-index: 9999; background: #ff0000; }
+#dialog { position: fixed; inset: auto; left: 80px; top: 34px; transform: none; width: 120px; height: 60px; margin: 0; padding: 0; border: 0; background: blue; }
+#dialog::backdrop { background-color: rgba(0, 0, 0, .4); }
+#close { position: absolute; left: 12px; top: 12px; }
+</style>
+<button id="behind">Open dialog</button>
+<dialog id="dialog"><button id="close">Close</button></dialog>
+<script>
+const behind = document.getElementById('behind');
+const dialog = document.getElementById('dialog');
+behind.addEventListener('click', () => dialog.showModal());
+document.getElementById('close').addEventListener('click', () => dialog.close());
+</script>

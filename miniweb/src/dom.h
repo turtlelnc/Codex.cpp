@@ -35,6 +35,8 @@ struct Node {
     Node* parent = nullptr;
     Document* doc = nullptr;
     int id = 0;
+    bool modal_dialog = false;
+    Color backdrop{0, 0, 0, 26};
     bool anonymous = false;         // layout-only box; never exposed through the DOM
 
     ComputedStyle style;
@@ -105,6 +107,7 @@ struct Document {
                          const std::vector<Node*>& added = {}, const std::vector<Node*>& removed = {},
                          Node* previous = nullptr, Node* next = nullptr);
     int focused_id = 0;
+    std::vector<Node*> modal_dialogs;
     std::deque<Node> arena;
     std::deque<Node> layout_nodes;   // anonymous boxes, rebuilt on each layout
     std::vector<Node*> id_map; // index == node id

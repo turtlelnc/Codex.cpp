@@ -624,6 +624,7 @@
       const dialog = modalDialogs[modalDialogs.length - 1];
       if (dialog.open && dialog.isConnected) return dialog;
       modalDialogs.pop();
+      N.setModal(dialog.__id, false);
     }
     return null;
   }
@@ -640,6 +641,7 @@
       this.__dialogOpener = document.activeElement;
       this.open = true;
       modalDialogs.push(this);
+      N.setModal(this.__id, true);
       const controls = this.querySelectorAll('button,input,textarea,select,a,[tabindex]');
       const target = controls.find(node => node.hasAttribute('autofocus') && focusable(node)) || controls.find(focusable);
       focusControl(target || this, true);
@@ -650,6 +652,7 @@
       this.open = false;
       const index = modalDialogs.lastIndexOf(this);
       if (index >= 0) modalDialogs.splice(index, 1);
+      N.setModal(this.__id, false);
       const opener = this.__dialogOpener;
       this.__dialogOpener = null;
       if (index >= 0 && (!activeControl || this.contains(activeControl) || activeControl === this))

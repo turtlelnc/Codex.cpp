@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { createInterface } = require("node:readline");
 const { once } = require("node:events");
 
@@ -205,6 +205,33 @@ module.exports = async function liveTaskParity(browser, binary) {
         await finished;
         await page.close();
       }
+    }
+    const backdropFixture = fs.readFileSync("miniweb/test/modal-backdrop.html", "utf8");
+    fs.writeFileSync(path.join(root, "modal-backdrop.html"), backdropFixture);
+    const shot = spawnSync(binary, ["preview", "shot", "modal-backdrop.html", "--width", "640", "--height", "480",
+      "--wait", "0", "--click", "20,20", "-o", "modal-backdrop.png"], {cwd: root, encoding: "utf8", timeout: 30000});
+    assert.equal(shot.status, 0, shot.stderr);
+    const modalPage = await browser.newPage({viewport: {width: 640, height: 480}});
+    try {
+      await modalPage.setContent(backdropFixture);
+      await modalPage.mouse.click(20, 20);
+      assert.equal(await modalPage.locator("dialog").evaluate(node => node.open), true);
+      const sources = [fs.readFileSync(path.join(root, "modal-backdrop.png")), await modalPage.screenshot()];
+      const pixels = await modalPage.evaluate(async images => Promise.all(images.map(async source => {
+        const image = new Image();
+        image.src = "data:image/png;base64," + source;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        return [[0, 0], [25, 70], [185, 56]].map(([x, y]) =>
+          Array.from(context.getImageData(x, y, 1, 1).data).slice(0, 3));
+      })), sources.map(image => image.toString("base64")));
+      assert.deepEqual(pixels[0], pixels[1], "Native modal backdrop dims the page and paints above a higher z-index control");
+    } finally {
+      await modalPage.close();
     }
     console.log("MiniWeb and Chromium task modal, scroll chaining, sticky/fixed paint and checkbox targeting passed at desktop and mobile widths");
   } finally {
