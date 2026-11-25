@@ -17,9 +17,16 @@ static fs::path assistance_directory(const fs::path& home,const fs::path& root){
   return path;
 #endif
 }
+static void validate_step_preference(const J& value) {
+  require(value.kind == J::String, "max_steps must be a string");
+  if (!value.value.empty()) parse_agent_step_limit(value.value);
+}
 static J load_preferences(const fs::path& home,const fs::path& root,const std::string& actor=""){
   auto value=read_json(assistance_directory(home,root)/"ui-preferences"/(digest(actor)+".json"));auto result=obj();
   for(const auto& entry:preference_definitions()){auto item=value.get(entry.key);require(!item||(item->kind==J::Other&&(item->value=="true"||item->value=="false")),"Invalid saved preference");result.fields[entry.key]=item?*item:boolean(entry.initial);}
+  const auto* steps = value.get("max_steps");
+  if (steps) validate_step_preference(*steps);
+  result.fields["max_steps"] = steps ? *steps : str("");
   return result;
 }
 // Defined after the portable cross-process lease implementation.

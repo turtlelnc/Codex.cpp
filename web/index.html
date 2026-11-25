@@ -156,6 +156,7 @@
       <section id="settings-panel-model" role="tabpanel" aria-labelledby="settings-model" tabindex="0" hidden>
         <h3>模型与上下文</h3><p class="settings-description">推理回传与推理强度是不同设置。模型和强度仍可在对话输入框中选择。</p>
         <label class="preference"><span><strong>请求时携带已有推理</strong><small>无工具的 Chat 请求也回传提供商已有的历史推理，可能增加输入 token。下次任务生效。</small></span><input type="checkbox" id="preference-reasoning"></label>
+        <label class="preference"><span><strong>每轮 Agent 步数</strong><small>填写 1–512 或 unlimited。留空沿用服务启动设置，下次任务生效。</small></span><input type="text" id="preference-steps" maxlength="9" placeholder="启动设置" spellcheck="false" disabled></label>
         <p class="settings-description">工具模式仍自动回传协议要求的历史推理，包括未调用工具的轮次。无法获取模型的隐藏思考链；Responses API 的原生推理项目保持原有处理方式。</p>
       </section>
       <section id="settings-panel-providers" role="tabpanel" aria-labelledby="provider-button" tabindex="0" hidden><h3>模型提供商</h3><div id="settings-providers"></div><p id="provider-error" role="alert"></p></section>
