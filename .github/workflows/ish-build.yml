@@ -1,19 +1,19 @@
-name: ish-Build
+name: CI Build
 on:
   push:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: i386/alpine:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install tools
-        run: apk update && apk add --no-cache g++ cmake make openssl-dev
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build build --parallel 2
+      - name: Build 32-bit x86 in Alpine container
+        run: |
+          docker run --rm --platform linux/386 -v "$PWD:/work" -w /work i386/alpine:latest sh -c "
+            apk update && apk add --no-cache g++ cmake make openssl-dev &&
+            cmake -B build -DCMAKE_BUILD_TYPE=Release &&
+            cmake --build build --parallel 2
+          "
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
