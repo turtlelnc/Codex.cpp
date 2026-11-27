@@ -18,11 +18,16 @@ jobs:
             CRYPTO_LIB=$(find /usr/lib /lib -name "libcrypto.so*" -o -name "libcrypto.a" 2>/dev/null | head -n 1)
             SSL_LIB=$(find /usr/lib /lib -name "libssl.so*" -o -name "libssl.a" 2>/dev/null | head -n 1)
             cmake -B build -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_FLAGS="-w" \
+              -DCMAKE_CXX_FLAGS="-w" \
               -DOPENSSL_ROOT_DIR=/usr \
               -DOPENSSL_INCLUDE_DIR=/usr/include \
               -DOPENSSL_CRYPTO_LIBRARY="$CRYPTO_LIB" \
               -DOPENSSL_SSL_LIBRARY="$SSL_LIB"
-            cmake --build build --parallel 2
+            if ! cmake --build build --parallel 1 > build.log 2>&1; then
+              grep -n -C 5 -i "error:" build.log || tail -n 60 build.log
+              exit 1
+            fi
             ls -la build
           '
       - name: Upload binary
