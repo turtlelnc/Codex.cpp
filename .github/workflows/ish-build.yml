@@ -11,10 +11,23 @@ jobs:
         run: |
           docker run --rm --platform linux/386 -v "$PWD:/work" -w /work i386/alpine:latest sh -c '
             set -e
-            apk update && apk add --no-cache g++ cmake make openssl-dev pkgconfig linux-headers
+            apk update && apk add --no-cache g++ cmake make openssl-dev pkgconfig linux-headers python3
             if ! grep -q "<cstdint>" miniweb/src/image.h; then
               sed -i "1i #include <cstdint>" miniweb/src/image.h
             fi
+            python3 - << "PYEOF"
+p = "codex_update.inc"
+s = open(p, encoding="utf-8").read()
+target = "std::string updater::asset()"
+idx = s.find(target)
+if idx != -1:
+    ret_idx = s.find("return base;", idx)
+    if ret_idx != -1:
+        block = s[idx:ret_idx]
+        if "base" not in block.replace("return base;", ""):
+            s = s[:ret_idx] + "std::string base = \"codex-cpp-linux-x86\";\n  " + s[ret_idx:]
+            open(p, "w", encoding="utf-8").write(s)
+PYEOF
             CRYPTO_LIB=$(find /usr/lib /lib -name "libcrypto.so*" -o -name "libcrypto.a" 2>/dev/null | head -n 1)
             SSL_LIB=$(find /usr/lib /lib -name "libssl.so*" -o -name "libssl.a" 2>/dev/null | head -n 1)
             cmake -B build -DCMAKE_BUILD_TYPE=Release \
