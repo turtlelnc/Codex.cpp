@@ -43,17 +43,37 @@ static int web_boundary_checks(const fs::path& input,const std::string& subset){
     }
     if(subset=="all"||subset=="budget"){
       auto workspace=root/"provider-workspace",home=root/"provider-home";fs::create_directories(workspace);
-      auto verify=[&](App& app,size_t window,size_t output){require(app.options.context_window==window&&app.options.output_reserve==output,"Provider change lost deployment context budget");auto argv=app.agent_args();for(const auto& setting:{std::make_pair("--context-window",window),std::make_pair("--output-reserve",output)}){auto found=std::find(argv.begin(),argv.end(),setting.first);require(found!=argv.end()&&found+1!=argv.end()&&*(found+1)==std::to_string(setting.second),"Agent child received the wrong context budget");}};
+      auto verify=[&](App& app,size_t window,size_t output){require(app.options.agent_budget.context_window==window&&app.options.agent_budget.output_reserve==output,"Provider change lost deployment context budget");auto argv=app.agent_args();for(const auto& setting:{std::make_pair("--context-window",window),std::make_pair("--output-reserve",output)}){auto found=std::find(argv.begin(),argv.end(),setting.first);require(found!=argv.end()&&found+1!=argv.end()&&*(found+1)==std::to_string(setting.second),"Agent child received the wrong context budget");}};
+      initial.agent_budget.max_steps = std::nullopt;
+      auto verify_steps = [&](App& app, const std::string& actor, const std::string& expected) {
+        auto preference = text(app.rpc(obj({{"op",str("preferences")}}), true, actor), "max_steps");
+        auto argv = app.agent_args(preference);
+        auto steps = std::find(argv.begin(), argv.end(), "--max-steps");
+        require(steps != argv.end() && steps + 1 != argv.end() && *(steps + 1) == expected,
+                "Agent child received the wrong step limit");
+        require(std::count(argv.begin(), argv.end(), "--max-steps") == 1,
+                "Agent child received duplicate step limits");
+        require((std::find(argv.begin(), argv.end(), "--no-tools") != argv.end()) == app.suggestion_mode,
+                "Unexpected tools policy for Agent budget");
+      };
       std::string id;
       {
         App app(workspace,executable(name),home,initial,false);verify(app,16384,2048);
+        app.rpc(obj({{"op",str("preferences_save")},{"max_steps",str("7")}}), true, "owner");
+        verify_steps(app, "owner", "7");
+        verify_steps(app, "member", "unlimited");
         auto saved=app.rpc(obj({{"op",str("provider_save")},{"name",str("fixture")},{"base_url",str("http://127.0.0.1:9")},{"api",str("chat")},{"models",arr({str("fixture")})}}));id=text(saved,"id");
         app.rpc(obj({{"op",str("provider_use")},{"id",str(id)}}));verify(app,16384,2048);
         app.use_provider("codex");verify(app,16384,2048);app.use_provider(id);verify(app,16384,2048);
+        verify_steps(app, "owner", "7");
+        verify_steps(app, "member", "unlimited");
+        app.suggestion_mode = true;
+        verify_steps(app, "owner", "1");
+        verify_steps(app, "member", "1");
       }
-      {App restarted(workspace,executable(name),home,initial,false);require(restarted.active==id,"Saved provider not restored");verify(restarted,16384,2048);restarted.rpc(obj({{"op",str("provider_delete")},{"id",str(id)}}));verify(restarted,16384,2048);}
-      {auto explicit_options=initial;explicit_options.context_window=32768;explicit_options.output_reserve=4096;App app(workspace,executable(name),root/"explicit-home",explicit_options,true);verify(app,32768,4096);app.use_provider("codex");verify(app,32768,4096);}
-      std::cout<<"PASS environment and explicit context budgets through provider selection/deletion/restart and actual Agent argv construction\n";
+      {App restarted(workspace,executable(name),home,initial,false);require(restarted.active==id,"Saved provider not restored");verify(restarted,16384,2048);verify_steps(restarted,"owner","7");verify_steps(restarted,"member","unlimited");restarted.rpc(obj({{"op",str("provider_delete")},{"id",str(id)}}));verify(restarted,16384,2048);}
+      {auto explicit_options=initial;explicit_options.agent_budget.context_window=32768;explicit_options.agent_budget.output_reserve=4096;App app(workspace,executable(name),root/"explicit-home",explicit_options,true);verify(app,32768,4096);app.use_provider("codex");verify(app,32768,4096);}
+      std::cout<<"PASS Agent budgets through provider switches/restart, actor preferences, context defaults, and one-step suggestions\n";
     }
     return 0;
   }catch(const std::exception& e){std::cerr<<"Web boundary regression: "<<e.what()<<'\n';return 2;}

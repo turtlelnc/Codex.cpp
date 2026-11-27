@@ -1011,9 +1011,7 @@ struct App {
     Options next;
     next.root = workspace.root;
     next.carry_reasoning = options.carry_reasoning;
-    next.context_window = options.context_window;
-    next.max_steps = options.max_steps;
-    next.output_reserve = options.output_reserve;
+    next.agent_budget = options.agent_budget;
     std::map<std::string, std::string> keys;
     display_model.clear();
     if (id != "codex") {
@@ -1048,8 +1046,14 @@ struct App {
     std::vector<std::string> args = {binary.u8string(), "--root",         workspace.root.u8string(),
                                      "--provider",      options.provider, "--model",
                                      options.model};
-    if(suggestion_mode)args.insert(args.end(),{"--no-tools","--max-steps","1"});
-    else args.insert(args.end(), {"--max-steps", !step_override.empty() ? step_override : options.max_steps ? std::to_string(*options.max_steps) : "unlimited"});
+    auto budget = options.agent_budget;
+    if (suggestion_mode) {
+      args.push_back("--no-tools");
+      budget.max_steps = 1;
+    } else if (!step_override.empty()) {
+      budget.max_steps = AgentBudget::step_limit(step_override);
+    }
+    budget.append_args(args);
     if(!session_directory.empty())args.insert(args.end(),{"--session-dir",session_directory.u8string()});
     if (web_isolated_plugin && !side_mode && !suggestion_mode) {
       const auto& [manifest, fingerprint] = *web_isolated_plugin;
@@ -1071,7 +1075,6 @@ struct App {
       args.insert(args.end(), {"--api-key-env", options.api_key_env});
     if (!options.reasoning_effort.empty())
       args.insert(args.end(), {"--reasoning", options.reasoning_effort});
-    args.insert(args.end(),{"--context-window",std::to_string(options.context_window),"--output-reserve",std::to_string(options.output_reserve?options.output_reserve:std::min<size_t>(4096,options.context_window/8))});
     if(options.carry_reasoning)args.insert(args.end(),{"--carry-reasoning",*options.carry_reasoning?"always":"auto"});
     return args;
   }
@@ -2312,8 +2315,8 @@ int main(int argc, char **argv) {
         continue;
       }
       require(std::set<std::string>{"--root", "--provider", "--model", "--base-url", "--api", "--api-key-env",
-                                    "--no-api-key", "--reasoning", "--context-window", "--output-reserve", "--max-steps"}
-                  .count(arg),
+                                    "--no-api-key", "--reasoning"}
+                  .count(arg) || AgentBudget::option(arg),
               "Unsupported web option; execution policy is chosen in the page");
       if (arg != "--root")
         explicit_options = true;

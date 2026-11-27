@@ -19,7 +19,7 @@ static fs::path assistance_directory(const fs::path& home,const fs::path& root){
 }
 static void validate_step_preference(const J& value) {
   require(value.kind == J::String, "max_steps must be a string");
-  if (!value.value.empty()) parse_agent_step_limit(value.value);
+  if (!value.value.empty()) AgentBudget::step_limit(value.value);
 }
 static J load_preferences(const fs::path& home,const fs::path& root,const std::string& actor=""){
   auto value=read_json(assistance_directory(home,root)/"ui-preferences"/(digest(actor)+".json"));auto result=obj();

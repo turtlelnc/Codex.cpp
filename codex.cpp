@@ -883,19 +883,10 @@ o << "\n[assistant function_call]\nname=" << c.name << "\ncall_id=" << c.call_id
 #include "codex_tui.inc"
 #include "codex_frontend.inc"
 // ---------- CLI ----------
-static std::optional<uint64_t> parse_agent_step_limit(const std::string& value) {
-  if (value == "unlimited") return std::nullopt;
-  if (!value.empty() && value.size() <= 3 && value.find_first_not_of("0123456789") == std::string::npos) {
-    const int limit = std::stoi(value);
-    if (limit >= 1 && limit <= 512) return static_cast<uint64_t>(limit);
-  }
-  throw std::runtime_error("--max-steps must be an integer from 1 to 512 or unlimited");
-}
-
 struct Options{fs::path root = fs::current_path();fs::path mcp_config,session_store,isolated_plugin_library;RuntimePolicy policy;bool json = false;bool web_plugin_approval = false;bool list_sessions = false;
-bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;std::optional<uint64_t> max_steps = 64;
+bool interactive = false;UiMode ui_mode = UiMode::Auto;std::string frontend;bool unsafe_execution=false;bool no_api_key = false,no_tools=false,design=false;AgentBudget agent_budget;
 ApiStyle api_style = ApiStyle::Responses;std::string provider = "codex";std::string base_url;std::string model;std::string reasoning_effort;std::optional<bool> carry_reasoning;
-size_t context_window=32768,output_reserve=0;std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
+std::string api_key_env;bool login = false,continue_turn = false,wait_quota=false,quota=false,list_models=false;std::optional<std::string> resume;std::vector<std::string> prompt; std::vector<fs::path> images; }; static void print_help(){
 std::cout << R"HELP(codex-cpp - C++ Codex-style coding agent
 
 Usage:
@@ -1011,15 +1002,32 @@ for(int i = 1;i < argc;++i){std::string a = argv[i];
   if(a == "--sandbox" && i + 1 < argc){std::string v = argv[++i];if(v == "read-only")o.policy.sandbox = SandboxMode::ReadOnly; else if(v == "workspace-write")o.policy.sandbox = SandboxMode::WorkspaceWrite;
   else if(v == "danger-full-access")o.policy.sandbox = SandboxMode::DangerFullAccess;else{err = "invalid --sandbox: " + v;return std::nullopt;}continue; }
   if(a=="--carry-reasoning"){if(i+1>=argc){err="--carry-reasoning requires auto|always";return {};}std::string value=argv[++i];if(value!="auto"&&value!="always"){err="--carry-reasoning requires auto|always";return {};}o.carry_reasoning=value=="always";continue;}
-  if(a=="--context-window"||a=="--output-reserve"){try{if(i+1>=argc)throw std::runtime_error("Missing context budget value");const auto n=ContextBudget::number(argv[++i]);if(a=="--context-window"){o.context_window=n;explicit_window=true;}else{o.output_reserve=n;explicit_reserve=true;}}catch(const std::exception& e){err=e.what();return {};}continue;}
-  if(a == "--max-steps"){
-    if(i + 1 >= argc){err = "--max-steps requires an integer from 1 to 512 or unlimited";return std::nullopt;}
-    try { o.max_steps = parse_agent_step_limit(argv[++i]); }
-    catch (const std::exception& error) { err = error.what(); return std::nullopt; }
+  if (const auto setting = AgentBudget::option(a)) {
+    try {
+      if (i + 1 >= argc) {
+        if (*setting == AgentBudget::Option::Steps)
+          throw std::runtime_error("--max-steps requires an integer from 1 to 512 or unlimited");
+        throw std::runtime_error("Missing context budget value");
+      }
+      const std::string value = argv[++i];
+      switch (*setting) {
+      case AgentBudget::Option::Steps:
+        o.agent_budget.max_steps = AgentBudget::step_limit(value);
+        break;
+      case AgentBudget::Option::Window:
+        o.agent_budget.context_window = ContextBudget::number(value);
+        explicit_window = true;
+        break;
+      case AgentBudget::Option::Reserve:
+        o.agent_budget.output_reserve = ContextBudget::number(value);
+        explicit_reserve = true;
+        break;
+      }
+    } catch (const std::exception& error) { err = error.what(); return {}; }
     continue;
   } o.prompt.push_back(a);
 }
-try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.output_reserve=ContextBudget::number(value);}ContextBudget{o.context_window,o.output_reserve?o.output_reserve:std::min<size_t>(4096,o.context_window/8)}.validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
+try{if(!explicit_window){auto value=getenv_or("CODEX_CPP_CONTEXT_WINDOW");if(!value.empty())o.agent_budget.context_window=ContextBudget::number(value);}if(!explicit_reserve){auto value=getenv_or("CODEX_CPP_OUTPUT_RESERVE");if(!value.empty())o.agent_budget.output_reserve=ContextBudget::number(value);}o.agent_budget.context().validate();}catch(const std::exception& e){err=e.what();return {};}return o; } static std::string join_json_array(const std::vector<std::string>& xs){std::ostringstream o;o << '['; for(size_t i = 0;i < xs.size();++i){if(i)o << ',';o << xs[i];}o << ']';return o.str(); }
 static std::string model_input_item(const std::string& raw){auto j=parse_json(raw);if(j&&json_string_field(raw,"type")==std::optional<std::string>("codex_tool_image")){j->fields.erase("type");j->fields.erase("call_id");j->fields["role"]=Json{Json::String,"user"};return json_dump(*j);}return raw;}
 static std::vector<std::string> chat_history(const Session& session,const std::string& instructions,bool carry_reasoning=false){
 std::vector<std::string> messages={"{\"role\":\"system\",\"content\":\""+json_escape(instructions)+"\"}"};std::vector<std::string> calls;std::string pending_reasoning,pending_content="null";bool pending_reasoning_present=false;
@@ -1249,7 +1257,8 @@ for(const auto& p:plugins.entries)if(p.enabled)if(auto m=p.manifest.get("mcp")){
   if(!within_root(p.dir,config)||!fs::is_regular_file(config,ec))std::cerr<<"[plugin "<<p.id<<"] invalid MCP config\n";
   else{auto report=load_mcp_tools(config,opt.root,router,mcp_servers,"p_"+p.id+"_",p.dir);if(!report.empty()){mcp_report+="[plugin "+p.id+"] "+report;std::cerr<<"[plugin "<<p.id<<"] "<<report;}}}
 for(const auto& error:plugins.errors)std::cerr<<"[plugin] "<<error<<'\n';
-ApiClient api;api.context_window=opt.context_window;api.output_reserve=opt.output_reserve?opt.output_reserve:std::min<size_t>(4096,opt.context_window/8);api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
+const auto startup_context = opt.agent_budget.context();
+ApiClient api;api.context_window=startup_context.window;api.output_reserve=startup_context.output;api.api_key = opt.no_api_key ? "" : getenv_or(opt.api_key_env.c_str());api.base_url = opt.base_url;api.model = opt.model;
 api.reasoning_effort = opt.reasoning_effort;api.style = opt.api_style;api.no_api_key = opt.no_api_key;api.chatgpt_auth = opt.provider == "codex";api.wait_quota=opt.wait_quota;
 router.add_dynamic(std::make_unique<PreviewTool>());
 auto design_reviewer=std::make_unique<DesignReviewTool>(api);auto* design_review=design_reviewer.get();router.add_dynamic(std::move(design_reviewer));
@@ -1334,7 +1343,7 @@ auto builtin_run_turn =[&](const std::string& raw_prompt,bool review_only = fals
   if(!continuing && !session.record_item(user_item)){err="could not save user message";if(tui){tui->add_error(err);tui->render();}else std::cerr<<"[error] "<<err<<'\n'; return 3; }
   plugins.event("turn.started",opt.root);session.emit(EventKind::TurnStarted,"{\"task\":\"" + json_escape(user_prompt)+ "\",\"sandbox\":\"" + sandbox_name(turn_policy.sandbox)+ "\"}");
   auto apply_steering=[&](){bool added=false;if(frontend)for(const auto& item:frontend->steering){if(!session.record_item("{\"role\":\"user\",\"content\":\""+json_escape(item.second)+"\"}"))return -1;session.append_transcript("\n[user steering]\n"+item.second+"\n");added=true;}if(frontend)frontend->steering.clear();if(tui)for(const auto& message:tui->take_steering()){if(!session.record_item("{\"role\":\"user\",\"content\":\""+json_escape(message)+"\"}")){err="could not save steering message";return -1;}session.append_transcript("\n[user steering]\n"+message+"\n");tui->add_user(message);added=true;}return added?1:0;};
-  pending_images.clear();for(uint64_t step = 1; !opt.max_steps || step <= *opt.max_steps; ++step){
+  pending_images.clear();for(uint64_t step = 1; !opt.agent_budget.max_steps || step <= *opt.agent_budget.max_steps; ++step){
 #if !defined(_WIN32)
   if(tui_interrupt_requested){plugin_turn_status="interrupted";return 130;}
 #endif
