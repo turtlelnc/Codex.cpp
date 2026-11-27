@@ -1,5 +1,6 @@
 // Hosted-mode policy and project coordination use the same native App runtime.
 struct HostedService : Service {
+  static constexpr size_t database_limit = 64 * 1024 * 1024;
   J database;
   fs::path database_path;
   Options initial;
@@ -32,7 +33,7 @@ struct HostedService : Service {
     require(state_lock >= 0 && flock(state_lock, LOCK_EX | LOCK_NB) == 0,
             "Stop the service before editing accounts");
 #endif
-    database = read_json(database_path);
+    database = read_json(database_path, database_limit);
     for (auto key : {"users", "projects"})
       if (!database.get(key))
         database.fields[key] = obj();
@@ -101,7 +102,7 @@ struct HostedService : Service {
     });
   }
   void persist() {
-    atomic_save(database_path, database);
+    atomic_save(database_path, database, database_limit);
   }
   bool login(const std::string &user, const std::string &password) override {
     std::lock_guard<std::recursive_mutex> lock(mutex);

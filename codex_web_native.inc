@@ -318,17 +318,18 @@ std::string read_bytes(const fs::path &path, size_t limit = 16 * 1024 * 1024) {
 #endif
 }
 
-J read_json(const fs::path &path) {
+J read_json(const fs::path &path, size_t limit = 16 * 1024 * 1024) {
   if (!fs::exists(path))
     return obj();
-  auto parsed = parse_json(read_bytes(path));
+  auto parsed = parse_json(read_bytes(path, limit));
   require(parsed && parsed->kind == J::Object, "Invalid saved state");
   return *parsed;
 }
-void atomic_save(const fs::path &path, const J &value) {
+void atomic_save(const fs::path &path, const J &value, size_t limit = std::string::npos) {
   auto temporary = path;
   temporary += "." + entropy();
   auto data = json_dump(value);
+  require(data.size() <= limit, "Saved state exceeds size limit");
 #if defined(_WIN32)
   struct RemovePartial {fs::path path;~RemovePartial(){std::error_code ignored;fs::remove(path,ignored);}} remove_partial{temporary};
   std::ofstream stream(temporary, std::ios::binary);
@@ -388,7 +389,7 @@ struct Workspace {
     return false;
   }
 #if !defined(_WIN32)
-  int open_file(const std::string &name, int mode, bool internal = false) {
+  int open_file(const std::string &name, int mode, bool internal = false, std::string* leaf = nullptr) {
     fs::path relative(name);
     require(!relative.empty() && !relative.is_absolute() && (internal || (!blocked(relative)&&!sensitive_path(root/relative))),
             "Workspace path denied");
@@ -401,6 +402,10 @@ struct Workspace {
       if (parts[i] == ".." || parts[i] == "." || parts[i].empty()) {
         ::close(fd);
         throw std::runtime_error("Workspace path denied");
+      }
+      if (leaf && i + 1 == parts.size()) {
+        *leaf = parts[i];
+        return fd;
       }
       int next = ::openat(fd, parts[i].c_str(),
                           i + 1 == parts.size() ? mode | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
@@ -611,32 +616,57 @@ struct Workspace {
     CloseHandle(handle);
     require(good, "Editor save refused");
 #else
-    int fd = open_file(path, O_RDWR);
-    struct stat st{};
-    bool good = ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_nlink == 1 && st.st_size <= 1024 * 1024;
-    std::string before;
-    char buf[8192];
-    if (good) {
-      ssize_t n;
-      while ((n = ::read(fd, buf, sizeof buf)) > 0)
-        before.append(buf, static_cast<size_t>(n));
-      good = n == 0 && digest(before) == version;
-    }
-    if (!good) {
-      ::close(fd);
-      throw std::runtime_error("File changed; reload before saving");
-    }
+    struct Descriptor {
+      int fd;
+      ~Descriptor() { if (fd >= 0) ::close(fd); }
+    };
+    std::string leaf;
+    Descriptor directory{open_file(path, O_RDWR, false, &leaf)};
+    Descriptor current{::openat(directory.fd, leaf.c_str(), O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)};
+    auto matches = [&](struct stat &info) {
+      if (::fstat(current.fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+          info.st_nlink != 1 || info.st_size < 0 || info.st_size > 1024 * 1024)
+        return false;
+      std::string contents(static_cast<size_t>(info.st_size), '\0');
+      size_t offset = 0;
+      while (offset < contents.size()) {
+        auto count = ::pread(current.fd, contents.data() + offset, contents.size() - offset, offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return false;
+        offset += static_cast<size_t>(count);
+      }
+      char extra;
+      return ::pread(current.fd, &extra, 1, offset) == 0 && digest(contents) == version;
+    };
+    struct stat original{};
+    require(matches(original), "File changed; reload before saving");
+    const std::string staged_name = ".codex-editor-" + entropy();
+    Descriptor staged{::openat(directory.fd, staged_name.c_str(),
+                               O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)};
+    require(staged.fd >= 0, "Cannot stage editor save");
+    struct RemoveStaged {
+      int directory;
+      const std::string &name;
+      bool armed = true;
+      ~RemoveStaged() { if (armed) ::unlinkat(directory, name.c_str(), 0); }
+    } cleanup{directory.fd, staged_name};
     size_t offset = 0;
     while (offset < data.size()) {
-      auto n = ::pwrite(fd, data.data() + offset, data.size() - offset, static_cast<off_t>(offset));
-      if (n <= 0)
-        break;
-      offset += static_cast<size_t>(n);
+      auto count = ::write(staged.fd, data.data() + offset, data.size() - offset);
+      if (count < 0 && errno == EINTR) continue;
+      require(count > 0, "Cannot write staged editor save");
+      offset += static_cast<size_t>(count);
     }
-    good = offset == data.size() && ::ftruncate(fd, static_cast<off_t>(data.size())) == 0;
-    ::fsync(fd);
-    ::close(fd);
-    require(good, "Editor write failed; inspect file before retrying");
+    require(::fchmod(staged.fd, original.st_mode & 0777) == 0 && ::fsync(staged.fd) == 0,
+            "Cannot sync staged editor save");
+    struct stat latest{}, named{};
+    require(matches(latest) &&
+                ::fstatat(directory.fd, leaf.c_str(), &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+                named.st_nlink == 1 && named.st_dev == latest.st_dev && named.st_ino == latest.st_ino,
+            "File changed; reload before saving");
+    require(::renameat(directory.fd, staged_name.c_str(), directory.fd, leaf.c_str()) == 0,
+            "Cannot replace editor file");
+    cleanup.armed = false;
 #endif
     return obj({{"saved", boolean(true)}, {"version", str(digest(data))}});
   }
@@ -1113,7 +1143,7 @@ struct App {
 #else
       auto n=::read(handle,buffer,count);if(n<0&&errno==EINTR)continue;require(n>=0,"Cannot read session journal");
 #endif
-      if(!n)break;const uint64_t chunk_start=offset;offset+=static_cast<uint64_t>(n);for(size_t i=0;i<static_cast<size_t>(n);++i){if(buffer[i]=='\n'){if(!skip&&!visit(line,line_start))return;line.clear();skip=false;line_start=chunk_start+i+1;}else if(!skip){line+=buffer[i];require(line.size()<=12'000'000,"Session journal record exceeds 12 MB");}}
+      if(!n)break;const uint64_t chunk_start=offset;offset+=static_cast<uint64_t>(n);for(size_t i=0;i<static_cast<size_t>(n);++i){if(buffer[i]=='\n'){if(!skip&&!visit(line,line_start))return;line.clear();skip=false;line_start=chunk_start+i+1;}else if(!skip){line+=buffer[i];require(line.size()<=journal_record_limit,"Session journal record exceeds 48 MiB");}}
     }
     // A writer may be halfway through the final line. Wait for its newline.
   }

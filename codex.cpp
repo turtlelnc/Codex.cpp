@@ -386,6 +386,7 @@ static std::optional<std::vector<std::string>> checkpoint_context(const Json& re
   for(const auto& item:list->items){if(item.kind!=Json::Object||(item.get("type")&&item.get("type")->str()=="codex_context_checkpoint"))throw std::runtime_error("Invalid context checkpoint item");context.push_back(json_dump(item));}
   return context;
 }
+static constexpr size_t journal_record_limit = 48 * 1024 * 1024;
 struct Session{fs::path root;fs::path dir;fs::path events_path;fs::path transcript_path;fs::path items_path;fs::path meta_path;std::string id; bool echo_json = false;std::string transcript,storage_error;std::unique_ptr<portable::Lease> lease;void release_lock();
 size_t estimated_tokens=0;
 std::vector<std::string> items;// Current model context; restored by replaying journal checkpoints
@@ -400,6 +401,7 @@ size_t context_bytes()const{size_t n=0;for(const auto& item:items){n+=item.size(
 bool record_item(const std::string& item){try{auto value=parse_json(item);if(!value || value->kind!=Json::Object)return false;
   auto result=plugin_call("journal.append",plugin_object({{"path",plugin_string(items_path.u8string())},{"item",plugin_string(item)}}),[&](const Json& request,const plugin::Emit&){
     if(plugin_text(request,"path")!=items_path.u8string())throw std::runtime_error("Journal path changed");auto stored=request.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)throw std::runtime_error("Invalid journal item");
+    if(stored->str().size()>journal_record_limit)throw std::runtime_error("Journal item exceeds 48 MiB");
     (void)checkpoint_context(*parsed);
     std::ofstream file(items_path,std::ios::app|std::ios::binary);file<<stored->str()<<'\n';file.flush();return plugin_object({{"ok",plugin_bool(bool(file))},{"item",*stored}});
   });if(!plugin_flag(result,"ok"))return false;auto stored=result.get("item");auto parsed=stored&&stored->kind==Json::String?parse_json(stored->str()):std::optional<Json>{};if(!parsed || parsed->kind!=Json::Object)return false;apply_journal_item(stored->str(),*parsed);return true;
@@ -476,7 +478,7 @@ if(resume&&(s.id.empty()|| s.id=="." || s.id==".." ||
 if(!lock_session(s,previous,err))return false;
 if(resume){if(!fs::exists(s.transcript_path) && !fs::exists(s.events_path) && !fs::exists(s.items_path)){err = "session not found: " + s.id;unlock_session(s,previous);return false;}if(fs::exists(s.transcript_path))s.transcript = transcript_tail(s.transcript_path);
   if(fs::exists(s.items_path)){std::ifstream f(s.items_path,std::ios::binary);std::string line;while(std::getline(f,line)){
-    auto parsed=line.size()<=12'000'000?parse_json(line):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object){err="invalid session item journal";unlock_session(s,previous);return false;}
+    auto parsed=line.size()<=journal_record_limit?parse_json(line):std::optional<Json>{};if(!parsed||parsed->kind!=Json::Object){err="invalid session item journal";unlock_session(s,previous);return false;}
     try{s.apply_journal_item(line,*parsed);}catch(const std::exception& e){err=e.what();unlock_session(s,previous);return false;}
   }
   if(!f.eof()){err="could not read session item journal";unlock_session(s,previous);return false;} }else if(!s.transcript.empty()){

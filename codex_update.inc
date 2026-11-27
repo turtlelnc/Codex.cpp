@@ -35,13 +35,15 @@ static std::string asset(){
   const std::string base="codex-cpp-linux-arm64";
 #elif defined(__x86_64__)
   const std::string base="codex-cpp-linux-x64";
-#else
-  throw std::runtime_error("No update asset for this CPU");
 #endif
+#if defined(__aarch64__) || defined(__x86_64__)
 #if defined(__GLIBC__)
   return base+"-native";
 #else
   return base;
+#endif
+#else
+  throw std::runtime_error("No update asset for this CPU");
 #endif
 #endif
 }
