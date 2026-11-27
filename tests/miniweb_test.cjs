@@ -91,6 +91,12 @@ const wait = async (fn) => {
       !before.equals(png('after.png', 320, 240)),
       'click must change actual screenshot',
     );
+    fs.writeFileSync(path.join(project, 'failed-click.html'),
+      '<style>body{margin:0}button{width:100px;height:60px}</style><button>Click</button><script>globalThis.__mwDispatchClick = () => { throw Error("fixture failure"); };</script>');
+    const failedClick = shot('failed-click.html', ['--width', '320', '--height', '240', '--click', '5,5', '-o', 'failed-click.png']);
+    assert.notEqual(failedClick.status, 0, 'failed click replay must fail the screenshot');
+    assert.match(failedClick.stderr, /Preview click 1 failed/);
+    assert(!fs.existsSync(path.join(project, 'failed-click.png')));
     fs.copyFileSync(
       path.resolve('miniweb/test/diagnostics.html'),
       path.join(project, 'diagnostics.html'),

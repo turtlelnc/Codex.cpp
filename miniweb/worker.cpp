@@ -55,7 +55,12 @@ int codex_miniweb_worker(int argc,char** argv){try{
   Loader::set_access_root(argv[2]);Engine engine(width,height);engine.set_wait_ms(wait);std::string error;
   if(!engine.load(argv[3],&error))throw std::runtime_error(error);
   if(!engine.render(false))throw std::runtime_error("Preview render failed");
-  for(int i=8;i<argc;i+=2){engine.click(static_cast<float>(number(argv[i],0,width-1)),static_cast<float>(number(argv[i+1],0,height-1)));if(!engine.render(false))throw std::runtime_error("Preview click render failed");}
+  for(int i=8;i<argc;i+=2){
+    const int click = (i-8)/2+1;
+    if(!engine.click(static_cast<float>(number(argv[i],0,width-1)),static_cast<float>(number(argv[i+1],0,height-1))))
+      throw std::runtime_error("Preview click "+std::to_string(click)+" failed");
+    if(!engine.render(false))throw std::runtime_error("Preview click render failed");
+  }
   if(!engine.canvas()||!engine.canvas()->save_png(argv[4]))throw std::runtime_error("Cannot save preview PNG");
   // JavaScript console output is untrusted. The host reads this private artifact,
   // not the human-readable log lines below, as the capability result.

@@ -27,7 +27,7 @@ struct LocalService : Service {
   }
   std::vector<std::string> enrolled() {
     std::vector<std::string> names;
-    for (const auto &item : field(read_json(team_home() / "server.json"), "users", obj()).fields)
+    for (const auto &item : field(read_json(team_home() / "server.json", HostedService::database_limit), "users", obj()).fields)
       names.push_back(item.first);
     return names;
   }

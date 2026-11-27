@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "loader.h"
 #include <memory>
 #include <string>
