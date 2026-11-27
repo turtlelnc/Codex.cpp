@@ -11,7 +11,7 @@ jobs:
         run: |
           docker run --rm --platform linux/386 -v "$PWD:/work" -w /work i386/alpine:latest sh -c '
             set -e
-            apk update && apk add --no-cache g++ cmake make openssl-dev pkgconfig
+            apk update && apk add --no-cache g++ cmake make openssl-dev pkgconfig linux-headers
             CRYPTO_LIB=$(find /usr/lib /lib -name "libcrypto.so*" -o -name "libcrypto.a" 2>/dev/null | head -n 1)
             SSL_LIB=$(find /usr/lib /lib -name "libssl.so*" -o -name "libssl.a" 2>/dev/null | head -n 1)
             cmake -B build -DCMAKE_BUILD_TYPE=Release \
@@ -19,7 +19,7 @@ jobs:
               -DOPENSSL_INCLUDE_DIR=/usr/include \
               -DOPENSSL_CRYPTO_LIBRARY="$CRYPTO_LIB" \
               -DOPENSSL_SSL_LIBRARY="$SSL_LIB"
-            cmake --build build --parallel 2
+            cmake --build build --parallel 1 --verbose
             ls -la build
           '
       - name: Upload binary
