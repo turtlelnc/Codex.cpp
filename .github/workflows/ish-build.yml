@@ -9,13 +9,22 @@ jobs:
         uses: actions/checkout@v4
       - name: Build 32-bit x86 in Alpine container
         run: |
-          docker run --rm --platform linux/386 -v "$PWD:/work" -w /work i386/alpine:latest sh -c "
-            apk update && apk add --no-cache g++ cmake make openssl-dev &&
-            cmake -B build -DCMAKE_BUILD_TYPE=Release &&
+          docker run --rm --platform linux/386 -v "$PWD:/work" -w /work i386/alpine:latest sh -c '
+            set -e
+            apk update && apk add --no-cache g++ cmake make openssl-dev pkgconfig
+            CRYPTO_LIB=$(find /usr/lib /lib -name "libcrypto.so*" -o -name "libcrypto.a" 2>/dev/null | head -n 1)
+            SSL_LIB=$(find /usr/lib /lib -name "libssl.so*" -o -name "libssl.a" 2>/dev/null | head -n 1)
+            cmake -B build -DCMAKE_BUILD_TYPE=Release \
+              -DOPENSSL_ROOT_DIR=/usr \
+              -DOPENSSL_INCLUDE_DIR=/usr/include \
+              -DOPENSSL_CRYPTO_LIBRARY="$CRYPTO_LIB" \
+              -DOPENSSL_SSL_LIBRARY="$SSL_LIB"
             cmake --build build --parallel 2
-          "
+            ls -la build
+          '
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: codex-cpp-linux-x86
-          path: build/codex-cpp
+          path: build/codex-cpp*
+          if-no-files-found: error
