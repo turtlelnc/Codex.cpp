@@ -1,0 +1,16 @@
+name: Wasm backend test package
+on:
+  push:
+    branches: [handoff/wasm-backend-macos-test]
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-plugin-backend-macos-test
+          path: wasm-plugin-backend-macos-test.zip
+          if-no-files-found: error
